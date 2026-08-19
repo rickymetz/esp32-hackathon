@@ -58,6 +58,22 @@ idf.py -p /dev/cu.usbmodem101 flash monitor
 `sdkconfig.defaults` is not optional. `CONFIG_SPIRAM_MODE_OCT=y` in particular is **not**
 the IDF default, and without it the 8 MB PSRAM silently fails to initialise with no error.
 
+## BSP gap: the panel stays dark without an expander reset
+
+**`bsp_display_start()` on its own leaves the screen black, with no error anywhere.**
+Every software signal looks healthy — panel created, `disp_on_off(true)`, brightness OK,
+touch found, LVGL flushing — and the panel is still dark. Waveshare's own prebuilt
+`00_bsp_quickstart` has the same problem, so this is the BSP, not your code.
+
+Cause: on this board `BSP_LCD_RST`, `BSP_LCD_TOUCH_RST`, and `BSP_LCD_BACKLIGHT` are all
+`GPIO_NUM_NC`. The reset lines hang off the **TCA9554 IO expander**, and
+`bsp_display_start()` never initialises it — so the panel sits held in reset.
+
+Fix, which must run **before** `bsp_display_start()` (see `launcher/main/launcher_main.c`):
+pulse **EXIO1 (LCD reset) and EXIO2 (touch reset)** low → 20 ms → high via
+`bsp_io_expander_init()`. Also on the expander: **EXIO4 = PWR button, EXIO5 = PMU IRQ**,
+both inputs.
+
 ## Gotchas
 
 These cost an hour each if you don't know them. Most were hit for real in this repo.
