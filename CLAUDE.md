@@ -102,8 +102,19 @@ Apps get a **root container, never the screen**. The launcher deletes that conta
 exit, which is what makes widget cleanup automatic. Every app hook runs inside a protected
 call so a Lua error shows on screen instead of rebooting the board.
 
-**`lv_binding_lua` does not exist** — no repo, not in the LVGL org. Ignore any suggestion
-to use it.
+Verified on hardware: **Lua 5.5.0 runs**, VM costs ~15.5 KB of PSRAM. Its allocator is
+pointed at `MALLOC_CAP_SPIRAM` so apps cannot starve internal DRAM.
+
+Two dead ends, both checked — do not spend time re-discovering them:
+
+- **`lv_binding_lua` does not exist.** No repo, not in the LVGL org, no archived snapshots.
+- **`esp-brookesia` cannot be used.** It is Espressif's app OS — launcher, `.bpk` packages,
+  app store, Lua/JS/ELF/WASM runtimes, and an official port for *this exact board*. But
+  `master` requires **ESP-IDF 6.2 for ESP32-S3, which is unreleased** (newest is
+  `v6.1-rc1`), and the IDF-5.5-compatible `release/v0.7` branch has **no `runtime/`
+  directory at all**. Revisit after IDF 6.2 ships.
+
+Lua 5.5 note: `lua_newstate()` takes a third `seed` argument, unlike 5.4.
 
 ## The app contract
 
