@@ -1,0 +1,97 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+A shared app launcher for the Waveshare ESP32-S3-Touch-AMOLED-1.8. Apps are Lua scripts
+loaded from the SD card at runtime — installing one is a file copy, not a reflash.
+
+## Hardware
+
+**Board revision is V2** — confirmed on hardware, not assumed:
+
+```
+co5300: version 2.1.0              → CO5300 display
+Touch CST816S 0x15 found           → CST816-family touch at I2C 0x15
+```
+
+The V1 board uses SH8601 + FT3168 at `0x38` instead. **Always go through the BSP**
+(`waveshare/esp32_s3_touch_amoled_1_8` ^2.0.3), which depends on both touch drivers and
+binds the right one at runtime. Writing directly against CO5300/CST816 hardcodes the
+revision and breaks on V1 boards.
+
+- ESP32-S3R8, rev v0.2 — dual core, **8 MB octal PSRAM**, **16 MB** flash
+- Display **368 × 448** portrait, QSPI. Brightness = register `0x51`, `0x00`–`0xFF`
+- QMI8658 IMU · PCF85063A RTC · AXP2101 PMU · ES8311 audio · microSD (SDMMC)
+- Buttons: BOOT = GPIO0 active-low · PWR = EXIO4 on the TCA9554 expander, active-high
+
+Pin map (from the vendor's `pin_config.h`; I²C and SD confirmed by the BSP at runtime):
+
+```
+QSPI AMOLED : SDIO0=4  SDIO1=5  SDIO2=6  SDIO3=7  SCLK=11  CS=12
+I2C bus     : SDA=15   SCL=14   touch INT=21
+ES8311 audio: MCLK=16  BCLK=9   WS=45    DI=10   DO=8    PA=46
+SD (SDMMC)  : CLK=2    CMD=1    D0=3
+```
+
+`pin_config.h` names the audio pins twice, and the two sets **disagree**:
+`I2S_DI_IO=10 / I2S_DO_IO=8` vs `DOPIN=10 / DIPIN=8`. They are named from opposite ends of
+the link. Pick one convention; never mix them.
+
+Other I²C addresses: AXP2101 `0x34`, PCF85063 `0x51`, QMI8658 `0x6A`/`0x6B`,
+TCA9554 `0x20`, ES8311 `0x18`.
+
+## Build and flash
+
+ESP-IDF **v5.5.5** at `~/esp/esp-idf`. Board is on **`/dev/cu.usbmodem101`**.
+
+```bash
+. ~/esp/esp-idf/export.sh          # required in every new shell
+cd launcher
+idf.py build
+idf.py -p /dev/cu.usbmodem101 flash monitor
+```
+
+`cmake` and `ninja` come from Homebrew, not from `install.sh`.
+
+**You may build, flash, and monitor freely** — treat it as the normal verify loop.
+
+`sdkconfig.defaults` is not optional. `CONFIG_SPIRAM_MODE_OCT=y` in particular is **not**
+the IDF default, and without it the 8 MB PSRAM silently fails to initialise with no error.
+
+## Gotchas
+
+These cost an hour each if you don't know them. Most were hit for real in this repo.
+
+- **The monitor holds the port.** Flashing fails while `monitor`/`screen` is attached.
+- **A crash takes USB with it.** This board uses the S3's *native* USB, not a UART bridge,
+  so a hung app makes flashing fail with `No serial data received` even though
+  `/dev/cu.usbmodem101` still exists and enumerates. **No software reset recovers it** —
+  `--before usb-reset`, `no-reset-no-sync`, and `watchdog-reset` all fail. Recovery is
+  physical: hold PWR ≥6 s to power off → hold BOOT → press PWR → release BOOT. It does
+  **not** auto-exit download mode after flashing; power-cycle again or it boots to silence.
+- **Reading the console needs an RTS reset pulse.** Opening the port and reading returns
+  0 bytes; toggle RTS first (see the pattern used during bring-up).
+- **PWR: hold ≥6 s to power off**, click to power on. Power is under AXP2101 control.
+- Changed dependencies → delete `build/`, `managed_components/`, `dependencies.lock`.
+- `i2c.master: Please check pull-up resistances` on boot is benign on this board.
+
+## Architecture
+
+- `launcher/` — ESP-IDF app: BSP + LVGL 9.5 + Lua, scans and runs apps
+- `apps/` — Lua apps, one file each, installed to `/sdcard/apps/`
+- Runtime: `espressif/lua` (official component) + LVGL bindings from `espressif/esp-claw`
+  (`components/lua_modules/lua_module_lvgl`)
+
+Apps get a **root container, never the screen**. The launcher deletes that container on
+exit, which is what makes widget cleanup automatic. Every app hook runs inside a protected
+call so a Lua error shows on screen instead of rebooting the board.
+
+**`lv_binding_lua` does not exist** — no repo, not in the LVGL org. Ignore any suggestion
+to use it.
+
+## The app contract
+
+Before changing anything in the app-facing API, read it — five other people are writing
+against it, and it is **frozen after the API freeze deadline**.
+
+@docs/APP_CONTRACT.md

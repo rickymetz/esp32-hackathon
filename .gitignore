@@ -1,0 +1,17 @@
+# ESP-IDF build output
+build/
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Personal, not shared
+CLAUDE.local.md
