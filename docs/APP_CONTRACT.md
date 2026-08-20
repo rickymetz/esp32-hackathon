@@ -1,155 +1,152 @@
 # App Contract
 
-Everything an app author needs. If you are writing an app rather than the launcher, this
-is the only document you need to read.
+Everything you need to write an app. If you are writing an app rather than working on the
+launcher, this is the only document you need.
 
-**Status: DRAFT — frozen at the API freeze deadline (early afternoon).** Until then,
-raise gaps early; after then, additions wait for v2 so nobody's in-flight work breaks.
+**Verified against the running launcher** — every example here has been executed on the
+board, not sketched.
 
 ---
 
 ## The shape of an app
 
-One Lua file at `/sdcard/apps/<name>.lua` that **returns a table**:
+One Lua file. Copy `apps/counter.lua` and edit it.
 
 ```lua
-return {
-  name = "Clock",                    -- shown in the launcher list
-  icon = "clock.png",                -- optional, resolved next to this script
+local lvgl = require("lvgl")
 
-  start = function(root)             -- required: build your UI into `root`
-  end,
+lvgl.init({ buffer_lines = 40 })
 
-  update = function(dt)              -- optional: called from the LVGL task
-  end,
+local scr = lvgl.create_screen()
+scr:set_style({ bg_color = "#101014" })
 
-  stop = function()                  -- optional: release non-UI resources
-  end,
-}
+local label = lvgl.label(scr, {
+    text = "Hello",
+    align = "center",
+    text_color = "#ffffff",
+})
+
+scr:load()
 ```
 
-That is the whole contract. Three optional hooks, one required.
+That is a complete, working app.
 
-### The rules that matter
+### The five rules
 
-1. **You get a container, not the screen.** `root` is an `lv_obj` sized to the display.
-   Build everything inside it. The launcher deletes `root` when your app exits, so every
-   widget you parent to it is cleaned up automatically — you do not need to free widgets
-   in `stop()`.
-2. **`stop()` is for everything that is not a widget** — open files, and any state you
-   want persisted. Timers created via `app.timer` are cancelled for you.
-3. **Never call `lv_scr_act()` or touch anything outside `root`.** That is the launcher's
-   UI; reaching into it is how one app takes down everyone's demo.
-4. **Do not block.** `start()` and `update()` run on the LVGL task. A `while true` loop
-   or a long sleep freezes the whole device, including the way back to the launcher. Use
-   `app.timer` for anything periodic.
-5. **Errors are caught, not fatal.** Every hook runs inside a protected call; a Lua error
-   shows on screen and returns to the launcher rather than rebooting the board. You will
-   see the message and traceback on the serial console.
+1. **Build your UI, then return.** Do **not** write a `while true` loop or call
+   `lvgl.run()`. The launcher pumps the event loop for you. An app that loops forever
+   freezes the device, including the way back to the launcher.
+2. **Make your own screen** with `lvgl.create_screen()` and `scr:load()`. Never reach for
+   the launcher's screen. When your app exits, the launcher deletes your screen and every
+   widget on it — you do not need to clean up widgets.
+3. **Touch is not pixel-accurate.** Measured on this hardware: a 240×120 button catches
+   every tap, while a 180×56 one dropped roughly half. **Keep tappable targets ≥ ~200×100.**
+   If your buttons feel broken, this is almost certainly why.
+4. **Errors are contained, not fatal.** A Lua error is logged to serial and returns you to
+   the launcher rather than rebooting the board.
+5. **The PWR button always returns to the launcher.** It is hardware — you cannot consume
+   or override it, and users rely on it. (Holding it ≥6 s still powers the board off.)
+
+---
+
+## Installing your app
+
+Copy the `.lua` file to `/apps/` on the microSD card. That is the whole process — no
+reflash, no rebuild, no toolchain.
+
+The launcher scans `/apps` at boot and lists every `.lua` file it finds. **The filename
+becomes the name in the list**: `weather_clock.lua` shows as "Weather clock".
 
 ---
 
 ## API
 
-Available as the global `app` inside your script.
+Everything comes from `local lvgl = require("lvgl")`.
 
-### UI
+### Widgets
 
-Widgets are created as children of a parent object, starting from `root`:
+All constructors take `(parent, opts)` and return an object:
 
 ```lua
-local label  = app.label(root, "Hello")
-local button = app.button(root, "Tap me")
-local slider = app.slider(root, 0, 100)
-local image  = app.image(root, "picture.png")
-local arc    = app.arc(root, 0, 100)
+local btn = lvgl.button(scr, { text = "OK", w = 240, h = 120, align = "center" })
 ```
 
-Common methods on any object:
+Commonly useful ones:
 
-| Call | Effect |
+| Constructor | Notes |
 | --- | --- |
-| `obj:set_text(s)` | Set text (label, button) |
-| `obj:set_pos(x, y)` | Position within the parent |
-| `obj:set_size(w, h)` | Size in pixels |
-| `obj:align(a, dx, dy)` | Align: `"center"`, `"top_mid"`, `"bottom_mid"`, `"left_mid"`, `"right_mid"` |
-| `obj:center()` | Shorthand for `align("center", 0, 0)` |
-| `obj:set_style(t)` | Table of style props, e.g. `{bg_color = 0x1E1E1E, radius = 12}` |
-| `obj:delete()` | Remove early (rarely needed) |
+| `lvgl.label(p, {text=...})` | Text |
+| `lvgl.button(p, {text=...})` | Remember the ≥200×100 sizing rule |
+| `lvgl.slider(p, {min=,max=,value=})` | |
+| `lvgl.arc(p, {min=,max=,value=})` | Circular control — suits this round-ish panel |
+| `lvgl.bar(p, {min=,max=,value=})` | Progress |
+| `lvgl.switch(p, {checked=})` · `lvgl.checkbox(p, {text=,checked=})` | |
+| `lvgl.dropdown(p, {options={...}, selected=1})` · `lvgl.roller(...)` | **1-based** indexes |
+| `lvgl.chart(p, {type="line", point_count=10, min=, max=})` | |
+| `lvgl.led(p, {color="#00ff00", brightness=180, on=true})` | |
+| `lvgl.spinner(p, {anim_ms=1000})` | |
+| `lvgl.textarea(p, {...})` · `lvgl.keyboard(p, {textarea=ta})` | |
+| `lvgl.table`, `lvgl.list`, `lvgl.menu`, `lvgl.msgbox`, `lvgl.tabview`, `lvgl.calendar`, `lvgl.canvas`, `lvgl.line`, `lvgl.image`, `lvgl.spinbox`, `lvgl.buttonmatrix` | Also available |
+
+### Common options
+
+Accepted by most widgets:
+
+- **Position and size**: `x`, `y`, `w`, `h`, `align`
+- **Text**: `text`
+- **Values**: `min`, `max`, `value`
+- **Style**: `bg_color`, `text_color`, `border_color`, `bg_opa`, `opa`, `radius`,
+  `border_width`, `pad`, `line_color`, `line_width`, `arc_width`, `font`
+
+Colors are strings or numbers: `bg_color = "#2f80ed"` or `text_color = 0xffffff`.
+
+Align names: `center`, `top_mid`, `bottom_mid`, `left_mid`, `right_mid`, `top_left`,
+`top_right`, `bottom_left`, `bottom_right`.
+
+### Methods on any object
+
+```lua
+obj:set_pos(x, y)      obj:get_pos()    -- -> x, y
+obj:set_size(w, h)     obj:get_size()   -- -> w, h
+obj:align(name, x, y)
+obj:set_style({ bg_color = "#1e1e28", radius = 12 })
+obj:set_flex({ ... })  obj:set_grid({ ... })  obj:set_scroll({ ... })
+obj:delete()           obj:clean()
+```
 
 ### Events
 
 ```lua
-button:on("clicked", function() print("tapped") end)
-slider:on("value_changed", function(v) label:set_text(tostring(v)) end)
-```
-
-Events: `"clicked"`, `"pressed"`, `"released"`, `"value_changed"`, `"long_pressed"`.
-
-### Timers
-
-```lua
-local t = app.timer(1000, function() ... end)   -- repeating, every 1000 ms
-app.after(250, function() ... end)              -- one-shot
-t:cancel()                                      -- all timers auto-cancel on exit
-```
-
-### Gestures
-
-```lua
-app.on_gesture(function(dir)     -- "up" | "down" | "left" | "right"
-  if dir == "right" then app.exit() end
+local handle = btn:on("clicked", function()
+    print("tapped")          -- print goes to the serial console
 end)
+
+btn:off(handle)              -- or btn:off("clicked"), or btn:off()
 ```
 
-Swipe-from-left-edge is **reserved by the launcher** as the universal "back" gesture.
-Do not consume it.
+Events: `clicked`, `pressed`, `released`, `long_pressed`, `value_changed`, `focused`,
+`defocused`, `ready`, `cancel`.
 
-### Storage
+Callbacks take **no arguments** — read state from the widget itself. An error inside a
+callback is logged and dispatch continues.
 
-Per-app, sandboxed to your own directory. Survives reboots.
-
-```lua
-app.store:set("high_score", 42)
-local best = app.store:get("high_score") or 0
-```
-
-Values may be strings, numbers, or booleans.
-
-### Assets and paths
-
-`app.path` is the directory your script lives in. Bundled assets resolve relative to it,
-so `app.image(root, "picture.png")` finds `/sdcard/apps/picture.png`.
-
-### Hardware
+### Layout
 
 ```lua
-local x, y, z = app.imu.accel()      -- g
-local gx, gy, gz = app.imu.gyro()    -- deg/s
-local t = app.rtc.now()              -- {year, month, day, hour, min, sec, wday}
-local pct, volts, charging = app.battery()
-app.brightness(200)                  -- 0-255; restored on exit
-```
-
-### Lifecycle and logging
-
-```lua
-app.exit()                -- return to the launcher
-print("anything")         -- goes to the serial console
+list:set_flex({ flow = "column", pad_row = 10 })
 ```
 
 ---
 
-## Not available on day one
+## Not available yet
 
-Deliberately omitted to keep the launcher small — every entry here is work that blocks
-five other people. Ask if your app genuinely needs one:
+Ask if your app genuinely needs one — each is launcher work that blocks everyone:
 
-- Networking / Wi-Fi
+- Wi-Fi / networking
 - Audio playback and the microphone
-- Filesystem access outside your app directory
-- Threads or coroutines
-- Raw pointers, `userdata`, FFI, or any escape hatch to C
+- IMU, RTC, and battery readings
+- Persistent key-value storage
+- Writing files
 
 ---
 
@@ -158,51 +155,58 @@ five other people. Ask if your app genuinely needs one:
 | Limit | Value |
 | --- | --- |
 | Display | **368 × 448** portrait, ~350 nit |
-| Lua heap per app | Allocated from **PSRAM**, so it cannot starve the launcher's internal DRAM |
+| Minimum comfortable touch target | **~200 × 100** |
+| Lua heap | Allocated from PSRAM (~8 MB free); an app VM costs ~40 KB |
 | Lua task stack | 32 KB |
-| One app at a time | Launching a new app stops the current one |
+| Concurrency | One app at a time |
+| Custom fonts | The default TTF is absent, so LVGL's built-in font is used |
 
 ---
 
 ## Worked example
 
-A complete, working app — copy `apps/template/` and start here:
+The full contents of `apps/counter.lua`:
 
 ```lua
+local lvgl = require("lvgl")
+
+lvgl.init({ buffer_lines = 40 })
+
+local scr = lvgl.create_screen()
+scr:set_style({ bg_color = "#101014" })
+
+local title = lvgl.label(scr, {
+    text = "Counter",
+    align = "top_mid", y = 30,
+    text_color = "#ffffff",
+})
+
 local count = 0
 
-return {
-  name = "Counter",
+local button = lvgl.button(scr, {
+    text = "Tap me",
+    align = "center", y = 0,
+    w = 240, h = 120,          -- big on purpose; see rule 3
+    bg_color = "#2f80ed",
+    text_color = "#ffffff",
+})
 
-  start = function(root)
-    root:set_style({bg_color = 0x101014})
+button:on("clicked", function()
+    count = count + 1
+    title:set_text("Count: " .. count)
+end)
 
-    local label = app.label(root, "0")
-    label:set_style({text_color = 0xFFFFFF})
-    label:align("center", 0, -40)
-
-    local button = app.button(root, "Count")
-    button:align("center", 0, 40)
-    button:on("clicked", function()
-      count = count + 1
-      label:set_text(tostring(count))
-      app.store:set("count", count)
-    end)
-
-    count = app.store:get("count") or 0
-    label:set_text(tostring(count))
-  end,
-
-  stop = function()
-    app.store:set("count", count)
-  end,
-}
+scr:load()
 ```
 
 ---
 
-## Testing without a board
+## Debugging
 
-If boards are shared, you are not blocked. The Lua↔LVGL binding this launcher is built on
-ships an **Emscripten browser simulator**, so app UI can be developed and reviewed in a
-browser before it ever touches hardware. Ask the launcher team for the simulator build.
+`print()` goes to the serial console. To watch it:
+
+```bash
+idf.py -p /dev/cu.usbmodem101 monitor      # Ctrl-] to exit
+```
+
+Lua errors appear there with a traceback, prefixed `app '<name>' failed:`.
