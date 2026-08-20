@@ -122,6 +122,15 @@ That pump needs **a positive timeout and a yield**. `process_events(0)` returns
 immediately when the queue is empty; looping on it starves the idle task and trips the
 task watchdog.
 
+**Back to the launcher is the PWR button** (EXIO4 on the expander, active high, reads
+`0x10`). Deliberately hardware: no app can consume it or paint over it, so a misbehaving
+app is always escapable. Polled every 20 ms in `back_button_task`; it requests stop
+unconditionally rather than gating on "is an app running", which is what broke the first
+version. Holding ≥6 s still powers off — that is the AXP2101 below us.
+
+Verified on hardware: launching and exiting an app repeatedly returns PSRAM to exactly
+the same free figure, so the launch/exit cycle does not leak.
+
 Verified on hardware: **Lua 5.5.0 runs**, VM costs ~15.5 KB of PSRAM. Its allocator is
 pointed at `MALLOC_CAP_SPIRAM` so apps cannot starve internal DRAM.
 

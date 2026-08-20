@@ -60,6 +60,7 @@ static const char *TAG = "launcher";
 
 static lv_obj_t *s_launcher_screen;
 static TaskHandle_t s_app_task;
+static esp_io_expander_handle_t s_expander;
 
 static esp_err_t release_panel_reset(void)
 {
@@ -68,6 +69,7 @@ static esp_err_t release_panel_reset(void)
         ESP_LOGE(TAG, "io expander init failed");
         return ESP_FAIL;
     }
+    s_expander = exp;
 
     const uint32_t rst = EXIO_LCD_RST | EXIO_TOUCH_RST;
 
@@ -242,6 +244,40 @@ static void build_launcher_ui(void)
     bsp_display_unlock();
 }
 
+/* PWR button (EXIO4, active high) is the universal way back to the launcher.
+ * It is deliberately hardware: no app can consume it or paint over it, so a
+ * misbehaving app can always be escaped. Holding it >=6s still powers the
+ * board off -- that is the AXP2101 acting below us, not something we handle.
+ *
+ * Runs whether or not an app is up: pressing it with no app running is a
+ * harmless no-op. */
+static void back_button_task(void *arg)
+{
+    (void)arg;
+    bool was_pressed = false;
+
+    for (;;) {
+        uint32_t level = 0;
+        esp_err_t err = ESP_FAIL;
+        if (s_expander != NULL) {
+            err = esp_io_expander_get_level(s_expander, EXIO_PWR_BTN, &level);
+        }
+        if (err == ESP_OK) {
+            bool pressed = (level != 0);
+
+            /* Request stop unconditionally. Harmless when nothing is running,
+             * and it avoids depending on s_app_task being assigned yet --
+             * gating on that was why the first version never returned. */
+            if (pressed && !was_pressed) {
+                ESP_LOGI(TAG, "PWR pressed -- returning to launcher");
+                launcher_lua_request_stop(true);
+            }
+            was_pressed = pressed;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
 void app_main(void)
 {
     printf("\n=== ESP32-S3-Touch-AMOLED-1.8 Launcher ===\n");
@@ -263,6 +299,8 @@ void app_main(void)
 
     app_registry_scan();
     build_launcher_ui();
+
+    xTaskCreate(back_button_task, "back_btn", 3072, NULL, 6, NULL);
 
     ESP_LOGI(TAG, "ready: %u app(s), internal free=%u psram free=%u",
              (unsigned)app_registry_count(),
