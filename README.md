@@ -52,8 +52,20 @@ Exit the monitor with `Ctrl-]`.
 
 ### 3. Install apps
 
-Copy app files to `/sdcard/apps/` on the microSD card. The launcher scans that directory
-at boot.
+Copy `.lua` files to `/apps/` on the microSD card, then reboot the board. The launcher
+lists everything it finds there, using the filename as the app name.
+
+That is the entire install process — no reflash, no rebuild, no toolchain. It is how you
+install someone else's app, and how they install yours.
+
+Two apps ship in [`apps/`](apps/): `counter.lua` (the template — copy this) and
+`hello_world.lua`.
+
+### 4. Using it
+
+- Tap a row to launch that app.
+- **Press PWR briefly to return to the launcher.** It is hardware, so it works even if an
+  app misbehaves. (Holding ≥6 s still powers the board off.)
 
 ---
 
@@ -76,6 +88,12 @@ know them.
 - **ESP-IDF build failures after changing dependencies:** delete `build/`,
   `managed_components/`, and `dependencies.lock`, then rebuild.
 - **Display brightness** is register `0x51` over QSPI, `0x00`–`0xFF`.
+- **`bsp_display_start()` alone leaves the panel dark.** The LCD and touch reset lines are
+  on the TCA9554 IO expander, which the BSP never initialises, so the panel stays held in
+  reset with no error anywhere. The launcher pulses EXIO1/EXIO2 before display init.
+- **`Long filenames on SD card are disabled` is a false warning** — the BSP tests a
+  Kconfig choice name that is never defined as a symbol. LFN is genuinely on.
+- **Touch is not pixel-accurate**: keep tap targets ≥ ~200×100 or taps get dropped.
 
 ---
 
@@ -84,7 +102,7 @@ know them.
 | Path | What |
 | --- | --- |
 | `launcher/` | ESP-IDF project — BSP, LVGL, Lua runtime, app loader |
-| `apps/template/` | Copy this to start an app |
+| `apps/counter.lua` | Copy this to start an app |
 | `docs/APP_CONTRACT.md` | The app API — the one doc app authors need |
 | `CLAUDE.md` | Shared context for Claude Code sessions |
 
