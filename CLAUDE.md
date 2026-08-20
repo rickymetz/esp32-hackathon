@@ -90,6 +90,16 @@ These cost an hour each if you don't know them. Most were hit for real in this r
 - **PWR: hold ≥6 s to power off**, click to power on. Power is under AXP2101 control.
 - Changed dependencies → delete `build/`, `managed_components/`, `dependencies.lock`.
 - `i2c.master: Please check pull-up resistances` on boot is benign on this board.
+- **`Warning: Long filenames on SD card are disabled` is a BSP bug, not a real
+  problem.** The BSP tests `CONFIG_FATFS_LONG_FILENAMES`, which is a Kconfig *choice*
+  name and so is never defined as a symbol — the warning fires unconditionally. Check
+  `CONFIG_FATFS_LFN_HEAP` in `sdkconfig` for the truth. LFN **is** enabled here, and it
+  matters: without it app filenames are limited to 8.3.
+- **Touch is not pixel-accurate.** Measured on hardware: a 240×120 button catches every
+  tap, while a 180×56 one dropped roughly half. Size tappable targets ≥ ~200×100. This
+  looks exactly like broken event plumbing, so check target size before debugging events.
+- **The default 1 MB app partition is too small.** LVGL + Lua + the bindings leave 4%
+  free. `partitions.csv` gives the app 4 MB.
 
 ## Architecture
 
@@ -98,9 +108,19 @@ These cost an hour each if you don't know them. Most were hit for real in this r
 - Runtime: `espressif/lua` (official component) + LVGL bindings from `espressif/esp-claw`
   (`components/lua_modules/lua_module_lvgl`)
 
-Apps get a **root container, never the screen**. The launcher deletes that container on
-exit, which is what makes widget cleanup automatic. Every app hook runs inside a protected
-call so a Lua error shows on screen instead of rebooting the board.
+Each app runs in **its own Lua VM on its own task**, created with the allocator pointed at
+PSRAM. The launcher keeps its own LVGL screen and restores it when an app stops, so a
+crashed or exited app cannot leave the device unusable.
+
+**Lua event callbacks only queue — they do not fire on their own.** The LVGL event
+trampoline in `lua_module_lvgl` enqueues the callback; something must call
+`lvgl.process_events()` to drain the queue. The launcher pumps this from the app task so
+apps stay declarative: an app builds its UI, wires callbacks, and *returns*. An app that
+writes its own `while true` loop freezes the device.
+
+That pump needs **a positive timeout and a yield**. `process_events(0)` returns
+immediately when the queue is empty; looping on it starves the idle task and trips the
+task watchdog.
 
 Verified on hardware: **Lua 5.5.0 runs**, VM costs ~15.5 KB of PSRAM. Its allocator is
 pointed at `MALLOC_CAP_SPIRAM` so apps cannot starve internal DRAM.

@@ -1,0 +1,7 @@
+# Name,     Type, SubType,  Offset,   Size
+# 16MB flash. The default 1MB app partition is far too small once LVGL, Lua
+# and the LVGL-Lua bindings are all linked in -- it was 4% free.
+nvs,        data, nvs,      0x9000,   0x6000
+phy_init,   data, phy,      0xf000,   0x1000
+factory,    app,  factory,  0x10000,  0x400000
+storage,    data, fat,      ,         0x400000

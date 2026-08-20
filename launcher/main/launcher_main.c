@@ -1,22 +1,27 @@
 /*
  * Launcher: BSP + LVGL + Lua.
  *
- * Two things here are non-obvious and were established by testing on hardware:
+ * Lists the Lua apps found on the SD card and runs the one you tap. Each app
+ * gets its own Lua VM on its own task; the launcher keeps its own screen and
+ * restores it when the app stops.
+ *
+ * Three things here are non-obvious, all established by testing on hardware:
  *
  * 1. bsp_display_start() alone leaves the panel dark. BSP_LCD_RST /
  *    BSP_LCD_TOUCH_RST / BSP_LCD_BACKLIGHT are all GPIO_NUM_NC on this board --
  *    the reset lines hang off the TCA9554 IO expander, which the BSP never
  *    initialises, so the panel sits held in reset with no error reported.
- *    release_panel_reset() reproduces the vendor's own EXIO1/EXIO2 pulse.
  *
- * 2. Lua event callbacks do not fire on their own. The LVGL event trampoline
- *    in lua_module_lvgl only *enqueues* callbacks; something must call
- *    lvgl.process_events() to drain the queue. We pump it from the app task
- *    rather than making every app write its own loop -- that keeps apps
- *    declarative and leaves the launcher able to stop them.
+ * 2. Lua event callbacks only queue. The LVGL event trampoline in
+ *    lua_module_lvgl enqueues; something must call lvgl.process_events() to
+ *    drain it. The launcher pumps it so apps stay declarative.
+ *
+ * 3. That pump needs a positive timeout AND a yield. A zero timeout returns
+ *    immediately and starves the idle task into a watchdog reset.
  */
 
 #include <stdio.h>
+#include <string.h>
 #include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -34,6 +39,7 @@
 #include "cap_lua.h"
 #include "display_service.h"
 #include "lua_module_lvgl.h"
+#include "app_registry.h"
 
 static const char *TAG = "launcher";
 
@@ -47,32 +53,13 @@ static const char *TAG = "launcher";
 #define APP_TASK_STACK  (32 * 1024)
 #define EVENT_PUMP_MS   100
 
-/* First app, embedded until loading from SD lands. Note it has no loop of its
- * own: it builds the UI, wires callbacks, and returns. */
-static const char APP_HELLO[] =
-    "local lvgl = require('lvgl')                                  \n"
-    "lvgl.init({ buffer_lines = 40 })                              \n"
-    "local scr = lvgl.create_screen()                              \n"
-    "scr:set_style({ bg_color = '#101014' })                       \n"
-    "local title = lvgl.label(scr, {                               \n"
-    "    text = 'Hello from Lua',                                  \n"
-    "    align = 'top_mid', y = 30, text_color = '#ffffff' })      \n"
-    "local n = 0                                                   \n"
-    "for i = 1, 10 do n = n + i * i end                            \n"
-    "lvgl.label(scr, {                                             \n"
-    "    text = 'sum of squares = ' .. n,                          \n"
-    "    align = 'bottom_mid', y = -30, text_color = '#6ce86c' })      \n"
-    "local btn = lvgl.button(scr, {                                \n"
-    "    text = 'Tap me', align = 'center', y = 0,                 \n"
-    "    w = 240, h = 120,                                         \n"
-    "    bg_color = '#2f80ed', text_color = '#ffffff' })           \n"
-    "local taps = 0                                                \n"
-    "btn:on('clicked', function()                                  \n"
-    "    taps = taps + 1                                           \n"
-    "    title:set_text('tapped ' .. taps)                         \n"
-    "end)                                                          \n"
-    "scr:load()                                                    \n"
-    "return 'app started'                                          \n";
+/* Touch on this panel is not pixel-accurate, so small targets get missed.
+ * Verified on hardware: a 240x120 button catches every tap where a 180x56
+ * one dropped roughly half. Keep launcher rows at least this tall. */
+#define ROW_HEIGHT      72
+
+static lv_obj_t *s_launcher_screen;
+static TaskHandle_t s_app_task;
 
 static esp_err_t release_panel_reset(void)
 {
@@ -131,65 +118,129 @@ static bool pump_events(lua_State *L, int timeout_ms)
     return true;
 }
 
-typedef struct {
-    const char *name;
-    const char *src;
-} app_desc_t;
+static void show_launcher_screen(void)
+{
+    if (s_launcher_screen == NULL) {
+        return;
+    }
+    bsp_display_lock(0);
+    lv_screen_load(s_launcher_screen);
+    bsp_display_unlock();
+}
 
-/* Runs one app in its own VM on its own task. A failing app is reported and
- * torn down; it must never take the launcher with it. */
+/* Runs one app in its own VM. A failing app is reported and torn down; it
+ * must never take the launcher with it. */
 static void lua_app_task(void *arg)
 {
-    const app_desc_t *app = (const app_desc_t *)arg;
+    const app_entry_t *app = (const app_entry_t *)arg;
     size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    lua_State *L;
 
-    lua_State *L = lua_newstate(lua_psram_alloc, NULL, 0);  /* Lua 5.5 takes a seed */
+    ESP_LOGI(TAG, "launching '%s' (%s)", app->name, app->path);
+    launcher_lua_request_stop(false);
+
+    L = lua_newstate(lua_psram_alloc, NULL, 0);  /* Lua 5.5 takes a seed */
     if (L == NULL) {
         ESP_LOGE(TAG, "lua_newstate failed for '%s'", app->name);
-        vTaskDelete(NULL);
-        return;
+        goto out;
     }
     luaL_openlibs(L);
     ESP_ERROR_CHECK(launcher_lua_open_modules(L));
 
-    if (luaL_dostring(L, app->src) != LUA_OK) {
+    if (luaL_dofile(L, app->path) != LUA_OK) {
         ESP_LOGE(TAG, "app '%s' failed: %s", app->name, lua_tostring(L, -1));
-        goto done;
+        goto close;
     }
-
-    ESP_LOGI(TAG, "app '%s': %s", app->name,
-             lua_tostring(L, -1) ? lua_tostring(L, -1) : "(no result)");
     lua_settop(L, 0);
 
-    ESP_LOGI(TAG, "app '%s' vm psram cost = %d bytes", app->name,
+    ESP_LOGI(TAG, "app '%s' running, vm psram cost = %d bytes", app->name,
              (int)(psram_before - heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
 
-    /* Event pump: this is what makes Lua callbacks actually fire.
-     * A positive timeout is the designed usage: process_events() then sleeps
-     * ~20ms internally between polls, giving good responsiveness. The small
-     * extra yield keeps the idle task fed. */
+    /* Event pump: this is what makes Lua callbacks actually fire. */
     while (!cap_lua_runtime_stop_requested(L)) {
         if (!pump_events(L, EVENT_PUMP_MS)) {
             break;
         }
         vTaskDelay(pdMS_TO_TICKS(5));
     }
-    ESP_LOGI(TAG, "app '%s' stopping", app->name);
 
-done:
+close:
     launcher_lua_run_exit_cleanup(L);
     lua_close(L);
     ESP_LOGI(TAG, "app '%s' closed, psram free=%u", app->name,
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+
+out:
+    show_launcher_screen();
+    s_app_task = NULL;
     vTaskDelete(NULL);
 }
 
-static void launch_app(const app_desc_t *app)
+static void app_row_clicked(lv_event_t *e)
 {
-    xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK, (void *)app, 5, NULL);
+    const app_entry_t *app = (const app_entry_t *)lv_event_get_user_data(e);
+
+    if (s_app_task != NULL) {
+        ESP_LOGW(TAG, "an app is already running");
+        return;
+    }
+    xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
+                (void *)app, 5, &s_app_task);
 }
 
-static const app_desc_t s_hello = { .name = "hello", .src = APP_HELLO };
+static void build_launcher_ui(void)
+{
+    size_t count = app_registry_count();
+
+    bsp_display_lock(0);
+
+    s_launcher_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_launcher_screen, lv_color_hex(0x0B0B0F), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_launcher_screen, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_launcher_screen, 0, LV_PART_MAIN);
+
+    lv_obj_t *header = lv_label_create(s_launcher_screen);
+    lv_label_set_text(header, "Apps");
+    lv_obj_set_style_text_color(header, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 24);
+
+    if (count == 0) {
+        lv_obj_t *empty = lv_label_create(s_launcher_screen);
+        lv_label_set_text(empty, app_registry_sd_mounted()
+                                     ? "No apps yet.\nCopy .lua files to\n/apps on the SD card."
+                                     : "No SD card.\nInsert one with an\n/apps directory.");
+        lv_obj_set_style_text_color(empty, lv_color_hex(0x8A8A99), LV_PART_MAIN);
+        lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_center(empty);
+    } else {
+        lv_obj_t *list = lv_obj_create(s_launcher_screen);
+        lv_obj_set_size(list, LV_PCT(100), LV_PCT(84));
+        lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
+        lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(list, 12, LV_PART_MAIN);
+        lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_style_pad_row(list, 10, LV_PART_MAIN);
+
+        for (size_t i = 0; i < count; i++) {
+            const app_entry_t *app = app_registry_get(i);
+
+            lv_obj_t *row = lv_button_create(list);
+            lv_obj_set_size(row, LV_PCT(100), ROW_HEIGHT);
+            lv_obj_set_style_bg_color(row, lv_color_hex(0x1E1E28), LV_PART_MAIN);
+            lv_obj_set_style_radius(row, 12, LV_PART_MAIN);
+            lv_obj_add_event_cb(row, app_row_clicked, LV_EVENT_CLICKED, (void *)app);
+
+            lv_obj_t *label = lv_label_create(row);
+            lv_label_set_text(label, app->name);
+            lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+            lv_obj_center(label);
+        }
+    }
+
+    lv_screen_load(s_launcher_screen);
+    bsp_display_unlock();
+}
 
 void app_main(void)
 {
@@ -208,14 +259,13 @@ void app_main(void)
 
     /* Hand the BSP display to the service the Lua LVGL binding talks to. */
     display_service_attach(disp);
+    ESP_ERROR_CHECK(lua_module_lvgl_register_with_data_root(BSP_SD_MOUNT_POINT));
 
-    /* Data root is where apps and their assets live. The FS driver registers
-     * even without a card; font loads then fall back to LVGL's built-in font. */
-    ESP_ERROR_CHECK(lua_module_lvgl_register_with_data_root("/sdcard"));
+    app_registry_scan();
+    build_launcher_ui();
 
-    launch_app(&s_hello);
-
-    ESP_LOGI(TAG, "internal free=%u psram free=%u",
+    ESP_LOGI(TAG, "ready: %u app(s), internal free=%u psram free=%u",
+             (unsigned)app_registry_count(),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
 }

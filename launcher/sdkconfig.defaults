@@ -17,3 +17,13 @@ CONFIG_FREERTOS_HZ=1000
 # lua_module_lvgl uses LVGL's Tiny TTF for runtime fonts
 CONFIG_LV_USE_TINY_TTF=y
 CONFIG_LV_TINY_TTF_FILE_SUPPORT=y
+
+# App files on SD need real names, not 8.3. Without this, "weather_clock.lua"
+# is invisible to the launcher.
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+
+# Custom partition table: the default 1MB app partition cannot fit
+# LVGL + Lua + the LVGL bindings.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
