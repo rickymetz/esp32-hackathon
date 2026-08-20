@@ -1,0 +1,6 @@
+## Vendored from espressif/esp-claw (Apache-2.0).
+## display_service and cap_lua are local shims -- see launcher/components/.
+dependencies:
+  espressif/esp_lcd_touch: "*"
+  lvgl/lvgl: "^9.5.0"
+  espressif/esp_lv_eaf_player: "^0.3"
