@@ -112,7 +112,7 @@ App sharing is the repo: apps live in `apps/`, people push theirs, others `git p
 Unlocks motion toys, clocks, pedometers and workout counters.
 
 ```lua
-store.get(k) / store.set(k, v)     -- namespaced per app, survives reboot
+store.get(k) / store.set(k, v)     -- survives reboot; see namespacing note
 imu.accel() -> x, y, z             -- g
 imu.gyro()  -> x, y, z             -- deg/s
 imu.steps() -> count               -- QMI8658 hardware pedometer
@@ -120,6 +120,10 @@ rtc.now()   -> {year, month, day, hour, min, sec, wday}
 battery.percent() / .volts() / .charging()
 json.encode(t) / json.decode(s)
 ```
+
+`store` is namespaced by the app's **filename stem** (`weather_clock.lua` →
+namespace `weather_clock`), so two apps cannot collide on a key. Renaming a file
+therefore orphans its stored data; that is acceptable and must be documented.
 
 The QMI8658's **hardware pedometer** makes step counters and workout apps nearly free
 rather than a signal-processing exercise.
@@ -151,7 +155,22 @@ capability apps can use too.
 
 LLM pass-throughs are a nice-to-have riding on `net.post` + HTTPS, not a separate feature.
 
-If this phase slips, everyone still has a working device and four app categories.
+If this phase slips, everyone still has a working device and five app categories
+(motion, clocks, games, sound, battery utilities).
+
+## Effort and sequencing
+
+The phases total roughly **12–13 working days**. Against a two-week runway that is only
+achievable because 1–2 embedded-comfortable people own the launcher while everyone else
+writes apps — and because Phase 1 deliberately makes app authors independent of the
+launcher team.
+
+**Each phase should get its own implementation plan.** Phase 1 is blocking and separable;
+plan and ship it before planning the rest. Phases 2–4 add new modules without changing
+existing ones, so they can be reordered or dropped without invalidating earlier work.
+
+If the runway compresses, drop from the bottom: Phase 4 first, then Phase 3. Never drop
+Phase 1 — without it there is no way for five people to participate at all.
 
 ## Out of scope
 
@@ -175,7 +194,7 @@ If this phase slips, everyone still has a working device and four app categories
 
 ## Risks
 
-1. **Networking slips.** Contained by being last; four app categories survive without it.
+1. **Networking slips.** Contained by being last; five app categories survive without it.
 2. **API churn after people start writing.** Mitigated by the freeze, and by phases 2–4
    only adding new modules rather than changing existing ones.
 3. **Serial push conflicts with logging.** Needs framing designed up front, not bolted on.
