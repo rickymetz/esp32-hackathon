@@ -29,7 +29,8 @@ wasted effort and is explicitly not being built.
 ### Wanted app categories
 
 Motion toys · clocks and watch faces · pedometers and workout counters · games and demos ·
-sound · battery utilities · network apps · LLM pass-throughs.
+sound · BLE (advertising, GATT server, HID) · battery utilities · network apps ·
+LLM pass-throughs.
 
 Tailscale was raised and **dropped** — no official ESP32 client, and a real one means
 WireGuard plus the coordination protocol. Not committed to, so not built.
@@ -60,6 +61,7 @@ Reuse is uneven, and that drives the estimates:
 | `imu` | `waveshare/qmi8658` v2.0.1 driver + hand-written binding | Medium |
 | `rtc`, `battery` | No component exists; write I²C drivers for PCF85063 / AXP2101 | Medium |
 | `audio` | BSP already provides `bsp_audio_init`, speaker and mic codec init | Medium |
+| `ble` | Vendor `lua_module_ble` + `lua_module_ble_hid`; needs only `bt`, `esp_timer`, `nvs_flash` and the `cap_lua` shim already built | Medium |
 | `net` | Nothing reusable; `esp_wifi` + `esp_http_client` + TLS | Large |
 
 **esp-claw's `lua_module_imu` is the wrong chip** — it supports BMI270 and ICM42670, not
@@ -128,7 +130,9 @@ therefore orphans its stored data; that is acceptable and must be documented.
 The QMI8658's **hardware pedometer** makes step counters and workout apps nearly free
 rather than a signal-processing exercise.
 
-### Phase 3 — Audio (~1–1.5 days)
+### Phase 3 — Audio and BLE (~3–4 days)
+
+#### Audio (~1–1.5 days)
 
 ```lua
 audio.tone(freq_hz, ms)      -- synth, feedback beeps
@@ -137,6 +141,32 @@ audio.mic_level() -> 0..1    -- RMS, for visualisers
 ```
 
 Built on the BSP's audio entry points. No MP3 decoding, no resampling.
+
+#### BLE (~1.5–2 days)
+
+Vendored from esp-claw the same way `lua_module_lvgl` was — it requires only IDF
+built-ins plus the `cap_lua` shim already written.
+
+```lua
+ble.init() / ble.set_name(s)
+ble.adv_start({ data = { name = "..." } })   -- advertise
+ble.gatts_define(profile)                    -- GATT server: services, characteristics,
+                                             -- read/write/notify/indicate
+-- plus lua_module_ble_hid for keyboard, mouse, media keys
+```
+
+**Peripheral only.** The module explicitly does not support scanning, observer mode,
+Central mode, or GATT Client — so the board can advertise and be connected *to*, but
+cannot connect *to* another device such as a heart-rate strap. Confirmed sufficient.
+Central mode would mean writing a GATT client against NimBLE from scratch and is out.
+
+Two integration points to design rather than discover:
+
+- **BLE needs its own event pump** (`ble.process_events`), exactly like LVGL. The app
+  task's pump loop must drive both, and must not let one starve the other.
+- **Enabling Bluetooth costs internal RAM** (~100 KB+). Internal DRAM, not PSRAM, is the
+  scarce resource here — measure free internal heap before and after, and treat a large
+  drop as a finding rather than a surprise.
 
 ### Phase 4 — Networking (~5 days)
 
@@ -155,12 +185,12 @@ capability apps can use too.
 
 LLM pass-throughs are a nice-to-have riding on `net.post` + HTTPS, not a separate feature.
 
-If this phase slips, everyone still has a working device and five app categories
-(motion, clocks, games, sound, battery utilities).
+If this phase slips, everyone still has a working device and six app categories
+(motion, clocks, games, sound, BLE, battery utilities).
 
 ## Effort and sequencing
 
-The phases total roughly **12–13 working days**. Against a two-week runway that is only
+The phases total roughly **14–16 working days**. Against a two-week runway that is only
 achievable because 1–2 embedded-comfortable people own the launcher while everyone else
 writes apps — and because Phase 1 deliberately makes app authors independent of the
 launcher team.
@@ -176,7 +206,8 @@ Phase 1 — without it there is no way for five people to participate at all.
 
 - **Tailscale** — dropped, see Context
 - **Emscripten simulator** — pointless with one board per person
-- **Camera, BLE, Wi-Fi app upload** — not asked for; Wi-Fi upload could follow Phase 4
+- **BLE Central / GATT Client** — connecting *to* sensors; not vendorable, out of scope
+- **Camera, Wi-Fi app upload** — not asked for; Wi-Fi upload could follow Phase 4
 - **USB Mass Storage** — the S3's serial/JTAG console and TinyUSB cannot both own the USB
   pins, so enabling MSC costs the serial console. Bad trade during a hackathon.
 
@@ -186,7 +217,7 @@ Phase 1 — without it there is no way for five people to participate at all.
   no ESP-IDF, pushes an app with `push.py`, and runs it. This is the real test.
 - **Phase 2–4**: one example app per capability, living in `apps/` as documentation that
   cannot rot — a level or dice app for the IMU, a clock for the RTC, a soundboard for
-  audio, a weather or LLM app for `net`.
+  audio, an HID remote for BLE, a weather or LLM app for `net`.
 - **Regression**: launch and exit apps repeatedly, confirming PSRAM returns to the same
   free figure. This already holds and must keep holding.
 - **Robustness**: an app that errors, and an app that loops forever, must both leave the
@@ -194,7 +225,7 @@ Phase 1 — without it there is no way for five people to participate at all.
 
 ## Risks
 
-1. **Networking slips.** Contained by being last; five app categories survive without it.
+1. **Networking slips.** Contained by being last; six app categories survive without it.
 2. **API churn after people start writing.** Mitigated by the freeze, and by phases 2–4
    only adding new modules rather than changing existing ones.
 3. **Serial push conflicts with logging.** Needs framing designed up front, not bolted on.
