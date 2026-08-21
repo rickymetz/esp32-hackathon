@@ -29,6 +29,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #include "esp_io_expander.h"
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
@@ -41,6 +42,7 @@
 #include "display_service.h"
 #include "lua_module_lvgl.h"
 #include "app_registry.h"
+#include "app_timer.h"
 #include "launcher_main.h"
 #include "serial_push.h"
 
@@ -170,6 +172,7 @@ static void lua_app_task(void *arg)
     }
     luaL_openlibs(L);
     ESP_ERROR_CHECK(launcher_lua_open_modules(L));
+    app_timer_reset(L);   /* no timers leak in from a previous app */
 
     if (luaL_dofile(L, app->path) != LUA_OK) {
         ESP_LOGE(TAG, "app '%s' failed: %s", app->name, lua_tostring(L, -1));
@@ -183,15 +186,30 @@ static void lua_app_task(void *arg)
     ESP_LOGI(TAG, "app '%s' running, vm psram cost = %d bytes", app->name,
              (int)(psram_before - heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
 
-    /* Event pump: this is what makes Lua callbacks actually fire. */
+    /* Event pump: this is what makes Lua callbacks actually fire. Timers run
+     * first each iteration, and the wait is shortened to the next timer
+     * deadline so a short timer is not stuck behind a long event wait. */
     while (!cap_lua_runtime_stop_requested(L)) {
-        if (!pump_events(L, EVENT_PUMP_MS)) {
+        int64_t next_due = app_timer_run_due(L);
+
+        int wait_ms = EVENT_PUMP_MS;
+        if (next_due != INT64_MAX) {
+            int64_t delta_ms = (next_due - esp_timer_get_time()) / 1000;
+            if (delta_ms < 0) {
+                delta_ms = 0;
+            }
+            if (delta_ms < wait_ms) {
+                wait_ms = (int)delta_ms;
+            }
+        }
+        if (!pump_events(L, wait_ms)) {
             break;
         }
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 
 close:
+    app_timer_reset(L);
     launcher_lua_run_exit_cleanup(L);
     lua_close(L);
     ESP_LOGI(TAG, "app '%s' closed, psram free=%u", app->name,
@@ -396,6 +414,7 @@ void app_main(void)
     /* Hand the BSP display to the service the Lua LVGL binding talks to. */
     display_service_attach(disp);
     ESP_ERROR_CHECK(lua_module_lvgl_register_with_data_root(BSP_SD_MOUNT_POINT));
+    ESP_ERROR_CHECK(app_timer_register());
 
     app_registry_scan();
     build_launcher_ui();
