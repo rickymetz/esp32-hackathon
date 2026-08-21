@@ -42,6 +42,7 @@
 #include "display_service.h"
 #include "lua_module_lvgl.h"
 #include "app_registry.h"
+#include "app_sandbox.h"
 #include "app_timer.h"
 #include "launcher_main.h"
 #include "serial_push.h"
@@ -173,6 +174,8 @@ static void lua_app_task(void *arg)
     luaL_openlibs(L);
     ESP_ERROR_CHECK(launcher_lua_open_modules(L));
     app_timer_reset(L);   /* no timers leak in from a previous app */
+    app_sandbox_apply(L);
+    app_sandbox_install_hook(L);
 
     if (luaL_dofile(L, app->path) != LUA_OK) {
         ESP_LOGE(TAG, "app '%s' failed: %s", app->name, lua_tostring(L, -1));

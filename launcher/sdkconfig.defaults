@@ -32,3 +32,15 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # output-only, so promote it to primary -- the board talks to the host over
 # native USB, not UART0.
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# A runaway app that the Lua hook cannot interrupt (a tight loop inside a C
+# call, or inside a coroutine) must not wedge the board forever. Panic on
+# watchdog so it reboots into a working launcher instead of warning every
+# 5 seconds until someone power-cycles it.
+CONFIG_ESP_TASK_WDT_PANIC=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
+
+# Default is 1000000, so runaway recursion tries to allocate ~16 MB of Lua
+# stack from PSRAM before raising "stack overflow" -- meaning the out-of-memory
+# lands on some unrelated allocation first and the real cause is invisible.
+CONFIG_LUA_MAXSTACK=65536
