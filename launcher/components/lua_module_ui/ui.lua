@@ -12,13 +12,35 @@ local TARGET = 88          -- design guide: minimum tappable square
 
 -- A corner control drawn at watch scale but hit at ours: watchOS corner
 -- buttons read ~60px on this panel, and Apple can hit them -- our
--- digitizer cannot. So the BUTTON is an invisible 88px (or wider)
--- target, and the visible circle/pill is a label inside it -- labels are
--- not clickable, so every tap lands on the button. Rick's call, matched
--- against Apple Translate's corner close button.
+-- digitizer cannot. Two stacked widgets do the split: a 60px visual
+-- button drawn first (buttons centre their glyphs, so the circle stays
+-- a circle -- a padded label went oval on the narrow x glyph), then an
+-- invisible 88px-or-wider button on top as the actual target. Z-order
+-- means the visual never sees a tap, clickable or not.
+-- Supports the two placements the headers use: top-left via x/y, and
+-- align="top_right" with a negative x.
 function M.corner_button(scr, opts)
     opts = opts or {}
     local w = opts.w or TARGET
+    local vis_w, vis_h = w - 28, 60
+    local inset_x = (w - vis_w) // 2
+    local inset_y = (TARGET - vis_h) // 2
+
+    local vx
+    if opts.align == "top_right" then
+        vx = (opts.x or 0) - inset_x
+    else
+        vx = (opts.x or 0) + inset_x
+    end
+
+    local visual = lvgl.button(scr, {
+        text = opts.text or lvgl.symbol.close,
+        align = opts.align, x = vx, y = (opts.y or 0) + inset_y,
+        w = vis_w, h = vis_h,
+        bg_color = opts.bg_color or "#1E1E28",
+        text_color = opts.text_color or "#9FB4C7",
+        radius = vis_h // 2,
+    })
 
     local btn = lvgl.button(scr, {
         x = opts.x, y = opts.y, align = opts.align,
@@ -26,22 +48,11 @@ function M.corner_button(scr, opts)
         bg_opa = 0,
     })
 
-    local visual = lvgl.label(btn, {
-        text = opts.text or lvgl.symbol.close,
-        align = "center",
-        text_color = opts.text_color or "#9FB4C7",
-    })
-    visual:set_style({
-        bg_color = opts.bg_color or "#1E1E28",
-        bg_opa = 255,
-        radius = 32,
-        pad = 14,
-    })
-
     if opts.on_click then
         btn:on("clicked", opts.on_click)
     end
-    return btn
+    -- Plain table handle: widget userdata cannot carry extra fields.
+    return { button = btn, visual = visual }
 end
 
 -- ---------------------------------------------------------------- header
