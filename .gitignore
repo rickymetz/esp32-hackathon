@@ -21,3 +21,6 @@ wifi.conf
 secrets*
 *.key
 .env
+
+# clangd index cache
+.cache/
