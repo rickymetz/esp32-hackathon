@@ -251,3 +251,34 @@ bool app_registry_write_app(const char *basename, const void *data, size_t len)
     registry_unlock();
     return true;
 }
+
+bool app_registry_delete_app(const char *basename)
+{
+    registry_lock();
+
+    if (!s_mounted) {
+        registry_unlock();
+        return false;
+    }
+
+    char path[APP_PATH_MAX];
+    int n = snprintf(path, sizeof(path), "%s/apps/%s", BSP_SD_MOUNT_POINT, basename);
+    if (n < 0 || n >= (int)sizeof(path)) {
+        registry_unlock();
+        return false;
+    }
+
+    /* Under the same lock as write/unmount for the same reason: a Refresh
+     * tap must not pull the filesystem out from under the unlink. remove()
+     * failing covers both "no such file" and an I/O error; the caller only
+     * needs "it is not on the card afterwards" vs "it may still be". */
+    if (remove(path) != 0) {
+        registry_unlock();
+        return false;
+    }
+
+    ESP_LOGI(TAG, "deleted %s", basename);
+    scan_locked();
+    registry_unlock();
+    return true;
+}

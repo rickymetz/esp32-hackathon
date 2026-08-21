@@ -71,12 +71,14 @@ static const char *TAG = "launcher";
 #define ROW_HEIGHT      104
 
 /* I3: caps rows actually rendered, independent of APP_MAX_COUNT (32). Only
- * ~3 rows fit on screen at once, so 16 is ample headroom without paging --
- * and it bounds refresh_clicked()'s peak LVGL-pool usage (it builds the new
- * screen before deleting the old one, so peak is ~2x one screen's rows)
- * regardless of how many apps the SD card accumulates. A truncated list
- * always says so below the last row rather than silently hiding apps. */
-#define MAX_VISIBLE_ROWS 16
+ * Bounds refresh_clicked()'s peak widget count (it builds the new screen
+ * before deleting the old one, so peak is ~2x one screen's rows). The old
+ * cap of 16 guarded a fixed internal LVGL pool that no longer exists --
+ * ff9acc2 moved LVGL's heap to PSRAM, where 2x64 rows is noise -- and it
+ * ended up hiding real apps behind a "more not shown" label on a card with
+ * 23. The list scrolls; 64 is a pathological-card backstop, not a UI
+ * limit. A truncated list still says so rather than silently hiding apps. */
+#define MAX_VISIBLE_ROWS 64
 
 static lv_obj_t *s_launcher_screen;
 static TaskHandle_t s_app_task;

@@ -82,6 +82,19 @@ bool app_registry_find_by_basename(const char *basename, app_entry_t *out);
  */
 bool app_registry_write_app(const char *basename, const void *data, size_t len);
 
+/**
+ * @brief Delete an app file from the SD card, under the registry lock.
+ *
+ * Same locking contract as app_registry_write_app(): the registry lock is
+ * what stops a concurrent Refresh from unmounting the card mid-unlink.
+ * Rescans before returning so the deleted app is gone from the list the
+ * moment the caller sees success.
+ *
+ * @return false if the card is not mounted or the unlink failed (which
+ *         includes "no such file").
+ */
+bool app_registry_delete_app(const char *basename);
+
 #ifdef __cplusplus
 }
 #endif

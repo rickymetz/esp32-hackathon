@@ -177,6 +177,50 @@ static void handle_run(const char *header)
     printf("RUN_OK %s\n", name);
 }
 
+/* LIST -- print every app the registry knows, one basename per line,
+ * then a LIST_OK trailer with the count. Copies each entry out of the
+ * registry (never holds the lock across printf). */
+static void handle_list(void)
+{
+    size_t n = 0;
+
+    for (size_t i = 0; i < APP_MAX_COUNT; i++) {
+        app_entry_t app;
+        if (!app_registry_get_copy(i, &app)) {
+            break;
+        }
+        const char *base = strrchr(app.path, '/');
+        printf("APP %s\n", base ? base + 1 : app.path);
+        n++;
+    }
+    printf("LIST_OK %u\n", (unsigned)n);
+}
+
+/* DELETE <basename.lua> -- remove an app file from the card. Goes through
+ * app_registry_delete_app(), which holds the registry lock across the
+ * unlink and rescans before returning -- never a bare unlink, so a
+ * concurrent Refresh cannot unmount the card mid-delete. */
+static void handle_delete(const char *header)
+{
+    char name[NAME_MAX + 1];
+
+    if (sscanf(header, "DELETE %64s", name) != 1 || !name_is_safe(name)) {
+        printf("DELETE_ERR bad_name\n");
+        return;
+    }
+    if (!registry_has_basename(name)) {
+        printf("DELETE_ERR not_found\n");
+        return;
+    }
+    if (!app_registry_delete_app(name)) {
+        printf("DELETE_ERR delete_failed\n");
+        return;
+    }
+
+    ESP_LOGI(TAG, "DELETE %s", name);
+    printf("DELETE_OK %s\n", name);
+}
+
 /* STOP -- ask the running app to stop, exactly as pressing BOOT does. */
 static void handle_stop(void)
 {
@@ -204,6 +248,10 @@ static void serial_push_task(void *arg)
             handle_run(line);
         } else if (strcmp(line, "STOP") == 0) {
             handle_stop();
+        } else if (strcmp(line, "LIST") == 0) {
+            handle_list();
+        } else if (strncmp(line, "DELETE ", 7) == 0) {
+            handle_delete(line);
         }
     }
 }
