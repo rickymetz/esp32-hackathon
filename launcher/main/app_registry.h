@@ -41,6 +41,14 @@ const app_entry_t *app_registry_get(size_t index);
 /** Whether the SD card is currently mounted. */
 bool app_registry_sd_mounted(void);
 
+/**
+ * @brief Forget the mounted SD card so the next scan remounts it.
+ *
+ * Without this a card that is removed and reinserted is never seen again,
+ * because the mount flag latches on first success.
+ */
+void app_registry_invalidate(void);
+
 #ifdef __cplusplus
 }
 #endif

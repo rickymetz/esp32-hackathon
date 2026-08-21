@@ -100,3 +100,12 @@ bool app_registry_sd_mounted(void)
 {
     return s_mounted;
 }
+
+void app_registry_invalidate(void)
+{
+    if (s_mounted) {
+        bsp_sdcard_unmount();
+        s_mounted = false;
+    }
+    s_count = 0;
+}

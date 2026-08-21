@@ -343,9 +343,50 @@ out:
     vTaskDelete(NULL);
 }
 
+/* "/sdcard/apps/counter.lua" -> "counter.lua" */
+static const char *path_basename(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
+/* Find the currently-registered app matching `basename` (e.g. "counter.lua").
+ * Looked up fresh every time rather than cached, because app_registry's
+ * static array can be rewritten in place by a rescan (Refresh, or a serial
+ * PUSH) between when a row was built and when it is tapped. */
+static const app_entry_t *find_app_by_basename(const char *basename)
+{
+    size_t count = app_registry_count();
+    for (size_t i = 0; i < count; i++) {
+        const app_entry_t *app = app_registry_get(i);
+        if (strcmp(path_basename(app->path), basename) == 0) {
+            return app;
+        }
+    }
+    return NULL;
+}
+
+/* Frees the heap copy of a row's basename (see build_launcher_ui) when LVGL
+ * deletes the row -- on Refresh's full rebuild and on ordinary screen
+ * teardown alike. */
+static void row_data_delete_cb(lv_event_t *e)
+{
+    free(lv_event_get_user_data(e));
+}
+
+/* Rows store a heap-allocated copy of the app's basename, not a raw
+ * app_entry_t* into app_registry's static array. That array is rewritten in
+ * place by every rescan -- Refresh, and (since PUSH also rescans at runtime)
+ * an ordinary file push too -- so a raw pointer captured when the row was
+ * built could point at a different app, or garbage, by the time it is
+ * tapped. Resolving by name at click time makes a stale row a no-op instead
+ * of a wrong-app launch. */
 static void app_row_clicked(lv_event_t *e)
 {
-    const app_entry_t *app = (const app_entry_t *)lv_event_get_user_data(e);
+    const char *basename = (const char *)lv_event_get_user_data(e);
+    if (basename == NULL) {
+        return;   /* strdup() failed when the row was built; nothing to launch */
+    }
 
     xSemaphoreTake(s_app_mutex, portMAX_DELAY);
     if (s_app_task != NULL) {
@@ -353,17 +394,18 @@ static void app_row_clicked(lv_event_t *e)
         ESP_LOGW(TAG, "an app is already running");
         return;
     }
-    s_current_app = *app;
+
+    const app_entry_t *match = find_app_by_basename(basename);
+    if (match == NULL) {
+        xSemaphoreGive(s_app_mutex);
+        ESP_LOGW(TAG, "tapped row '%s' is no longer in the registry", basename);
+        return;
+    }
+
+    s_current_app = *match;
     xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
                 NULL, 5, &s_app_task);
     xSemaphoreGive(s_app_mutex);
-}
-
-/* "/sdcard/apps/counter.lua" -> "counter.lua" */
-static const char *path_basename(const char *path)
-{
-    const char *slash = strrchr(path, '/');
-    return slash ? slash + 1 : path;
 }
 
 /* Launcher-side API for other modules (serial_push) to drive app lifecycle
@@ -384,15 +426,7 @@ bool launcher_run_app_by_name(const char *basename)
         return false;
     }
 
-    size_t count = app_registry_count();
-    const app_entry_t *match = NULL;
-    for (size_t i = 0; i < count; i++) {
-        const app_entry_t *app = app_registry_get(i);
-        if (strcmp(path_basename(app->path), basename) == 0) {
-            match = app;
-            break;
-        }
-    }
+    const app_entry_t *match = find_app_by_basename(basename);
     if (match == NULL) {
         xSemaphoreGive(s_app_mutex);
         ESP_LOGW(TAG, "RUN '%s': not found", basename);
@@ -419,6 +453,40 @@ bool launcher_stop_app(void)
     return true;
 }
 
+static void build_launcher_ui(void);
+
+/* Rebuilds the whole UI rather than reusing rows: every row holds a heap
+ * copy of its app's basename (see build_launcher_ui / find_app_by_basename),
+ * resolved fresh at tap time, so a stale row is merely a no-op rather than a
+ * wrong-app launch -- but the row list itself still needs to be rebuilt to
+ * reflect apps added or removed since the last scan. */
+static void refresh_clicked(lv_event_t *e)
+{
+    (void)e;
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    if (s_app_task != NULL) {
+        xSemaphoreGive(s_app_mutex);
+        return;   /* never rescan or rebuild under a running app */
+    }
+
+    lv_obj_t *old = s_launcher_screen;
+
+    app_registry_invalidate();
+    app_registry_scan();
+    build_launcher_ui();
+
+    /* build_launcher_ui() already loaded the new screen; delete the old one
+     * now that it is no longer the active screen. Never delete the screen
+     * that is currently on-screen -- that path is only reached here because
+     * the new screen has already replaced it. */
+    if (old != NULL && old != s_launcher_screen) {
+        lv_obj_delete(old);
+    }
+
+    xSemaphoreGive(s_app_mutex);
+}
+
 static void build_launcher_ui(void)
 {
     size_t count = app_registry_count();
@@ -434,6 +502,17 @@ static void build_launcher_ui(void)
     lv_label_set_text(header, "Apps");
     lv_obj_set_style_text_color(header, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 24);
+
+    lv_obj_t *refresh = lv_button_create(s_launcher_screen);
+    lv_obj_set_size(refresh, 200, 100);   /* >= 200x100; smaller drops taps */
+    lv_obj_align(refresh, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_set_style_bg_color(refresh, lv_color_hex(0x24303C), LV_PART_MAIN);
+    lv_obj_add_event_cb(refresh, refresh_clicked, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t *rlabel = lv_label_create(refresh);
+    lv_label_set_text(rlabel, "Refresh");
+    lv_obj_set_style_text_color(rlabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_center(rlabel);
 
     if (count == 0) {
         lv_obj_t *empty = lv_label_create(s_launcher_screen);
@@ -456,11 +535,19 @@ static void build_launcher_ui(void)
         for (size_t i = 0; i < count; i++) {
             const app_entry_t *app = app_registry_get(i);
 
+            /* Own copy of the basename, not a pointer into app_registry's
+             * static array: a rescan (Refresh, or a serial PUSH) rewrites
+             * that array in place, and this row can outlive the scan that
+             * built it. Freed in row_data_delete_cb when LVGL deletes the
+             * row. */
+            char *basename = strdup(path_basename(app->path));
+
             lv_obj_t *row = lv_button_create(list);
             lv_obj_set_size(row, LV_PCT(100), ROW_HEIGHT);
             lv_obj_set_style_bg_color(row, lv_color_hex(0x1E1E28), LV_PART_MAIN);
             lv_obj_set_style_radius(row, 12, LV_PART_MAIN);
-            lv_obj_add_event_cb(row, app_row_clicked, LV_EVENT_CLICKED, (void *)app);
+            lv_obj_add_event_cb(row, app_row_clicked, LV_EVENT_CLICKED, basename);
+            lv_obj_add_event_cb(row, row_data_delete_cb, LV_EVENT_DELETE, basename);
 
             lv_obj_t *label = lv_label_create(row);
             lv_label_set_text(label, app->name);
