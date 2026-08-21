@@ -82,6 +82,65 @@ static const char *TAG = "launcher";
 #define MAX_VISIBLE_ROWS 64
 
 static lv_obj_t *s_launcher_screen;
+
+/* ---- Synthetic touch injection (serial TAP/SWIPE; see launcher_main.h).
+ * Single-writer (serial task) / single-reader (LVGL task via read_cb),
+ * guarded by a spinlock because the fields must change atomically. ---- */
+typedef struct {
+    bool    active;
+    int     x0, y0, x1, y1;
+    int64_t start_us;
+    int64_t dur_us;
+} synth_touch_t;
+
+static portMUX_TYPE s_synth_lock = portMUX_INITIALIZER_UNLOCKED;
+static synth_touch_t s_synth;
+
+void launcher_input_inject(int x0, int y0, int x1, int y1, int duration_ms)
+{
+    if (duration_ms < 60) duration_ms = 60;
+    if (duration_ms > 2000) duration_ms = 2000;
+
+    portENTER_CRITICAL(&s_synth_lock);
+    s_synth.active = true;
+    s_synth.x0 = x0; s_synth.y0 = y0;
+    s_synth.x1 = x1; s_synth.y1 = y1;
+    s_synth.start_us = esp_timer_get_time();
+    s_synth.dur_us = (int64_t)duration_ms * 1000;
+    portEXIT_CRITICAL(&s_synth_lock);
+}
+
+/* Runs on the LVGL task. Reports PRESSED along the interpolated path for
+ * the gesture's duration, then one RELEASED at the end point. */
+static void synth_indev_read(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    (void)indev;
+    synth_touch_t t;
+
+    portENTER_CRITICAL(&s_synth_lock);
+    t = s_synth;
+    portEXIT_CRITICAL(&s_synth_lock);
+
+    if (!t.active) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+
+    int64_t el = esp_timer_get_time() - t.start_us;
+    if (el >= t.dur_us) {
+        data->point.x = t.x1;
+        data->point.y = t.y1;
+        data->state = LV_INDEV_STATE_RELEASED;
+        portENTER_CRITICAL(&s_synth_lock);
+        s_synth.active = false;
+        portEXIT_CRITICAL(&s_synth_lock);
+        return;
+    }
+
+    data->point.x = t.x0 + (int)((int64_t)(t.x1 - t.x0) * el / t.dur_us);
+    data->point.y = t.y0 + (int)((int64_t)(t.y1 - t.y0) * el / t.dur_us);
+    data->state = LV_INDEV_STATE_PRESSED;
+}
 static TaskHandle_t s_app_task;
 static esp_io_expander_handle_t s_expander;
 
@@ -810,6 +869,16 @@ void app_main(void)
                               lv_palette_main(LV_PALETTE_RED),
                               true /* dark */,
                               &lv_font_lexend_32));
+    bsp_display_unlock();
+
+    /* Synthetic touch indev for serial TAP/SWIPE -- same event pipeline
+     * as the real digitizer, so widgets cannot tell the difference. */
+    bsp_display_lock(0);
+    {
+        lv_indev_t *synth = lv_indev_create();
+        lv_indev_set_type(synth, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_read_cb(synth, synth_indev_read);
+    }
     bsp_display_unlock();
 
     /* Hand the BSP display to the service the Lua LVGL binding talks to. */

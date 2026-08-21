@@ -29,6 +29,18 @@ bool launcher_run_app_by_name(const char *basename);
  */
 bool launcher_stop_app(void);
 
+/**
+ * @brief Inject a synthetic touch gesture, as if a finger did it.
+ *
+ * A second LVGL pointer indev replays it through the normal event
+ * pipeline, so widgets cannot tell it from a real tap. A tap is a swipe
+ * with x0==x1, y0==y1. Duration is clamped to [60, 2000] ms.
+ *
+ * Exists for the serial TAP/SWIPE commands: together with SHOT they let
+ * an agent drive the UI and see the result without a human at the panel.
+ */
+void launcher_input_inject(int x0, int y0, int x1, int y1, int duration_ms);
+
 #ifdef __cplusplus
 }
 #endif

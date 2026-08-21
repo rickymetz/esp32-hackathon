@@ -268,6 +268,33 @@ static void handle_shot(void)
     bsp_display_unlock();
 }
 
+/* TAP <x> <y> / SWIPE <x0> <y0> <x1> <y1> [ms] -- synthetic touch through
+ * launcher_input_inject(). With SHOT this closes the agent's loop: look,
+ * tap, look again, no human at the panel. */
+static void handle_tap(const char *header)
+{
+    int x = 0, y = 0;
+
+    if (sscanf(header, "TAP %d %d", &x, &y) != 2) {
+        printf("TAP_ERR bad_args\n");
+        return;
+    }
+    launcher_input_inject(x, y, x, y, 80);
+    printf("TAP_OK\n");
+}
+
+static void handle_swipe(const char *header)
+{
+    int x0, y0, x1, y1, ms = 250;
+
+    if (sscanf(header, "SWIPE %d %d %d %d %d", &x0, &y0, &x1, &y1, &ms) < 4) {
+        printf("SWIPE_ERR bad_args\n");
+        return;
+    }
+    launcher_input_inject(x0, y0, x1, y1, ms);
+    printf("SWIPE_OK\n");
+}
+
 /* STOP -- ask the running app to stop, exactly as pressing BOOT does. */
 static void handle_stop(void)
 {
@@ -301,6 +328,10 @@ static void serial_push_task(void *arg)
             handle_delete(line);
         } else if (strcmp(line, "SHOT") == 0) {
             handle_shot();
+        } else if (strncmp(line, "TAP ", 4) == 0) {
+            handle_tap(line);
+        } else if (strncmp(line, "SWIPE ", 6) == 0) {
+            handle_swipe(line);
         }
     }
 }
