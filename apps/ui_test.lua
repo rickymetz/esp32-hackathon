@@ -70,7 +70,7 @@ name_row = ui.row(list1, {
 lvgl.label(p2, { text = "Select + confirm", align = "top_mid", y = 24, text_color = "#FFFFFF" })
 
 local list2 = lvgl.container(p2, {
-    x = 0, y = 70, w = 368, h = 240,
+    x = 0, y = 70, w = 368, h = 236,
     bg_opa = 0, border_width = 0, pad = 12,
 })
 list2:set_flex({ flow = "column", pad_row = 16 })
@@ -80,7 +80,7 @@ ui.select(list2, { options = { "Small", "Medium" }, selected = 2 },
 
 local danger = lvgl.button(p2, {
     text = lvgl.symbol.trash .. " Delete all",
-    align = "bottom_mid", y = -60,
+    align = "bottom_mid", y = -28,
     w = 344, h = 104,
     bg_color = "#B3261E", text_color = "#FFFFFF", radius = 12,
 })

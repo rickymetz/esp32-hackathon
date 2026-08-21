@@ -18,10 +18,12 @@ function M.header(scr, opts)
     local h = {}
 
     local glyph = (opts.kind == "sheet") and lvgl.symbol.close or lvgl.symbol.left
+    -- Inset 8px from the edges: the panel's glass corners are rounded and
+    -- clip anything drawn at x=0,y=0 (found by Rick on device).
     h.back = lvgl.button(scr, {
         text = glyph,
-        x = 0, y = 0, w = TARGET, h = TARGET,
-        bg_color = "#1E1E28", text_color = "#9FB4C7", radius = 12,
+        x = 8, y = 8, w = TARGET, h = TARGET,
+        bg_color = "#1E1E28", text_color = "#9FB4C7", radius = 16,
     })
     if opts.on_back then
         h.back:on("clicked", opts.on_back)
@@ -30,7 +32,7 @@ function M.header(scr, opts)
     if opts.title then
         h.title = lvgl.label(scr, {
             text = opts.title,
-            align = "top_mid", y = 28,
+            align = "top_mid", y = 32,
             text_color = "#FFFFFF",
         })
     end
@@ -38,8 +40,8 @@ function M.header(scr, opts)
     if opts.action then
         h.action = lvgl.button(scr, {
             text = opts.action,
-            align = "top_right", x = 0, y = 0, w = TARGET + 24, h = TARGET,
-            bg_color = "#1E1E28", text_color = "#9FB4C7", radius = 12,
+            align = "top_right", x = -8, y = 8, w = TARGET + 24, h = TARGET,
+            bg_color = "#1E1E28", text_color = "#9FB4C7", radius = 16,
         })
         if opts.on_action then
             h.action:on("clicked", opts.on_action)
@@ -110,6 +112,16 @@ function M.row(parent, opts)
             h.switch:on("value_changed", opts.on_change)
         end
         h.get = function() return h.switch:get_value() end
+        -- The whole 344x104 row is the target, not just the small switch
+        -- graphic (Rick: rows registered the tap but nothing toggled).
+        -- set_value does not emit value_changed, so on_change is called
+        -- by hand here; a tap on the switch itself takes the handler
+        -- above instead -- child clicks do not bubble, so never both.
+        h.row:on("clicked", function()
+            local now = h.switch:get_value()
+            h.switch:set_value(not (now and now ~= 0))
+            if opts.on_change then opts.on_change() end
+        end)
     elseif opts.kind == "check" then
         h.check = lvgl.label(h.row, {
             text = lvgl.symbol.ok,
@@ -262,21 +274,21 @@ function M.toast(scr, text)
 end
 
 -- ------------------------------------------------------------------ fill
--- Apple-Home-style full-screen drag-to-set value: a giant slider styled
--- as a fill, reading rendered inside. The control best matched to this
--- digitizer -- a drag needs no tap precision. cb() on change; read with
--- h.get().
+-- Big drag-to-set value control. An arc, not a slider: the binding has no
+-- per-part styling, and a screen-sized slider's indicator renders as an
+-- illegible blob (found by Rick on device). The arc is theme-native, the
+-- reading sits in its hole on true black, and dragging the ring needs no
+-- tap precision. cb() on change; read with h.get().
 function M.fill(scr, opts, cb)
     opts = opts or {}
     local h = {}
 
-    h.slider = lvgl.slider(scr, {
+    h.arc = lvgl.arc(scr, {
         min = opts.min or 0, max = opts.max or 100,
         value = opts.value or 0,
         align = "center",
-        w = 344, h = 380,
-        radius = 24,
-        bg_color = "#1E1E28",
+        w = 320, h = 320,
+        arc_width = 28,
     })
 
     h.label = lvgl.label(scr, {
@@ -288,16 +300,16 @@ function M.fill(scr, opts, cb)
 
     local fmt = opts.label or "%d"
     local function update()
-        h.label:set_text(string.format(fmt, h.slider:get_value()))
+        h.label:set_text(string.format(fmt, h.arc:get_value()))
     end
     update()
 
-    h.slider:on("value_changed", function()
+    h.arc:on("value_changed", function()
         update()
         if cb then cb() end
     end)
 
-    h.get = function() return h.slider:get_value() end
+    h.get = function() return h.arc:get_value() end
     return h
 end
 
