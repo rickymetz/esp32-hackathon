@@ -93,8 +93,19 @@ typedef struct {
     int64_t dur_us;
 } synth_touch_t;
 
+/* Queued, not overwritten: back-to-back serial TAPs used to clobber the
+ * in-flight gesture before its release was read, merging three taps into
+ * one long press (caught driving the stepper: +3 registered as +1). A
+ * small ring holds pending gestures; the read_cb starts the next only
+ * after the current one released AND an enforced released-state gap. */
+#define SYNTH_QUEUE  8
+#define SYNTH_GAP_US 90000
+
 static portMUX_TYPE s_synth_lock = portMUX_INITIALIZER_UNLOCKED;
-static synth_touch_t s_synth;
+static synth_touch_t s_synth_q[SYNTH_QUEUE];
+static int s_synth_head, s_synth_count;   /* head = next to run */
+static synth_touch_t s_synth_cur;         /* .active = running now */
+static int64_t s_synth_idle_since;
 
 void launcher_input_inject(int x0, int y0, int x1, int y1, int duration_ms)
 {
@@ -102,23 +113,36 @@ void launcher_input_inject(int x0, int y0, int x1, int y1, int duration_ms)
     if (duration_ms > 2000) duration_ms = 2000;
 
     portENTER_CRITICAL(&s_synth_lock);
-    s_synth.active = true;
-    s_synth.x0 = x0; s_synth.y0 = y0;
-    s_synth.x1 = x1; s_synth.y1 = y1;
-    s_synth.start_us = esp_timer_get_time();
-    s_synth.dur_us = (int64_t)duration_ms * 1000;
+    if (s_synth_count < SYNTH_QUEUE) {
+        int slot = (s_synth_head + s_synth_count) % SYNTH_QUEUE;
+        s_synth_q[slot] = (synth_touch_t){
+            .active = true,
+            .x0 = x0, .y0 = y0, .x1 = x1, .y1 = y1,
+            .start_us = 0,
+            .dur_us = (int64_t)duration_ms * 1000,
+        };
+        s_synth_count++;
+    }
     portEXIT_CRITICAL(&s_synth_lock);
 }
 
-/* Runs on the LVGL task. Reports PRESSED along the interpolated path for
- * the gesture's duration, then one RELEASED at the end point. */
+/* Runs on the LVGL task. Plays the current gesture (PRESSED along the
+ * interpolated path, one RELEASED at the end), then waits SYNTH_GAP_US
+ * in the released state before dequeuing the next. */
 static void synth_indev_read(lv_indev_t *indev, lv_indev_data_t *data)
 {
     (void)indev;
-    synth_touch_t t;
+    int64_t now = esp_timer_get_time();
 
     portENTER_CRITICAL(&s_synth_lock);
-    t = s_synth;
+    if (!s_synth_cur.active && s_synth_count > 0 &&
+        now - s_synth_idle_since >= SYNTH_GAP_US) {
+        s_synth_cur = s_synth_q[s_synth_head];
+        s_synth_cur.start_us = now;
+        s_synth_head = (s_synth_head + 1) % SYNTH_QUEUE;
+        s_synth_count--;
+    }
+    synth_touch_t t = s_synth_cur;
     portEXIT_CRITICAL(&s_synth_lock);
 
     if (!t.active) {
@@ -126,13 +150,14 @@ static void synth_indev_read(lv_indev_t *indev, lv_indev_data_t *data)
         return;
     }
 
-    int64_t el = esp_timer_get_time() - t.start_us;
+    int64_t el = now - t.start_us;
     if (el >= t.dur_us) {
         data->point.x = t.x1;
         data->point.y = t.y1;
         data->state = LV_INDEV_STATE_RELEASED;
         portENTER_CRITICAL(&s_synth_lock);
-        s_synth.active = false;
+        s_synth_cur.active = false;
+        s_synth_idle_since = now;
         portEXIT_CRITICAL(&s_synth_lock);
         return;
     }

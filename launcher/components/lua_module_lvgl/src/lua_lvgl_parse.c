@@ -350,8 +350,14 @@ void lua_lvgl_apply_common_opts_locked(lv_obj_t *obj, const lua_lvgl_opts_t *opt
         return;
     }
 
-    if (opts->w > 0 && opts->h > 0) {
-        lv_obj_set_size(obj, opts->w, opts->h);
+    /* Applied independently: requiring BOTH silently ignored w-only
+     * opts -- a confirm-dialog message passed w=340 for wrapping and
+     * rendered as one clipped line instead (persona-review minor). */
+    if (opts->w > 0) {
+        lv_obj_set_width(obj, opts->w);
+    }
+    if (opts->h > 0) {
+        lv_obj_set_height(obj, opts->h);
     }
     if (opts->align_value && lua_lvgl_parse_align(NULL, opts->align_value, &align) == ESP_OK) {
         lv_obj_align(obj, align, opts->x, opts->y);

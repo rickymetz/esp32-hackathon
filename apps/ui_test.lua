@@ -107,6 +107,10 @@ local bright_btn = lvgl.button(p3, {
     w = 344, h = 104,
     bg_color = "#1E1E28", text_color = "#FFFFFF", radius = 12,
 })
+local reps = ui.stepper(p3, { min = 0, max = 20, value = 5, label = "%d reps" },
+    function(v) end)
+reps.row:align("bottom_mid", 0, -40)
+
 bright_btn:on("clicked", function()
     ui.fill({ title = "Brightness", min = 0, max = 100, value = bright, label = "%d%%" },
         nil,

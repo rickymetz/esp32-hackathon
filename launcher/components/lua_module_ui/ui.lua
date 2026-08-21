@@ -348,6 +348,14 @@ function M.dots(scr, tv, opts)
     tv:on("value_changed", function()
         local page = tv:get_active_index()
         if page then mark(page) end
+        -- A fast multi-page fling coalesces events and the immediate read
+        -- can be stale (dot 1 lit on page 3, caught by harness). Re-read
+        -- once the snap animation has settled; costs one timer slot for
+        -- 400ms per swipe.
+        timer.after(400, function()
+            local settled = tv:get_active_index()
+            if settled then mark(settled) end
+        end)
     end)
     return h
 end
@@ -368,6 +376,94 @@ function M.toast(scr, text, ms)
         pill:delete()
     end)
     return pill
+end
+
+-- --------------------------------------------------------------- stepper
+-- Numeric +/- row: value label centre, minus left, plus right, clamped,
+-- with hold-to-repeat -- the interaction math every timer/reps app would
+-- otherwise hand-roll. cb(value) on every change; h.get()/h.set(v).
+function M.stepper(parent, opts, cb)
+    opts = opts or {}
+    local h = {}
+    local min = opts.min or 0
+    local max = opts.max or 99
+    local step = opts.step or 1
+    local value = opts.value or min
+    local fmt = opts.label or "%d"
+
+    h.row = lvgl.container(parent, {
+        w = 344, h = ROW_H,
+        bg_color = "#1E1E28", bg_opa = 255, border_width = 0, radius = 12,
+    })
+
+    h.label = lvgl.label(h.row, {
+        text = string.format(fmt, value),
+        align = "center",
+        text_color = "#FFFFFF",
+        font = lvgl.font(40),
+    })
+
+    local function apply(v)
+        if v < min then v = min end
+        if v > max then v = max end
+        if v == value then return end
+        value = v
+        h.label:set_text(string.format(fmt, value))
+        if cb then cb(value) end
+    end
+
+    local minus = lvgl.button(h.row, {
+        text = lvgl.symbol.minus,
+        align = "left_mid", x = 0, w = 96, h = ROW_H,
+        bg_color = "#24303C", text_color = "#FFFFFF", radius = 12,
+    })
+    local plus = lvgl.button(h.row, {
+        text = lvgl.symbol.plus,
+        align = "right_mid", x = 0, w = 96, h = ROW_H,
+        bg_color = "#24303C", text_color = "#FFFFFF", radius = 12,
+    })
+    minus:on("clicked", function() apply(value - step) end)
+    plus:on("clicked", function() apply(value + step) end)
+    minus:on("long_pressed_repeat", function() apply(value - step) end)
+    plus:on("long_pressed_repeat", function() apply(value + step) end)
+
+    h.get = function() return value end
+    h.set = function(v) apply(v) end
+    return h
+end
+
+-- ------------------------------------------------------------------ busy
+-- Modal wait state on its own screen: spinner + message. Returns a
+-- handle whose :done() restores the caller's screen. For anything that
+-- takes more than a beat (voice capture, SD churn) -- a frozen screen
+-- with no feedback reads as a crash on a watch.
+function M.busy(opts)
+    opts = opts or {}
+    local caller = lvgl.active_screen()
+    local scr = lvgl.create_screen()
+    scr:set_style({ bg_color = "#000000" })
+    scr:set_scroll({ dir = "none", scrollbar = "off" })
+
+    lvgl.spinner(scr, {
+        align = "center", y = -20,
+        w = 140, h = 140,
+    })
+    if opts.text then
+        lvgl.label(scr, {
+            text = opts.text,
+            align = "bottom_mid", y = -40,
+            text_color = "#8A8A99",
+        })
+    end
+
+    scr:load()
+
+    local h = {}
+    h.done = function()
+        caller:load()
+        scr:delete()
+    end
+    return h
 end
 
 -- ------------------------------------------------------------------ fill
