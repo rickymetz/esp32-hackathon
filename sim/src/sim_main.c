@@ -265,6 +265,26 @@ static void exec_cmd(int argc, char **argv)
         int ms = argc >= 6 ? atoi(argv[5]) : 250;
         sim_input_inject(x0, y0, x1, y1, ms);
         if (s_app) pump_until_idle(s_app);
+    } else if (!strcmp(cmd, "pwr")) {
+        /* PWR (bottom-right button) belongs to apps via require("button").
+         *   pwr            quick press+release  -> pressed, released
+         *   pwr down|up    a single edge
+         *   pwr long       hold >=2s            -> pressed, long_pressed, released
+         */
+        const char *mode = argc >= 2 ? argv[1] : "click";
+        if (!s_app) { fprintf(stderr, "pwr: no app running\n"); return; }
+        if (!strcmp(mode, "down")) {
+            app_button_record_edge(true);  pump_for(s_app, 120);
+        } else if (!strcmp(mode, "up")) {
+            app_button_record_edge(false); pump_for(s_app, 120);
+        } else if (!strcmp(mode, "long")) {
+            app_button_record_edge(true);  pump_for(s_app, 2300);
+            app_button_record_edge(false); pump_for(s_app, 120);
+        } else { /* click */
+            app_button_record_edge(true);  pump_for(s_app, 150);
+            app_button_record_edge(false); pump_for(s_app, 150);
+        }
+        printf("PWR_OK %s\n", mode);
     } else if (!strcmp(cmd, "shot")) {
         if (!need(argc, 2, "shot")) return;
         if (s_app) pump_once(s_app);

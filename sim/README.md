@@ -34,8 +34,13 @@ You can also call the binary directly:
 ```
 
 Verbs: `run <app.lua>`, `stop`, `tap x y`, `swipe x0 y0 x1 y1 [ms]`,
-`sleep <seconds>`, `shot <out.png>`. `--sdroot DIR` sets the SD-card root that
-app and `font_load` paths resolve against (default: repo root).
+`pwr [down|up|long]` (inject the PWR button — quick click by default),
+`sleep <seconds>`, `shot <out.png>`.
+
+Options: `--sdroot DIR` sets the SD-card root that app and `font_load` paths
+resolve against (default: repo root). `--timeout SECONDS` sets the per-app
+watchdog budget (default 10; a runaway app is stopped, then killed if it
+won't unwind).
 
 ## How it works
 
