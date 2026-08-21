@@ -341,8 +341,21 @@ Phase 4 lands.
 
 ## Risks
 
-1. **Internal DRAM exhaustion.** BLE + Wi-Fi coexisting is an **assumption**. Phase 0's
-   spike converts it to a fact on day 1. Fallback: mutually exclusive radios.
+1. **Internal DRAM exhaustion.** **Measured, not assumed** — Phase 0's spike (2026-08-20)
+   brought up NimBLE and Wi-Fi STA together and logged `heap_caps_get_largest_free_block()`
+   at each stage:
+
+   ```
+   SPIKE baseline       internal_free=139711 largest=61440 min_ever=63244
+   SPIKE after_nvs      internal_free=135627 largest=61440 min_ever=62540
+   SPIKE after_nimble   internal_free=101547 largest=31744 min_ever=62252
+   SPIKE after_wifi     internal_free=24795  largest=16384 min_ever=24728
+   ```
+
+   `largest` after Wi-Fi comes up is **16 KB** — under the 20 KB floor. **Decision: re-scope
+   now.** BLE and Wi-Fi become mutually exclusive: an app declares `ble` or `net` in its
+   manifest, and the launcher brings up only the radio that app asked for. Phases 3–4 need
+   to be replotted against this instead of "both radios always up."
 2. **The plan does not fit the runway.** Managed by the priority queue and freeze date, not
    by optimism.
 3. **API churn.** The timer arriving in Phase 1 rather than after the freeze is the whole
