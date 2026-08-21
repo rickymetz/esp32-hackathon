@@ -9,7 +9,6 @@
 #include "mbedtls/base64.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "bsp/esp-bsp.h"
 
 static const char *TAG = "serial_push";
 
@@ -97,10 +96,6 @@ static void handle_push(const char *header)
         printf("PUSH_ERR bad_length\n");
         return;
     }
-    if (!app_registry_sd_mounted()) {
-        printf("PUSH_ERR no_sdcard\n");
-        return;
-    }
 
     uint8_t *buf = malloc(expect_len);
     if (buf == NULL) {
@@ -136,40 +131,22 @@ static void handle_push(const char *header)
         return;
     }
 
-    /* Write to a temp file then rename, so a power loss mid-write cannot
-     * leave a half-written app that the launcher would try to run. */
-    char tmp_path[160], final_path[160];
-    snprintf(tmp_path,   sizeof(tmp_path),   "%s/apps/.push.tmp",  BSP_SD_MOUNT_POINT);
-    snprintf(final_path, sizeof(final_path), "%s/apps/%s",         BSP_SD_MOUNT_POINT, name);
-
-    FILE *f = fopen(tmp_path, "wb");
-    if (f == NULL) {
-        free(buf);
-        printf("PUSH_ERR open_failed\n");
-        return;
-    }
-    size_t written = fwrite(buf, 1, got, f);
-    fclose(f);
+    /* The payload is fully received and CRC-verified -- now, and only now,
+     * touch the SD card. app_registry_write_app() does the write (temp file
+     * + rename) and the registry rescan under the same lock that
+     * app_registry_invalidate() takes to unmount the card, so a concurrent
+     * Refresh cannot pull the filesystem out from under this write. The
+     * lock is held only for the write/rescan, never across the multi-second
+     * base64 receive above. */
+    bool wrote = app_registry_write_app(name, buf, got);
     free(buf);
 
-    if (written != got) {
-        remove(tmp_path);
+    if (!wrote) {
         printf("PUSH_ERR write_failed\n");
-        return;
-    }
-    remove(final_path);
-    if (rename(tmp_path, final_path) != 0) {
-        printf("PUSH_ERR rename_failed\n");
         return;
     }
 
     ESP_LOGI(TAG, "received %s (%u bytes)", name, (unsigned)got);
-
-    /* A freshly-pushed app is not in the registry yet -- pick it up now,
-     * before replying, so a RUN sent the instant the host sees PUSH_OK (the
-     * whole point of this channel) cannot race the rescan and see a stale
-     * registry. */
-    app_registry_scan();
     printf("PUSH_OK %s\n", name);
 }
 

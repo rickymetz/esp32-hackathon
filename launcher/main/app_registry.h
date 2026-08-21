@@ -68,6 +68,20 @@ void app_registry_invalidate(void);
  */
 bool app_registry_find_by_basename(const char *basename, app_entry_t *out);
 
+/**
+ * @brief Write an app file to the SD card, atomically and under the registry lock.
+ *
+ * The lock is what makes this safe: app_registry_invalidate() unmounts the card
+ * under the same lock, so it cannot pull the filesystem out from under an
+ * in-flight write.
+ *
+ * Writes to a temp file and renames, so a power loss cannot leave a
+ * half-written app that the launcher would then try to run.
+ *
+ * @return false if the card is not mounted or the write failed.
+ */
+bool app_registry_write_app(const char *basename, const void *data, size_t len);
+
 #ifdef __cplusplus
 }
 #endif

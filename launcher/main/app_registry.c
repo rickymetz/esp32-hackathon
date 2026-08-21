@@ -6,6 +6,7 @@
 
 #include "app_registry.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "bsp/esp-bsp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -62,17 +63,18 @@ static bool has_lua_suffix(const char *name)
     return len > 4 && strcasecmp(name + len - 4, ".lua") == 0;
 }
 
-esp_err_t app_registry_scan(void)
+/* Body of app_registry_scan(), without the lock. Callers that already hold
+ * registry_lock() (namely app_registry_write_app()) must call this directly
+ * -- s_lock is a plain mutex, not a recursive one, so taking it twice from
+ * the same task deadlocks instead of succeeding. */
+static esp_err_t scan_locked(void)
 {
-    registry_lock();
-
     s_count = 0;
 
     if (!s_mounted) {
         esp_err_t err = bsp_sdcard_mount();
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "no SD card (%s) -- no apps to load", esp_err_to_name(err));
-            registry_unlock();
             return ESP_ERR_NOT_FOUND;
         }
         s_mounted = true;
@@ -88,7 +90,6 @@ esp_err_t app_registry_scan(void)
         } else {
             ESP_LOGW(TAG, "cannot open or create %s", APPS_DIR);
         }
-        registry_unlock();
         return ESP_OK;
     }
 
@@ -110,8 +111,15 @@ esp_err_t app_registry_scan(void)
     closedir(dir);
 
     ESP_LOGI(TAG, "%u app(s) found", (unsigned)s_count);
-    registry_unlock();
     return ESP_OK;
+}
+
+esp_err_t app_registry_scan(void)
+{
+    registry_lock();
+    esp_err_t err = scan_locked();
+    registry_unlock();
+    return err;
 }
 
 size_t app_registry_count(void)
@@ -181,4 +189,65 @@ void app_registry_invalidate(void)
     }
     s_count = 0;
     registry_unlock();
+}
+
+bool app_registry_write_app(const char *basename, const void *data, size_t len)
+{
+    registry_lock();
+    int64_t lock_start_us = esp_timer_get_time();
+
+    if (!s_mounted) {
+        ESP_LOGI(TAG, "registry lock held %lld us (not mounted)",
+                 (long long)(esp_timer_get_time() - lock_start_us));
+        registry_unlock();
+        return false;
+    }
+
+    char tmp_path[APP_PATH_MAX], final_path[APP_PATH_MAX];
+    int n;
+
+    n = snprintf(tmp_path, sizeof(tmp_path), "%s/apps/.push.tmp", BSP_SD_MOUNT_POINT);
+    if (n < 0 || n >= (int)sizeof(tmp_path)) {
+        registry_unlock();
+        return false;
+    }
+    n = snprintf(final_path, sizeof(final_path), "%s/apps/%s", BSP_SD_MOUNT_POINT, basename);
+    if (n < 0 || n >= (int)sizeof(final_path)) {
+        registry_unlock();
+        return false;
+    }
+
+    /* Write to a temp file then rename, so a power loss mid-write cannot
+     * leave a half-written app that the launcher would try to run. */
+    FILE *f = fopen(tmp_path, "wb");
+    if (f == NULL) {
+        registry_unlock();
+        return false;
+    }
+    size_t written = fwrite(data, 1, len, f);
+    fclose(f);
+
+    if (written != len) {
+        remove(tmp_path);
+        registry_unlock();
+        return false;
+    }
+    remove(final_path);
+    if (rename(tmp_path, final_path) != 0) {
+        registry_unlock();
+        return false;
+    }
+
+    ESP_LOGI(TAG, "wrote %s (%u bytes)", basename, (unsigned)len);
+
+    /* Pick up the freshly-written app now, still under the lock, so a RUN
+     * sent the instant the host sees PUSH_OK cannot race the rescan and see
+     * a stale registry. Call the unlocked body directly -- s_lock is not
+     * recursive, so app_registry_scan() here would deadlock. */
+    scan_locked();
+
+    ESP_LOGI(TAG, "registry lock held %lld us (write+rescan)",
+             (long long)(esp_timer_get_time() - lock_start_us));
+    registry_unlock();
+    return true;
 }
