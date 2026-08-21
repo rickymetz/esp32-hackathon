@@ -162,9 +162,19 @@ static int traceback_handler(lua_State *L)
     return 1;
 }
 
+/* Body label sits between the title (top, ~44px) and the "press PWR" hint
+ * (bottom, ~40px) on the 368x448 panel. Capped and scrollable so a deep
+ * traceback stays reachable instead of overlapping the hint or being
+ * silently clipped. */
+#define ERROR_BODY_TOP     44
+#define ERROR_BODY_HEIGHT  330
+
 /* Show a failure on the panel. Five people debugging through one USB cable is
- * miserable; the error belongs where they are already looking. */
-static void show_error_screen(const char *app_name, const char *msg)
+ * miserable; the error belongs where they are already looking. Returns the
+ * screen object so the caller can delete it once it is no longer displayed --
+ * lv_screen_load() does not free the screen it replaces, and nothing else
+ * can see this one to clean it up. */
+static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
 {
     bsp_display_lock(0);
 
@@ -180,9 +190,12 @@ static void show_error_screen(const char *app_name, const char *msg)
     lv_obj_t *body = lv_label_create(scr);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(body, LV_PCT(96));
+    lv_obj_set_height(body, ERROR_BODY_HEIGHT);
+    lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(body, LV_DIR_VER);
     lv_label_set_text(body, msg ? msg : "(no message)");
     lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
-    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, 44);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, ERROR_BODY_TOP);
 
     lv_obj_t *hint = lv_label_create(scr);
     lv_label_set_text(hint, "press PWR to go back");
@@ -191,6 +204,7 @@ static void show_error_screen(const char *app_name, const char *msg)
 
     lv_screen_load(scr);
     bsp_display_unlock();
+    return scr;
 }
 
 /* Runs one app in its own VM. A failing app is reported and torn down; it
@@ -225,17 +239,46 @@ static void lua_app_task(void *arg)
     if (luaL_loadfile(L, app->path) != LUA_OK ||
         lua_pcall(L, 0, 0, errfunc) != LUA_OK) {
         const char *msg = lua_tostring(L, -1);
+
+        if (cap_lua_runtime_stop_requested(L)) {
+            /* The interrupt hook raises a Lua error to unwind a runaway app
+             * when PWR/STOP was pressed deliberately -- that is not a crash
+             * and must not flash the red error screen. Check the atomic
+             * stop flag, never the message string: an app can raise this
+             * exact text itself (deliberately, or by re-raising a caught
+             * error), and comparing strings would let the launcher silently
+             * swallow a genuine crash. */
+            ESP_LOGI(TAG, "app '%s' stopped: %s", app->name, msg ? msg : "(nil)");
+            lua_lvgl_force_unlock_if_held();
+            lua_settop(L, 0);
+            goto close;
+        }
+
         ESP_LOGE(TAG, "app '%s' failed: %s", app->name, msg ? msg : "(nil)");
         /* The error may have unwound out of an LVGL binding that was holding
          * the display lock. Without this the LVGL task blocks forever. The
          * error screen's own bsp_display_lock() below must come after this. */
         lua_lvgl_force_unlock_if_held();
-        show_error_screen(app->name, msg);
+        lv_obj_t *err_scr = show_error_screen(app->name, msg);
+        /* msg has now been copied into the label; safe to drop the Lua
+         * stack values (message handler + error string) it pointed into. */
+        lua_settop(L, 0);
+
         /* Leave the error on screen; PWR (via STOP / cap_lua_runtime_stop_requested)
          * returns to the launcher. */
         while (!cap_lua_runtime_stop_requested(L)) {
             vTaskDelay(pdMS_TO_TICKS(50));
         }
+
+        /* Load the launcher screen before deleting the error screen so the
+         * currently-active screen is never the one being freed. Nothing
+         * else can see err_scr to clean it up -- lv_screen_load() does not
+         * free the screen it replaces, so without this every crash leaked
+         * a screen plus its three labels. */
+        show_launcher_screen();
+        bsp_display_lock(0);
+        lv_obj_delete(err_scr);
+        bsp_display_unlock();
         goto close;
     }
     lua_remove(L, errfunc);
@@ -276,8 +319,21 @@ close:
     app_timer_reset(L);
     launcher_lua_run_exit_cleanup(L);
     lua_close(L);
-    ESP_LOGI(TAG, "app '%s' closed, psram free=%u", app->name,
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    {
+        /* internal_free is ESP heap; lv_mem free_size is LVGL's own fixed
+         * 64 KB pool (CONFIG_LV_MEM_SIZE_KILOBYTES) that the error screen
+         * is carved out of -- the pool a leaked error screen would exhaust
+         * over repeated crashes. Logged here so the leak (and its fix) is
+         * visible on every app close, not just crashes. */
+        lv_mem_monitor_t mon;
+        lv_mem_monitor(&mon);
+        ESP_LOGI(TAG, "app '%s' closed, psram free=%u, internal free=%u, "
+                 "lv_mem free=%u/%u",
+                 app->name,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)mon.free_size, (unsigned)mon.total_size);
+    }
 
 out:
     show_launcher_screen();
