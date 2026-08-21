@@ -21,6 +21,7 @@ idf_component_register(
     REQUIRES
         cap_lua
         display_service
+        fonts_lexend
         esp_lcd
         esp_lcd_touch
         esp_timer

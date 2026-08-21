@@ -63,15 +63,14 @@ CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
 # CMakeLists.txt / lv_assert_override.h as a force-included header instead.
 CONFIG_LV_ASSERT_HANDLER_INCLUDE="esp_system.h"
 
-# 14px (Montserrat 14, LVGL's built-in default) is ~7pt-equivalent on this
-# panel's 2x scale -- under half watchOS's sanctioned 12pt minimum. 32px is
-# the converged Apple/Wear body size at that scale; see docs/DESIGN_GUIDE.md.
-CONFIG_LV_FONT_MONTSERRAT_24=y
-CONFIG_LV_FONT_MONTSERRAT_26=y
-CONFIG_LV_FONT_MONTSERRAT_32=y
-CONFIG_LV_FONT_MONTSERRAT_40=y
-CONFIG_LV_FONT_MONTSERRAT_48=y
-CONFIG_LV_FONT_DEFAULT_MONTSERRAT_32=y
+# The real default font is Lexend 32 (components/fonts_lexend), set as the
+# THEME font in app_main() -- LVGL's LV_FONT_DEFAULT Kconfig choice only
+# offers bundled faces, so it cannot name Lexend. Montserrat 14 stays
+# compiled solely so the LV_FONT_DEFAULT macro resolves; nothing renders it.
+# 32px is the converged Apple/Wear body size on this panel's 2x scale; see
+# docs/DESIGN_GUIDE.md.
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
 
 # App files on SD need real names, not 8.3. Without this, "weather_clock.lua"
 # is invisible to the launcher.

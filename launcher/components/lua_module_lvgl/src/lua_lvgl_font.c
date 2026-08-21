@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "lua_lvgl_private.h"
+#include "lv_font_lexend.h"
 
 #include "claw_paths.h"
 
@@ -640,29 +641,17 @@ void lua_lvgl_register_font_metatable(lua_State *L)
     lua_pop(L, 1);
 }
 
-/* The compiled-in sizes lvgl.font() hands out. Guarded per-font so the
- * table tracks sdkconfig: today these are Montserrat (commit 993c3ae);
- * when the Lexend faces land the entries swap and the Lua API is
- * unchanged. */
+/* The compiled-in sizes lvgl.font() hands out: Lexend Medium with the
+ * FontAwesome symbol range, from components/fonts_lexend. */
 static const struct {
     int size;
     const lv_font_t *font;
 } s_builtin_fonts[] = {
-#if LV_FONT_MONTSERRAT_24
-    {24, &lv_font_montserrat_24},
-#endif
-#if LV_FONT_MONTSERRAT_26
-    {26, &lv_font_montserrat_26},
-#endif
-#if LV_FONT_MONTSERRAT_32
-    {32, &lv_font_montserrat_32},
-#endif
-#if LV_FONT_MONTSERRAT_40
-    {40, &lv_font_montserrat_40},
-#endif
-#if LV_FONT_MONTSERRAT_48
-    {48, &lv_font_montserrat_48},
-#endif
+    {24, &lv_font_lexend_24},
+    {26, &lv_font_lexend_26},
+    {32, &lv_font_lexend_32},
+    {40, &lv_font_lexend_40},
+    {48, &lv_font_lexend_48},
 };
 
 /* lvgl.font(size) -> font handle for a compiled-in face. Unlike

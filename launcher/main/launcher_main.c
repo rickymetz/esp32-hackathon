@@ -45,6 +45,7 @@
 #include "app_sandbox.h"
 #include "app_timer.h"
 #include "app_button.h"
+#include "lv_font_lexend.h"
 #include "driver/gpio.h"
 #include "launcher_main.h"
 #include "serial_push.h"
@@ -223,7 +224,7 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text_fmt(title, "%s failed", app_name);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_40, LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, &lv_font_lexend_40, LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
 
     lv_obj_t *body = lv_label_create(scr);
@@ -234,7 +235,7 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
     lv_label_set_text(body, msg ? msg : "(no message)");
     lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
-    lv_obj_set_style_text_font(body, &lv_font_montserrat_26, LV_PART_MAIN);
+    lv_obj_set_style_text_font(body, &lv_font_lexend_26, LV_PART_MAIN);
     lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, ERROR_BODY_TOP);
 
     lv_obj_t *hint = lv_label_create(scr);
@@ -587,7 +588,7 @@ static void build_launcher_ui(void)
     lv_obj_t *header = lv_label_create(s_launcher_screen);
     lv_label_set_text(header, "Apps");
     lv_obj_set_style_text_color(header, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(header, &lv_font_montserrat_40, LV_PART_MAIN);
+    lv_obj_set_style_text_font(header, &lv_font_lexend_40, LV_PART_MAIN);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 24);
 
     lv_obj_t *refresh = lv_button_create(s_launcher_screen);
@@ -608,7 +609,7 @@ static void build_launcher_ui(void)
                                      : "No SD card.\nInsert one with an\n/apps directory.");
         lv_obj_set_style_text_color(empty, lv_color_hex(0x8A8A99), LV_PART_MAIN);
         lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_font(empty, &lv_font_montserrat_26, LV_PART_MAIN);
+        lv_obj_set_style_text_font(empty, &lv_font_lexend_26, LV_PART_MAIN);
         lv_obj_center(empty);
     } else {
         lv_obj_t *list = lv_obj_create(s_launcher_screen);
@@ -644,7 +645,7 @@ static void build_launcher_ui(void)
             lv_obj_t *label = lv_label_create(row);
             lv_label_set_text(label, app.name);
             lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-            lv_obj_set_style_text_font(label, &lv_font_montserrat_32, LV_PART_MAIN);
+            lv_obj_set_style_text_font(label, &lv_font_lexend_32, LV_PART_MAIN);
             lv_obj_center(label);
 
             if (i == 0) {
@@ -652,13 +653,13 @@ static void build_launcher_ui(void)
                  * 32px font is actually resolved on a row label, not just
                  * requested: log the font object LVGL resolved for this
                  * label and its line_height. Montserrat 14's line_height is
-                 * 16px; Montserrat 32's is 35px. */
+                 * 16px; Lexend 32's is 36px. */
                 const lv_font_t *resolved =
                     lv_obj_get_style_text_font(label, LV_PART_MAIN);
                 ESP_LOGI(TAG, "row label font check: resolved=%p want=%p "
-                         "(montserrat_32), line_height=%d",
+                         "(lexend_32), line_height=%d",
                          (const void *)resolved,
-                         (const void *)&lv_font_montserrat_32,
+                         (const void *)&lv_font_lexend_32,
                          lv_font_get_line_height(resolved));
             }
         }
@@ -670,7 +671,7 @@ static void build_launcher_ui(void)
             lv_label_set_text_fmt(more, "%u more not shown",
                                    (unsigned)(count - MAX_VISIBLE_ROWS));
             lv_obj_set_style_text_color(more, lv_color_hex(0x8A8A99), LV_PART_MAIN);
-            lv_obj_set_style_text_font(more, &lv_font_montserrat_26, LV_PART_MAIN);
+            lv_obj_set_style_text_font(more, &lv_font_lexend_26, LV_PART_MAIN);
             lv_obj_set_style_text_align(more, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
             lv_obj_set_width(more, LV_PCT(100));
         }
@@ -773,6 +774,22 @@ void app_main(void)
     }
     bsp_display_backlight_on();
 
+    /* Lexend as the theme default font. LVGL's Kconfig LV_FONT_DEFAULT
+     * choice only offers its bundled faces, so the swap happens here via
+     * the theme instead: every widget on this display -- launcher and app
+     * screens alike -- resolves Lexend 32 unless a style overrides it.
+     * LV_FONT_DEFAULT stays Montserrat 14 (sdkconfig) purely so the macro
+     * still resolves; nothing renders it. Locked: the LVGL task is already
+     * live once bsp_display_start() returns. */
+    bsp_display_lock(0);
+    lv_display_set_theme(disp,
+        lv_theme_default_init(disp,
+                              lv_palette_main(LV_PALETTE_BLUE),
+                              lv_palette_main(LV_PALETTE_RED),
+                              true /* dark */,
+                              &lv_font_lexend_32));
+    bsp_display_unlock();
+
     /* Hand the BSP display to the service the Lua LVGL binding talks to. */
     display_service_attach(disp);
     ESP_ERROR_CHECK(lua_module_lvgl_register_with_data_root(BSP_SD_MOUNT_POINT));
@@ -796,12 +813,13 @@ void app_main(void)
     xTaskCreate(button_poll_task, "buttons", 3072, NULL, 6, NULL);
     serial_push_start();
 
-    /* Structural proof the default font actually changed (no board display
-     * to look at from here): Montserrat 14's line_height is 16px;
-     * Montserrat 32's is 35px. CONFIG_LV_FONT_DEFAULT_MONTSERRAT_32 in
-     * sdkconfig.defaults is what lv_font_default() resolves below. */
-    ESP_LOGI(TAG, "default font line_height=%d (want 35 for montserrat_32)",
-             (int)lv_font_get_line_height(lv_font_get_default()));
+    /* Structural proof the theme font actually took (no board display to
+     * look at from here): Lexend 32's line_height is 36px. The row-label
+     * check above verifies the same thing on a real widget; this logs the
+     * theme's own font. LV_FONT_DEFAULT is Montserrat 14 by design and is
+     * deliberately NOT what is checked here. */
+    ESP_LOGI(TAG, "theme font line_height=%d (want 36 for lexend_32)",
+             (int)lv_font_get_line_height(&lv_font_lexend_32));
 
     ESP_LOGI(TAG, "ready: %u app(s), internal free=%u psram free=%u",
              (unsigned)app_registry_count(),
