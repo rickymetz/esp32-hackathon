@@ -47,6 +47,7 @@
 #include "app_button.h"
 #include "lv_font_lexend.h"
 #include "lua_module_ui.h"
+#include "app_voice.h"
 #include "driver/gpio.h"
 #include "launcher_main.h"
 #include "serial_push.h"
@@ -386,6 +387,7 @@ static int lua_setup_state(lua_State *L)
 
     app_timer_reset(L);   /* no timers leak in from a previous app */
     app_button_reset(L);  /* nor edges recorded before this app launched */
+    app_voice_reset(L);   /* nor a capture someone left running */
     app_sandbox_apply(L);
     app_sandbox_install_hook(L);
     return 0;
@@ -469,6 +471,7 @@ static void lua_app_task(void *arg)
      * deadline so a short timer is not stuck behind a long event wait. */
     while (!cap_lua_runtime_stop_requested(L)) {
         app_button_run_pending(L);
+        app_voice_run_pending(L);
         int64_t next_due = app_timer_run_due(L);
 
         int wait_ms = EVENT_PUMP_MS;
@@ -493,6 +496,7 @@ close:
     lua_lvgl_force_unlock_if_held();
     app_timer_reset(L);
     app_button_reset(L);
+    app_voice_reset(L);
     launcher_lua_run_exit_cleanup(L);
     lua_close(L);
     {
@@ -915,6 +919,7 @@ void app_main(void)
     ESP_ERROR_CHECK(app_button_register());
     /* After lvgl and timer: ui.lua/keyboard.lua require() both at load. */
     ESP_ERROR_CHECK(lua_module_ui_register());
+    ESP_ERROR_CHECK(app_voice_register());
 
     /* BOOT (GPIO0) is the Home button. Input + pull-up matches its idle
      * state; it is only special during reset, where the ROM samples it as a
