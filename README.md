@@ -70,6 +70,23 @@ Two apps ship in [`apps/`](apps/): `counter.lua` (the template — copy this) an
 
 ---
 
+## Develop without the board
+
+A headless **simulator** (`sim/`) runs apps on your computer and screenshots them — it
+compiles the launcher's real Lua↔LVGL bindings against desktop LVGL, so what renders
+matches the device. The fast way to iterate on an app, and the CI gate that render-tests
+every app on each PR.
+
+```bash
+cd sim && ./setup.sh && ./build.sh
+./sim/simctl.py run apps/counter.lua : tap 184 224 : shot out.png
+```
+
+It doesn't model hardware quirks (touch imprecision, the watchdog, IMU/voice) — confirm
+those on the board. See `sim/README.md`, and `apps/README.md` for the example apps.
+
+---
+
 ## Gotchas
 
 Real ones, hit in practice or documented by the vendor. Most cost an hour if you don't
@@ -103,7 +120,8 @@ know them.
 | Path | What |
 | --- | --- |
 | `launcher/` | ESP-IDF project — BSP, LVGL, Lua runtime, app loader |
-| `apps/counter.lua` | Copy this to start an app |
+| `apps/` | Lua apps, one file each; `apps/README.md` indexes them |
+| `sim/` | Headless simulator — run and screenshot apps with no board |
 | `docs/APP_CONTRACT.md` | The app API — the one doc app authors need |
 | `CLAUDE.md` | Shared context for Claude Code sessions |
 
