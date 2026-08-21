@@ -49,6 +49,16 @@ bool app_registry_sd_mounted(void);
  */
 void app_registry_invalidate(void);
 
+/**
+ * @brief Find an app by its file basename and copy it out.
+ *
+ * Returns a copy rather than a pointer because the caller may hold it while
+ * a concurrent PUSH rescans and rewrites the shared array.
+ *
+ * @return true if found and copied into *out.
+ */
+bool app_registry_find_by_basename(const char *basename, app_entry_t *out);
+
 #ifdef __cplusplus
 }
 #endif

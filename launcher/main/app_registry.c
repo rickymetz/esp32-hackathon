@@ -7,6 +7,8 @@
 #include "app_registry.h"
 #include "esp_log.h"
 #include "bsp/esp-bsp.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "app_registry";
 
@@ -15,6 +17,27 @@ static const char *TAG = "app_registry";
 static app_entry_t s_apps[APP_MAX_COUNT];
 static size_t s_count;
 static bool s_mounted;
+
+/* Guards s_apps/s_count/s_mounted so a scan (app_registry_scan(), which can
+ * run on the serial task via PUSH, or on the LVGL task via Refresh) can
+ * never be observed half-done by a reader on another task. Lazily created:
+ * the first call into this module is always app_registry_scan() from
+ * app_main(), single-threaded, before serial_push or the Refresh button's
+ * task exist to race the creation. */
+static SemaphoreHandle_t s_lock;
+
+static void registry_lock(void)
+{
+    if (s_lock == NULL) {
+        s_lock = xSemaphoreCreateMutex();
+    }
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+}
+
+static void registry_unlock(void)
+{
+    xSemaphoreGive(s_lock);
+}
 
 /* "weather_clock.lua" -> "weather clock" */
 static void pretty_name(const char *filename, char *out, size_t out_size)
@@ -41,12 +64,15 @@ static bool has_lua_suffix(const char *name)
 
 esp_err_t app_registry_scan(void)
 {
+    registry_lock();
+
     s_count = 0;
 
     if (!s_mounted) {
         esp_err_t err = bsp_sdcard_mount();
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "no SD card (%s) -- no apps to load", esp_err_to_name(err));
+            registry_unlock();
             return ESP_ERR_NOT_FOUND;
         }
         s_mounted = true;
@@ -62,6 +88,7 @@ esp_err_t app_registry_scan(void)
         } else {
             ESP_LOGW(TAG, "cannot open or create %s", APPS_DIR);
         }
+        registry_unlock();
         return ESP_OK;
     }
 
@@ -83,29 +110,72 @@ esp_err_t app_registry_scan(void)
     closedir(dir);
 
     ESP_LOGI(TAG, "%u app(s) found", (unsigned)s_count);
+    registry_unlock();
     return ESP_OK;
 }
 
 size_t app_registry_count(void)
 {
-    return s_count;
+    registry_lock();
+    size_t count = s_count;
+    registry_unlock();
+    return count;
 }
 
 const app_entry_t *app_registry_get(size_t index)
 {
-    return (index < s_count) ? &s_apps[index] : NULL;
+    registry_lock();
+    const app_entry_t *app = (index < s_count) ? &s_apps[index] : NULL;
+    registry_unlock();
+    return app;
+}
+
+/* "/sdcard/apps/counter.lua" -> "counter.lua" */
+static const char *entry_basename(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
+bool app_registry_find_by_basename(const char *basename, app_entry_t *out)
+{
+    registry_lock();
+    bool found = false;
+    for (size_t i = 0; i < s_count; i++) {
+        if (strcmp(entry_basename(s_apps[i].path), basename) == 0) {
+            *out = s_apps[i];
+            found = true;
+            break;
+        }
+    }
+    registry_unlock();
+    return found;
 }
 
 bool app_registry_sd_mounted(void)
 {
-    return s_mounted;
+    registry_lock();
+    bool mounted = s_mounted;
+    registry_unlock();
+    return mounted;
 }
 
 void app_registry_invalidate(void)
 {
+    registry_lock();
     if (s_mounted) {
-        bsp_sdcard_unmount();
-        s_mounted = false;
+        esp_err_t err = bsp_sdcard_unmount();
+        if (err == ESP_OK) {
+            s_mounted = false;
+        } else {
+            /* Mount point is likely still registered with the FAT driver.
+             * Leaving s_mounted true stops the next scan from attempting a
+             * doomed remount, which would otherwise fail forever and read
+             * as "no SD card" with a good card inserted. */
+            ESP_LOGW(TAG, "SD unmount failed (%s) -- leaving mount state as-is",
+                     esp_err_to_name(err));
+        }
     }
     s_count = 0;
+    registry_unlock();
 }

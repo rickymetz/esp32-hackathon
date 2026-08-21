@@ -350,22 +350,6 @@ static const char *path_basename(const char *path)
     return slash ? slash + 1 : path;
 }
 
-/* Find the currently-registered app matching `basename` (e.g. "counter.lua").
- * Looked up fresh every time rather than cached, because app_registry's
- * static array can be rewritten in place by a rescan (Refresh, or a serial
- * PUSH) between when a row was built and when it is tapped. */
-static const app_entry_t *find_app_by_basename(const char *basename)
-{
-    size_t count = app_registry_count();
-    for (size_t i = 0; i < count; i++) {
-        const app_entry_t *app = app_registry_get(i);
-        if (strcmp(path_basename(app->path), basename) == 0) {
-            return app;
-        }
-    }
-    return NULL;
-}
-
 /* Frees the heap copy of a row's basename (see build_launcher_ui) when LVGL
  * deletes the row -- on Refresh's full rebuild and on ordinary screen
  * teardown alike. */
@@ -379,8 +363,10 @@ static void row_data_delete_cb(lv_event_t *e)
  * place by every rescan -- Refresh, and (since PUSH also rescans at runtime)
  * an ordinary file push too -- so a raw pointer captured when the row was
  * built could point at a different app, or garbage, by the time it is
- * tapped. Resolving by name at click time makes a stale row a no-op instead
- * of a wrong-app launch. */
+ * tapped. Resolving by name at click time via app_registry_find_by_basename()
+ * makes a stale row a no-op instead of a wrong-app launch or a crash: the
+ * lookup and the copy-out happen under the registry's own lock, so a PUSH
+ * rescanning concurrently on the serial task cannot be observed half-done. */
 static void app_row_clicked(lv_event_t *e)
 {
     const char *basename = (const char *)lv_event_get_user_data(e);
@@ -395,14 +381,14 @@ static void app_row_clicked(lv_event_t *e)
         return;
     }
 
-    const app_entry_t *match = find_app_by_basename(basename);
-    if (match == NULL) {
+    app_entry_t match;
+    if (!app_registry_find_by_basename(basename, &match)) {
         xSemaphoreGive(s_app_mutex);
         ESP_LOGW(TAG, "tapped row '%s' is no longer in the registry", basename);
         return;
     }
 
-    s_current_app = *match;
+    s_current_app = match;
     xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
                 NULL, 5, &s_app_task);
     xSemaphoreGive(s_app_mutex);
@@ -426,14 +412,14 @@ bool launcher_run_app_by_name(const char *basename)
         return false;
     }
 
-    const app_entry_t *match = find_app_by_basename(basename);
-    if (match == NULL) {
+    app_entry_t match;
+    if (!app_registry_find_by_basename(basename, &match)) {
         xSemaphoreGive(s_app_mutex);
         ESP_LOGW(TAG, "RUN '%s': not found", basename);
         return false;
     }
 
-    s_current_app = *match;
+    s_current_app = match;
     xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
                 NULL, 5, &s_app_task);
     xSemaphoreGive(s_app_mutex);
@@ -456,7 +442,7 @@ bool launcher_stop_app(void)
 static void build_launcher_ui(void);
 
 /* Rebuilds the whole UI rather than reusing rows: every row holds a heap
- * copy of its app's basename (see build_launcher_ui / find_app_by_basename),
+ * copy of its app's basename (see build_launcher_ui / app_registry_find_by_basename),
  * resolved fresh at tap time, so a stale row is merely a no-op rather than a
  * wrong-app launch -- but the row list itself still needs to be rebuilt to
  * reflect apps added or removed since the last scan. */
@@ -479,9 +465,17 @@ static void refresh_clicked(lv_event_t *e)
     /* build_launcher_ui() already loaded the new screen; delete the old one
      * now that it is no longer the active screen. Never delete the screen
      * that is currently on-screen -- that path is only reached here because
-     * the new screen has already replaced it. */
+     * the new screen has already replaced it.
+     *
+     * Explicitly locked even though refresh_clicked() only ever runs inside
+     * the LVGL task's own (recursive) lock today: that is an implicit
+     * invariant, not something lv_obj_delete() enforces, and it would break
+     * silently if Refresh is ever triggered from elsewhere -- e.g. a future
+     * serial REFRESH command, alongside the existing RUN/STOP. */
     if (old != NULL && old != s_launcher_screen) {
+        bsp_display_lock(0);
         lv_obj_delete(old);
+        bsp_display_unlock();
     }
 
     xSemaphoreGive(s_app_mutex);
