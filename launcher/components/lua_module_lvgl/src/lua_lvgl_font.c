@@ -346,7 +346,11 @@ static void lua_lvgl_release_font_record(lua_lvgl_font_record_t *record)
         return;
     }
     if (record->font) {
-        lv_tiny_ttf_destroy(record->font);
+        /* lvgl.font() handles wrap compiled-in fonts; the record dies with
+         * the runtime generation but the font data is static. */
+        if (!record->is_static) {
+            lv_tiny_ttf_destroy(record->font);
+        }
         record->font = NULL;
     }
     record->valid = false;
@@ -636,8 +640,84 @@ void lua_lvgl_register_font_metatable(lua_State *L)
     lua_pop(L, 1);
 }
 
+/* The compiled-in sizes lvgl.font() hands out. Guarded per-font so the
+ * table tracks sdkconfig: today these are Montserrat (commit 993c3ae);
+ * when the Lexend faces land the entries swap and the Lua API is
+ * unchanged. */
+static const struct {
+    int size;
+    const lv_font_t *font;
+} s_builtin_fonts[] = {
+#if LV_FONT_MONTSERRAT_24
+    {24, &lv_font_montserrat_24},
+#endif
+#if LV_FONT_MONTSERRAT_26
+    {26, &lv_font_montserrat_26},
+#endif
+#if LV_FONT_MONTSERRAT_32
+    {32, &lv_font_montserrat_32},
+#endif
+#if LV_FONT_MONTSERRAT_40
+    {40, &lv_font_montserrat_40},
+#endif
+#if LV_FONT_MONTSERRAT_48
+    {48, &lv_font_montserrat_48},
+#endif
+};
+
+/* lvgl.font(size) -> font handle for a compiled-in face. Unlike
+ * font_load() this cannot go missing with the SD card; the design guide
+ * points apps here first and at TTFs only above the largest built-in. */
+static int lua_lvgl_font_builtin(lua_State *L)
+{
+    int size = (int)luaL_checkinteger(L, 1);
+    const lv_font_t *font = NULL;
+    lua_lvgl_font_record_t *record;
+    lua_lvgl_font_ud_t *ud;
+    esp_err_t err;
+
+    for (size_t i = 0; i < sizeof(s_builtin_fonts) / sizeof(s_builtin_fonts[0]); i++) {
+        if (s_builtin_fonts[i].size == size) {
+            font = s_builtin_fonts[i].font;
+            break;
+        }
+    }
+    if (!font) {
+        return luaL_error(L, "lvgl.font: no built-in %d px face (available: 24, 26, 32, 40, 48)", size);
+    }
+
+    err = lua_lvgl_lock();
+    if (err != ESP_OK) {
+        return lua_lvgl_error_esp(L, "lock", err);
+    }
+    if (!s_lvgl.runtime_initialized) {
+        lua_lvgl_unlock();
+        return luaL_error(L, "lvgl runtime is not initialized");
+    }
+    record = (lua_lvgl_font_record_t *)calloc(1, sizeof(*record));
+    if (!record) {
+        lua_lvgl_unlock();
+        return luaL_error(L, "lvgl font record allocation failed");
+    }
+    record->font = (lv_font_t *)font;
+    record->generation = s_lvgl.generation;
+    record->valid = true;
+    record->is_static = true;
+    record->next = s_lvgl.fonts;
+    s_lvgl.fonts = record;
+
+    ud = (lua_lvgl_font_ud_t *)lua_newuserdata(L, sizeof(*ud));
+    ud->record = record;
+    record->ud = ud;
+    luaL_getmetatable(L, LUA_LVGL_FONT_MT);
+    lua_setmetatable(L, -2);
+    lua_lvgl_unlock();
+    return 1;
+}
+
 const luaL_Reg lua_lvgl_font_module_funcs[] = {
     {"font_load", lua_lvgl_font_load},
+    {"font", lua_lvgl_font_builtin},
     {NULL, NULL},
 };
 
@@ -708,6 +788,7 @@ static int lua_lvgl_font_load_disabled(lua_State *L)
 
 const luaL_Reg lua_lvgl_font_module_funcs[] = {
     {"font_load", lua_lvgl_font_load_disabled},
+    {"font", lua_lvgl_font_load_disabled},
     {NULL, NULL},
 };
 

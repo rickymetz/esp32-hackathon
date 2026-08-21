@@ -558,9 +558,42 @@ static int lua_lvgl_slider(lua_State *L)
 /* Only widget factories and screen-related runtime helpers are registered on
  * the `lvgl` module table. Object operations (including screen:load()) are
  * registered as methods in lua_lvgl_methods.c. */
+/* lvgl.active_screen() -> a handle for whatever screen is currently loaded.
+ * Exists so shared modules (keyboard, ui.picker) can open their own screen
+ * and restore the caller's afterwards without threading it through every
+ * call. The handle wraps the same lv_obj_t under a fresh record with
+ * owned=false: deleting the screen through this handle is still possible
+ * but it never happens implicitly. */
+static int lua_lvgl_active_screen(lua_State *L)
+{
+    esp_err_t err = lua_lvgl_lock();
+    lv_obj_t *screen;
+
+    if (err != ESP_OK) {
+        return lua_lvgl_error_esp(L, "lock", err);
+    }
+    if (!s_lvgl.runtime_initialized) {
+        lua_lvgl_unlock();
+        return luaL_error(L, "lvgl runtime is not initialized");
+    }
+    screen = lv_screen_active();
+    if (!screen) {
+        lua_lvgl_unlock();
+        lua_pushnil(L);
+        return 1;
+    }
+    if (!lua_lvgl_push_obj_ex(L, screen, LUA_LVGL_OBJ_SCREEN, false)) {
+        lua_lvgl_unlock();
+        return luaL_error(L, "lvgl object record allocation failed");
+    }
+    lua_lvgl_unlock();
+    return 1;
+}
+
 const luaL_Reg lua_lvgl_core_widget_funcs[] = {
     {"screen", lua_lvgl_screen},
     {"create_screen", lua_lvgl_create_screen},
+    {"active_screen", lua_lvgl_active_screen},
     {"object", lua_lvgl_object},
     {"container", lua_lvgl_container},
     {"label", lua_lvgl_label},
