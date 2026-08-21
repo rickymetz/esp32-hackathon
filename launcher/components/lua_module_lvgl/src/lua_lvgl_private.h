@@ -136,6 +136,12 @@ struct lua_lvgl_obj_record;
 typedef struct lua_lvgl_event_sub {
     int callback_ref;        /* LUA_NOREF after release */
     lv_event_code_t code;
+    /* For LV_EVENT_GESTURE subs only: direction captured on the LVGL task
+     * at fire time. Written *before* the queued-coalesce check so repeated
+     * fires before a pump leave the latest direction (documented as
+     * latest-wins); by dispatch time the indev has moved on, so this is the
+     * only place the value can be read. */
+    lv_dir_t gesture_dir;
     struct lua_lvgl_obj_record *record;
     struct lua_lvgl_event_sub *next;       /* in record->events */
     struct lua_lvgl_event_sub *queue_next; /* in s_lvgl.event_queue */
@@ -192,6 +198,10 @@ typedef struct lua_lvgl_font_record {
     lua_lvgl_font_ud_t *ud;
     uint32_t generation;
     bool valid;
+    /* True for lvgl.font(size) handles wrapping compiled-in fonts: the
+     * record's bookkeeping is still released per-generation, but the
+     * lv_font_t itself is static and must never reach lv_tiny_ttf_destroy. */
+    bool is_static;
     struct lua_lvgl_font_record *next;
 } lua_lvgl_font_record_t;
 

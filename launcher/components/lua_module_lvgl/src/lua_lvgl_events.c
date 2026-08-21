@@ -36,6 +36,12 @@
 
 static const char *TAG = "lua_lvgl_evt";
 
+/* Direction of the gesture whose callback is currently being dispatched on
+ * the script task; LV_DIR_NONE outside a gesture callback. Read only by
+ * lua_lvgl_gesture_dir(), written only by the dispatch loop -- both on the
+ * script task, so no lock is needed. */
+static lv_dir_t s_dispatching_gesture_dir = LV_DIR_NONE;
+
 typedef struct {
     const char *name;
     lv_event_code_t code;
@@ -51,6 +57,7 @@ static const lua_lvgl_event_name_t s_event_names[] = {
     {"defocused",     LV_EVENT_DEFOCUSED},
     {"ready",         LV_EVENT_READY},
     {"cancel",        LV_EVENT_CANCEL},
+    {"gesture",       LV_EVENT_GESTURE},
 };
 
 #define LUA_LVGL_EVENT_NAME_COUNT \
@@ -141,7 +148,17 @@ static void lua_lvgl_event_trampoline(lv_event_t *e)
 {
     lua_lvgl_event_sub_t *sub = (lua_lvgl_event_sub_t *)lv_event_get_user_data(e);
 
-    if (!sub || sub->dead || sub->queued || sub->callback_ref == LUA_NOREF) {
+    if (!sub || sub->dead || sub->callback_ref == LUA_NOREF) {
+        return;
+    }
+    /* Capture the gesture direction BEFORE the queued-coalesce check: a
+     * second gesture arriving while the first is still pending must
+     * overwrite the stored direction (latest-wins, as documented), and by
+     * dispatch time lv_indev_get_gesture_dir() no longer reports it. */
+    if (sub->code == LV_EVENT_GESTURE) {
+        sub->gesture_dir = lv_indev_get_gesture_dir(lv_indev_active());
+    }
+    if (sub->queued) {
         return;
     }
     lua_lvgl_enqueue_sub_locked(sub);
@@ -259,6 +276,21 @@ int lua_lvgl_obj_on(lua_State *L)
         luaL_unref(L, LUA_REGISTRYINDEX, callback_ref);
         free(sub);
         return luaL_error(L, "%s", obj_error);
+    }
+
+    /* Gestures only ever reach the screen: LV_OBJ_FLAG_GESTURE_BUBBLE is on
+     * by default and LVGL walks delivery up to the topmost bubbling object,
+     * so a handler on an ordinary widget would silently never fire. Refuse
+     * at registration instead -- and note the scroll caveat, because it is
+     * the other silent killer (indev_gesture() returns early whenever the
+     * touch is scrolling something). */
+    if (code == LV_EVENT_GESTURE && ud->record->type != LUA_LVGL_OBJ_SCREEN) {
+        lua_lvgl_unlock();
+        luaL_unref(L, LUA_REGISTRYINDEX, callback_ref);
+        free(sub);
+        return luaL_error(L, "lvgl 'gesture' events fire only on screens -- "
+                             "register on the screen object (and note: a touch "
+                             "that scrolls content never produces a gesture)");
     }
 
     sub->record = ud->record;
@@ -460,7 +492,12 @@ static int lua_lvgl_drain_events_for(lua_State *L, int timeout_ms)
         callback_ref = sub->callback_ref;
         /* sub may be detached by user-installed callback below (e.g.
          * obj:off in the handler). That path either frees sub or marks it
-         * dead; either way we are done with it for this fire. */
+         * dead; either way we are done with it for this fire. Read the
+         * gesture direction now for the same reason -- after the pcall the
+         * sub may be gone. */
+        s_dispatching_gesture_dir = (sub->code == LV_EVENT_GESTURE)
+                                        ? sub->gesture_dir
+                                        : LV_DIR_NONE;
 
         lua_rawgeti(L, LUA_REGISTRYINDEX, callback_ref);
         if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
@@ -472,6 +509,7 @@ static int lua_lvgl_drain_events_for(lua_State *L, int timeout_ms)
              * display lock. Without this the LVGL task blocks forever. */
             lua_lvgl_force_unlock_if_held();
         }
+        s_dispatching_gesture_dir = LV_DIR_NONE;
         processed++;
     }
     return processed;
@@ -514,8 +552,24 @@ static int lua_lvgl_run(lua_State *L)
     return 1;
 }
 
+/* lvgl.gesture_dir() -> "left"|"right"|"top"|"bottom" inside a gesture
+ * callback, nil anywhere else. Mirrors the direction vocabulary accepted by
+ * lua_lvgl_parse_dir() so the two sides of the API read identically. */
+static int lua_lvgl_gesture_dir(lua_State *L)
+{
+    switch (s_dispatching_gesture_dir) {
+    case LV_DIR_LEFT:   lua_pushliteral(L, "left");   break;
+    case LV_DIR_RIGHT:  lua_pushliteral(L, "right");  break;
+    case LV_DIR_TOP:    lua_pushliteral(L, "top");    break;
+    case LV_DIR_BOTTOM: lua_pushliteral(L, "bottom"); break;
+    default:            lua_pushnil(L);               break;
+    }
+    return 1;
+}
+
 const luaL_Reg lua_lvgl_event_module_funcs[] = {
     {"process_events", lua_lvgl_process_events},
     {"run", lua_lvgl_run},
+    {"gesture_dir", lua_lvgl_gesture_dir},
     {NULL, NULL},
 };
