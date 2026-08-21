@@ -370,31 +370,58 @@ Phase 4 lands.
    Remaining headroom with exactly one radio up: **BLE alone leaves 101,547 free / 31,744
    largest**, which is workable. Wi-Fi alone was not measured in isolation (the spike
    brought it up on top of NimBLE) — measure it before Phase 4 commits to TLS buffer sizes.
-**1b. UPDATE 2026-08-21 — the exclusivity decision may be reversible. Re-measure.**
+**1b. UPDATE 2026-08-21 — re-measured. Radios coexist, but tight; exclusivity dropped.**
 
    LVGL's object heap has since moved off its fixed internal pool onto the C allocator
    backed by PSRAM (`ff9acc2`), returning **131,072 bytes** of internal DRAM — both the
    original 64 KB pool and a 64 KB increase briefly added. Free internal DRAM at boot went
    139,959 → **272,791**.
 
-   Applying that delta to the day-1 spike *projects*:
+   The prior revision of this section projected `largest` from that `internal_free` delta
+   and flagged the projection as unsound, since fragmentation — the thing `largest`
+   actually measures — does not scale linearly with total free memory. The Phase 0 spike
+   was re-run on hardware (same board, same stage order, same `REPORT()` format) rather
+   than trusting the projection:
 
-   | Stage | Day-1 measured | Projected now |
-   | --- | ---: | ---: |
-   | baseline | 139,711 | 270,783 |
-   | after NimBLE | 101,547 | 232,619 |
-   | after Wi-Fi | 24,795 | **155,867** |
+   ```
+   SPIKE baseline       internal_free=198767 largest=122880 min_ever=131028
+   SPIKE after_nvs      internal_free=198407 largest=122880 min_ever=131028
+   SPIKE after_nimble   internal_free=164371 largest=90112  min_ever=129296
+   SPIKE after_wifi     internal_free=88859  largest=31744  min_ever=56828
+   ```
 
-   If it holds, **BLE and Wi-Fi can coexist** and the lazy-init exclusivity design is
-   unnecessary. **This is arithmetic, not a measurement — re-run the Phase 0 spike before
-   acting on it.** Largest *contiguous* block decides it, and that does not project.
+   **`largest` after Wi-Fi is 31,744 bytes (31 KB)** — inside the 20–40 KB band, not the
+   projected-optimistic >40 KB case and not the day-1 <20 KB floor either. The projection's
+   own warning held: `internal_free` after Wi-Fi (88,859) is nowhere near the 155,867
+   projected from the `internal_free` delta alone, confirming that arithmetic on total free
+   memory does not predict contiguous block size — BLE's and Wi-Fi's allocations still
+   fragment the heap even though there is much more of it now.
 
-   **New constraint from that fix:** `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0` is now global,
-   because ESP-IDF otherwise pins every sub-16 KB `malloc()` internal — exactly LVGL's
-   widget size class. So **Phase 3/4 radio code must request internal or DMA memory
-   explicitly** via `heap_caps_malloc(..., MALLOC_CAP_INTERNAL)` instead of relying on the
-   old size heuristic. Lua uses its own PSRAM allocator and the draw buffers already pass
-   explicit caps, so nothing today is affected.
+   **Decision: drop the mutual-exclusivity design; BLE and Wi-Fi coexist, but budget
+   carefully.** 20–40 KB of largest contiguous internal DRAM is workable but tight —
+   Phase 3 and Phase 4 can proceed together without lazy-init radio exclusion, but Phase 4
+   must size TLS/HTTPS buffers (and any other internal-DRAM-hungry allocation a radio
+   stack makes) against a ~31 KB ceiling — this run's after-Wi-Fi largest (31,744) happens
+   to equal day-1's after-NimBLE-alone largest exactly, a coincidence, but here it is the
+   headroom with *both* radios up, not just BLE.
+
+   No radio init call failed during the re-run (`nvs_flash_init`, `nimble_port_init`,
+   `esp_netif_init`, `esp_wifi_init`, `esp_wifi_set_mode`, `esp_wifi_start` — through
+   `esp_wifi_start()`, where the RX/TX buffer pools actually allocate, not just
+   `esp_wifi_init()` — all returned success), and nothing pointed to a stack being
+   starved for internal memory it needed under the new
+   `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0` default.
+
+   **The constraint from that fix stands regardless of this decision:**
+   `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0` is global, because ESP-IDF otherwise pins every
+   sub-16 KB `malloc()` internal — exactly LVGL's widget size class. So **Phase 3/4 radio
+   code must request internal or DMA memory explicitly** via
+   `heap_caps_malloc(..., MALLOC_CAP_INTERNAL)` instead of relying on the old size
+   heuristic. Lua uses its own PSRAM allocator and the draw buffers already pass explicit
+   caps, so nothing today is affected.
+
+   Full spike detail (build/flash log, exact code added and reverted) recorded in
+   `.superpowers/sdd/memory-spike-rerun.md` (gitignored, not part of this commit).
 
 
 2. **The plan does not fit the runway.** Managed by the priority queue and freeze date, not
