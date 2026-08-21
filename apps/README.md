@@ -1,0 +1,55 @@
+# Apps
+
+Lua apps for the launcher — one file each, installed to `/sdcard/apps/`. See
+`docs/APP_CONTRACT.md` for the full API; this is a map of what's here and which
+technique each example shows.
+
+## Develop without a board
+
+The headless simulator (`sim/`) runs these on your computer and screenshots
+them — the fast way to iterate. Build once, then:
+
+```bash
+sim/simctl.py run apps/counter.lua : tap 184 224 : shot out.png
+```
+
+`sim/test.sh` render-tests every app at once. See `sim/README.md`.
+
+## Examples worth copying
+
+Each of these is a complete, working app that leans on a different part of the
+contract — start from the one closest to what you're building.
+
+| App | Shows |
+| --- | --- |
+| `counter.lua` | The minimal shape: a screen, a label, a button, a click handler |
+| `stopwatch.lua` | `timer.every`, a big custom font (with a `pcall` fallback), start/stop/reset |
+| `tally.lua` | The PWR-as-accelerator pattern + a confirm-gated (destructive) reset |
+| `dice.lua` | `math.random`, and `ui.corner_button`'s `{ button, visual }` return shape |
+| `countdown.lua` | A `ui.stepper` as both setter and live readout; a toast at zero |
+| `tip.lua` | `require("keyboard")` number entry; steppers; a scrollable result row |
+| `reaction.lua` | Randomised `timer.after`, and measuring elapsed time with a 10 ms timer |
+| `flashlight.lua` | A full-screen tap target under a slider; recoloring the screen |
+| `metronome.lua` | A repeating beat with retempo-on-the-fly; a flash via `timer.after` |
+| `hello_world.lua` | A gentle tour of widgets |
+
+Two gotchas these examples were written to avoid — both bite silently:
+
+- **A `local`'s scope starts *after* its declaring statement.** A closure that
+  refers to the very local it's being assigned to (a timer handle, a
+  `corner_button` result) sees a `nil` global instead. Declare first, assign
+  second — `dice.lua` and the `timer` docs show the fix.
+- **`ui.stepper`'s `label` is a format string** (`"%d bpm"`), and a wide value
+  can collide with its own +/- buttons — `metronome.lua` keeps it to `"%d"`.
+
+## Test fixtures (not shippable apps)
+
+These exist to exercise the launcher's own edges and are skipped by
+`sim/test.sh`:
+
+- `broken.lua`, `cb_error.lua`, `deep_error.lua` — error paths / the error screen
+- `hook_bypass.lua`, `trim_check.lua` — the sandbox (stripped stdlib, hook)
+- `runaway_bare.lua`, `runaway_coro.lua`, `runaway_pcall.lua` — the watchdog
+- `headless.lua` — an app with timers but no UI
+- `input_test.lua`, `tick_test.lua`, `timer_reuse.lua`, `timer_slot.lua`,
+  `voice_test.lua`, `spell_test.lua`, `ui_test.lua` — module regression checks
