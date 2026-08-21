@@ -90,6 +90,11 @@ These cost an hour each if you don't know them. Most were hit for real in this r
 - **PWR: hold ≥6 s to power off**, click to power on. Power is under AXP2101 control.
 - Changed dependencies → delete `build/`, `managed_components/`, `dependencies.lock`.
 - `i2c.master: Please check pull-up resistances` on boot is benign on this board.
+- **Any component that includes `lua.h` must agree with the vendored Lua core on
+  `LUA_32BITS`**, or `lua_Integer`/`lua_Number` sizes mismatch and it aborts inside
+  `luaL_checkversion_`. Set build-wide in `launcher/CMakeLists.txt` via
+  `idf_build_set_property(COMPILE_DEFINITIONS "LUA_32BITS=1" APPEND)` — don't re-add it
+  per-component.
 - **`Warning: Long filenames on SD card are disabled` is a BSP bug, not a real
   problem.** The BSP tests `CONFIG_FATFS_LONG_FILENAMES`, which is a Kconfig *choice*
   name and so is never defined as a symbol — the warning fires unconditionally. Check

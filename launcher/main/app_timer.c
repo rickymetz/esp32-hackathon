@@ -10,10 +10,21 @@ static const char *TAG = "app_timer";
 static const char *TIMER_MT = "launcher.timer";
 
 typedef struct {
-    int64_t next_us;
-    int64_t period_us;   /* 0 == one-shot */
-    int     ref;         /* LUA_NOREF when the slot is free */
+    int64_t  next_us;
+    int64_t  period_us;   /* 0 == one-shot */
+    int      ref;         /* LUA_NOREF when the slot is free */
+    uint32_t gen;         /* bumped each time this slot is (re)allocated */
 } app_timer_t;
+
+/* Userdata stored in the Lua handle: which slot, and which allocation of
+ * that slot it refers to. A slot freed by a one-shot firing or a cancel can
+ * be reused by a later timer.every()/timer.after(); comparing `gen` is how
+ * we tell a stale handle (from the earlier occupant) apart from the current
+ * one, so cancelling a stale handle can't kill someone else's timer. */
+typedef struct {
+    int      slot;
+    uint32_t gen;
+} timer_handle_t;
 
 static app_timer_t s_timers[APP_TIMER_MAX];
 static bool s_inited;
@@ -64,9 +75,11 @@ static int timer_add(lua_State *L, bool repeating)
     s_timers[slot].ref       = luaL_ref(L, LUA_REGISTRYINDEX);
     s_timers[slot].period_us = repeating ? (int64_t)ms * 1000 : 0;
     s_timers[slot].next_us   = esp_timer_get_time() + (int64_t)ms * 1000;
+    s_timers[slot].gen++;
 
-    int *handle = (int *)lua_newuserdatauv(L, sizeof(int), 0);
-    *handle = slot;
+    timer_handle_t *handle = (timer_handle_t *)lua_newuserdatauv(L, sizeof(timer_handle_t), 0);
+    handle->slot = slot;
+    handle->gen  = s_timers[slot].gen;
     luaL_setmetatable(L, TIMER_MT);
     return 1;
 }
@@ -76,13 +89,17 @@ static int l_timer_after(lua_State *L) { return timer_add(L, false); }
 
 static int l_timer_cancel(lua_State *L)
 {
-    int *handle = (int *)luaL_checkudata(L, 1, TIMER_MT);
-    int slot = *handle;
-    if (slot >= 0 && slot < APP_TIMER_MAX && s_timers[slot].ref != LUA_NOREF) {
+    timer_handle_t *handle = (timer_handle_t *)luaL_checkudata(L, 1, TIMER_MT);
+    int slot = handle->slot;
+    if (slot >= 0 && slot < APP_TIMER_MAX &&
+        s_timers[slot].ref != LUA_NOREF && s_timers[slot].gen == handle->gen) {
         luaL_unref(L, LUA_REGISTRYINDEX, s_timers[slot].ref);
         s_timers[slot].ref = LUA_NOREF;
     }
-    *handle = -1;
+    /* Stale handle (slot reused by a later timer, or already cancelled):
+     * no-op. The timer this handle meant is already gone, which isn't an
+     * error, and we must not touch whatever now occupies the slot. */
+    handle->slot = -1;
     lua_pushboolean(L, 1);
     return 1;
 }
