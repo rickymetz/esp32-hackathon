@@ -353,9 +353,23 @@ Phase 4 lands.
    ```
 
    `largest` after Wi-Fi comes up is **16 KB** — under the 20 KB floor. **Decision: re-scope
-   now.** BLE and Wi-Fi become mutually exclusive: an app declares `ble` or `net` in its
-   manifest, and the launcher brings up only the radio that app asked for. Phases 3–4 need
-   to be replotted against this instead of "both radios always up."
+   now.** BLE and Wi-Fi become mutually exclusive.
+
+   **How exclusivity is enforced: lazy init, not a manifest.** Apps are single `.lua` files
+   with no metadata, so there is nothing to declare in. Instead the launcher brings a radio
+   up the *first time* an app touches `net.*` or `ble.*`, and tears it down when the app
+   exits. The second radio then returns `nil, "radio in use by net"` per rule 2. This needs
+   no new file format, no manifest parser, and it cannot get out of sync with what the app
+   actually does.
+
+   **The static cost is unavoidable and already paid.** Merely enabling both stacks in
+   `sdkconfig` drops the baseline from 173,631 to 139,711 — about 34 KB — before either is
+   initialised. Since apps are shared and any app may want either radio, both must be
+   compiled in. Budget from 139,711, not 173,631.
+
+   Remaining headroom with exactly one radio up: **BLE alone leaves 101,547 free / 31,744
+   largest**, which is workable. Wi-Fi alone was not measured in isolation (the spike
+   brought it up on top of NimBLE) — measure it before Phase 4 commits to TLS buffer sizes.
 2. **The plan does not fit the runway.** Managed by the priority queue and freeze date, not
    by optimism.
 3. **API churn.** The timer arriving in Phase 1 rather than after the freeze is the whole
