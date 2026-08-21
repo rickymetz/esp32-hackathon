@@ -233,3 +233,176 @@ holding the port.
 - Board's final state at the end of this task: freshly flashed, verified
   booting to a working launcher with the SD card mounted and 13 apps
   enumerated. Left in that state — no unflashed or hung window.
+
+---
+
+## Post-review fixes (5 findings) — verification log
+
+Commit under test: fixes to `firmware/flash.sh`, `firmware/README.md`, new
+`firmware/bin/BUILD_INFO`. Board: `/dev/cu.usbmodem101`.
+
+### 1. Stripped environment, fresh venv path (real)
+
+```
+$ env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/local/bin bash ./flash.sh /dev/cu.usbmodem101
+Installing esptool into a local venv...
+Using esptool 4.12.0 from /Users/rickmetzger/code/personal/esp32-hackathon/firmware/.venv (freshly installed)
+Flashing build 01cf670 from 2026-08-21
+Flashing /dev/cu.usbmodem101 ...
+esptool.py v4.12.0
+...
+Hard resetting via RTS pin...
+
+Done. Put your .lua apps in /apps on the microSD card.
+EXIT_CODE=0
+```
+
+### 2. Previously-untested "already importable" branch (real)
+
+Used a PATH shim resolving `python3` to a real interpreter with esptool 5.3.1
+already installed (this repo's top-level `.venv`), with `firmware/.venv`
+absent, in a stripped `env -i` environment:
+
+```
+$ env -i HOME="$HOME" PATH="/tmp/fakebin:/usr/bin:/bin:/usr/local/bin" bash ./flash.sh /dev/cu.usbmodem101
+Using esptool 5.3.1 from /tmp/fakebin/python3 (already installed)
+Flashing build 01cf670 from 2026-08-21
+Flashing /dev/cu.usbmodem101 ...
+esptool v5.3.1
+...
+Hard resetting via RTS pin...
+
+Done. Put your .lua apps in /apps on the microSD card.
+EXIT_CODE=0
+---venv exists?---
+".venv": No such file or directory (os error 2)
+correctly no venv created
+```
+
+Confirms: the branch executes, uses the pre-existing esptool, prints which
+one and where from, does not create `firmware/.venv`, and flashes
+successfully. Note: an earlier attempt using a plain symlink to the venv's
+python binary silently failed to import esptool (venv site-packages
+resolution issue) and fell through to a fresh install undetected — switching
+the shim to an exec wrapper script fixed this and is what produced the above
+real result.
+
+### 3. Version floor (>= 4.0) — real, both branches
+
+Installed a genuinely old esptool for this test:
+
+```
+$ python3 -m venv /tmp/oldesptool_venv
+$ /tmp/oldesptool_venv/bin/pip install --quiet "esptool<4.0"
+$ /tmp/oldesptool_venv/bin/python3 -c "import esptool; print(esptool.__version__)"
+3.3.3
+```
+
+Pointed the `python3` PATH shim at that interpreter and ran flash.sh in a
+stripped environment with `firmware/.venv` absent:
+
+```
+System esptool is 3.3.3, need >= 4.0 -- installing a newer one into a local venv.
+Installing esptool into a local venv...
+Using esptool 5.3.1 from /Users/rickmetzger/code/personal/esp32-hackathon/firmware/.venv (freshly installed)
+Flashing build 01cf670 from 2026-08-21
+Flashing /dev/cu.usbmodem101 ...
+esptool v5.3.1
+...
+Done. Put your .lua apps in /apps on the microSD card.
+```
+
+`.venv/bin/python3 -c "import esptool; print(esptool.__version__)"` afterward
+confirmed 5.3.1 in the fresh venv. This is a REAL exercise of both branches —
+the old-esptool detection and the fall-through-to-venv behavior — not a
+stubbed/simulated version string. The "ok" (>=4.0) branch was exercised for
+real in check 2 above (esptool 5.3.1) and check 1 (freshly installed 4.12.0).
+
+### 4. Multiple boards found — simulated (logic-identical extract)
+
+`/dev` entries cannot be fabricated in this sandbox without root, so the
+port-selection block (identical logic, copied verbatim from flash.sh) was
+run against two dummy files matching the glob pattern:
+
+```
+--- stdout only ---
+SELECTED_PORT=/tmp/fakeports/cu.usbmodemAAA
+--- stderr only ---
+Multiple boards found; using /tmp/fakeports/cu.usbmodemAAA
+Other ports seen, not used: /tmp/fakeports/cu.usbmodemBBB
+```
+
+Confirms the chosen port and the alternatives go to stderr, stdout stays
+clean. This part is SIMULATED (same code, fake input), not run against real
+/dev nodes.
+
+### 5. venv/pip failure guidance (real)
+
+```
+$ env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/local/bin \
+    PIP_INDEX_URL=http://127.0.0.1:1/simple PIP_RETRIES=0 PIP_TIMEOUT=3 \
+    bash ./flash.sh /dev/cu.usbmodem101
+Installing esptool into a local venv...
+ERROR: Could not find a version that satisfies the requirement esptool>=4.0 (from versions: none)
+ERROR: No matching distribution found for esptool>=4.0
+WARNING: You are using pip version 21.2.4; however, version 26.0.1 is available.
+You should consider upgrading via the '.../firmware/.venv/bin/python3 -m pip install --upgrade pip' command.
+
+Could not install esptool automatically.
+
+Likely causes: no network connection, a proxy blocking PyPI, or this
+Python is missing the built-in "venv" module.
+
+Manual fallback:
+  1. python3 -m pip install --user esptool
+  2. Run this script again.
+EXIT_CODE=1
+```
+
+Real pip failure via an unreachable index, no raw traceback, script exits 1
+after printing guidance (in addition to pip's own error text, which is
+expected/left visible).
+
+### 6. BUILD_INFO
+
+```
+$ cat firmware/bin/BUILD_INFO
+commit=01cf670
+date=2026-08-21
+$ git log -1 --format=%h -- firmware/bin/launcher.bin firmware/bin/bootloader.bin firmware/bin/partition-table.bin
+01cf670
+$ git log -1 --format=%cs -- firmware/bin/launcher.bin
+2026-08-21
+```
+
+Matches the commit that staged the current binaries. `flash.sh` prints
+`Flashing build 01cf670 from 2026-08-21` before every flash (see runs above).
+
+### Final clean flash + board health check
+
+Re-flashed cleanly (no truncation, no faults) after the version-floor test
+to guarantee end state:
+
+```
+Using esptool 4.12.0 from .../firmware/.venv (freshly installed)
+Flashing build 01cf670 from 2026-08-21
+...
+Hard resetting via RTS pin...
+
+Done. Put your .lua apps in /apps on the microSD card.
+EXIT_CODE=0
+```
+
+Serial console after an RTS-pulse reset (pyserial from the repo `.venv`,
+`pip install pyserial` there) shows a clean boot:
+
+```
+I (1020) app_registry: SD card mounted at /sdcard
+I (1022) app_registry: found app 'Counter' (/sdcard/apps/counter.lua)
+... (13 apps listed) ...
+I (1027) app_registry: 13 app(s) found
+I (1165) launcher: ready: 13 app(s), internal free=205919 psram free=8207380
+I (1166) main_task: Returned from app_main()
+```
+
+Board ends this task on a healthy, working launcher with 13 apps found.
