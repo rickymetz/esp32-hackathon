@@ -18,12 +18,39 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_LV_USE_TINY_TTF=y
 CONFIG_LV_TINY_TTF_FILE_SUPPORT=y
 
-# I3: default is 64. Refresh's rebuild-before-delete briefly holds both the
-# old and new launcher UI in this pool at once; with MAX_VISIBLE_ROWS capping
-# rendered rows (launcher_main.c), peak usage is now well under the default
-# too, but 128 buys real headroom for ~450B/row plus fragmentation. Internal
-# DRAM has ~205 KB free at boot, so the extra 64 KB is affordable.
-CONFIG_LV_MEM_SIZE_KILOBYTES=128
+# I4: raising the fixed pool (I3, 64->128 KB) stopped LVGL's rebuild-before-
+# delete refresh from exhausting it, but that pool comes out of internal
+# DRAM -- the scarcest resource on this board -- and the extra 64 KB broke
+# the day-1 headroom budget for Phase 3 (BLE) and Phase 4 (Wi-Fi+HTTPS).
+# Fix at the root instead of tuning the ceiling: give LVGL the standard C
+# allocator (verified in launcher/managed_components/lvgl__lvgl/Kconfig,
+# under "Memory Settings" -> "Malloc functions source" -- the choice member
+# is CONFIG_LV_USE_CLIB_MALLOC, not a guessed LV_USE_STDLIB_MALLOC symbol)
+# so lv_malloc() goes through the general heap instead of a fixed block.
+# CONFIG_SPIRAM_USE_MALLOC is already on by default here, and with
+# CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL forced to 0 below, malloc() prefers
+# the 8 MB of PSRAM for everything instead of pinning small (<16 KB, the
+# stock default) allocations to internal DRAM -- which is what LVGL's
+# per-widget allocations are. This removes the fixed ceiling entirely
+# rather than just raising it again, so this bug class cannot recur.
+# MAX_VISIBLE_ROWS (launcher_main.c) and the fail-fast assert handler below
+# stay regardless -- both are still good hygiene against unbounded growth.
+CONFIG_LV_USE_CLIB_MALLOC=y
+# CONFIG_LV_MEM_SIZE_KILOBYTES no longer applies: it `depends on
+# LV_USE_BUILTIN_MALLOC` in the Kconfig above, so it is neutralized (not
+# just unset) by the CLIB_MALLOC choice and is omitted here rather than
+# left set-but-ignored.
+
+# Without this, malloc() keeps every allocation under 16 KB (the stock
+# SPIRAM_MALLOC_ALWAYSINTERNAL default) in internal DRAM regardless of
+# CLIB_MALLOC above -- and LVGL's per-widget allocations are all well under
+# that, so the fixed-pool bug would just reappear as unbounded internal-heap
+# growth instead of a hard ceiling. Forcing this to 0 makes malloc() prefer
+# PSRAM for everything; it still falls back to internal memory if PSRAM is
+# exhausted, so DMA/internal-only requests (draw buffers, FreeRTOS stacks)
+# are unaffected -- those go through heap_caps_malloc() with explicit caps,
+# not plain malloc(), and are untouched by this option.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
 
 # I3: CONFIG_LV_USE_ASSERT_MALLOC's default handler (LV_ASSERT_HANDLER) is
 # `while(1);` -- an lv_malloc() failure spins the calling task forever

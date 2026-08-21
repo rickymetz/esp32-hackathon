@@ -403,11 +403,13 @@ close:
     launcher_lua_run_exit_cleanup(L);
     lua_close(L);
     {
-        /* internal_free is ESP heap; lv_mem free_size is LVGL's own fixed
-         * 64 KB pool (CONFIG_LV_MEM_SIZE_KILOBYTES) that the error screen
-         * is carved out of -- the pool a leaked error screen would exhaust
-         * over repeated crashes. Logged here so the leak (and its fix) is
-         * visible on every app close, not just crashes. */
+        /* internal_free is ESP heap. LVGL now uses the C stdlib allocator
+         * (CONFIG_LV_USE_CLIB_MALLOC) instead of a fixed internal pool, so
+         * lv_mem_monitor()'s core is a no-op here and free/total report as
+         * 0/0 -- that is expected, not a bug. A leaked error screen would
+         * now show up as a drop in internal_free/psram free above instead
+         * of exhausting a fixed LVGL pool, which is why those two numbers
+         * are logged on every app close, not just crashes. */
         lv_mem_monitor_t mon;
         lv_mem_monitor(&mon);
         ESP_LOGI(TAG, "app '%s' closed, psram free=%u, internal free=%u, "
