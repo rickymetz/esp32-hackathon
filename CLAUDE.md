@@ -55,6 +55,20 @@ idf.py -p /dev/cu.usbmodem101 flash monitor
 
 **You may build, flash, and monitor freely** — treat it as the normal verify loop.
 
+**Verify UI work with the drive harness, not by asking a human.** The launcher
+speaks `SHOT` / `TAP x y` / `SWIPE x0 y0 x1 y1 [ms]` / `LIST` / `DELETE` over
+serial next to RUN/STOP; `tools/drive.py` chains them and `tools/screenshot.py`
+decodes SHOT to a PNG (~1.6 s per frame):
+
+```bash
+./.venv/bin/python tools/drive.py run ui_test.lua : sleep 1 : tap 184 224 : shot out.png
+```
+
+Taps inject through a real LVGL indev — widgets cannot tell them from a
+finger — and queue with an enforced release gap, so back-to-back taps are safe.
+Even the microphone is testable hands-free: macOS `say` through the speakers
+reaches the board's mic (this is how the voice module was verified).
+
 `sdkconfig.defaults` is not optional. `CONFIG_SPIRAM_MODE_OCT=y` in particular is **not**
 the IDF default, and without it the 8 MB PSRAM silently fails to initialise with no error.
 
@@ -103,6 +117,22 @@ These cost an hour each if you don't know them. Most were hit for real in this r
 - **Touch is not pixel-accurate.** Measured on hardware: a 240×120 button catches every
   tap, while a 180×56 one dropped roughly half. Size tappable targets ≥ ~200×100. This
   looks exactly like broken event plumbing, so check target size before debugging events.
+- **MultiNet's `detect()` nearly saturates a core.** A single capture under the
+  10 s task watchdog survives; chained captures (voice.spell) starved the idle
+  task and rebooted the board until a 2 ms per-chunk `vTaskDelay` was added.
+- **The MultiNet command table binds to the model instance passed to
+  `esp_mn_commands_alloc`.** Destroy that instance and the vocabulary silently
+  points at dead state — recognition "works" against the wrong command set.
+  One persistent instance, `clean()`ed between captures, never destroyed.
+- **cap_lua opens modules in registration order.** Embedded-Lua modules
+  (`ui`, `keyboard`) `require()` other modules at load time — anything they
+  depend on (lvgl, timer, voice) must be registered first in `app_main`.
+- **The theme font is set at runtime, not via Kconfig.** LVGL's
+  `LV_FONT_DEFAULT` choice only offers bundled faces, so Lexend is applied with
+  `lv_theme_default_init(...)` under `bsp_display_lock` in `app_main`;
+  Montserrat 14 stays compiled solely so the macro resolves. Custom fonts must
+  be generated with `--no-compress` — compressed bitmaps render blank because
+  `LV_USE_FONT_COMPRESSED` is off.
 - **The default 1 MB app partition is too small.** LVGL + Lua + the bindings leave 4%
   free. `partitions.csv` gives the app 4 MB.
 

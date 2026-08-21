@@ -51,27 +51,15 @@ which is why these numbers are worth trusting:
 **Never below 24 px.** Apple states 12 pt as its sanctioned minimum; Google's smallest
 published body token is 11 sp. Both land at 22–24 px here.
 
-### What we currently ship is broken
+### The face is Lexend
 
-The launcher and every app default to **Montserrat 14** — the LVGL built-in default. In
-this system that is **7 units**: roughly *half* the platform minimum and *44%* of body
-size. That is the entire reason the screen in the photo is hard to read.
-
-Fix in `launcher/sdkconfig.defaults`:
-
-```
-# 14px is ~7pt-equivalent on this panel -- under half the watchOS minimum of 12pt.
-# 32px is the converged Apple/Wear body size at our 2x scale.
-CONFIG_LV_FONT_MONTSERRAT_24=y
-CONFIG_LV_FONT_MONTSERRAT_26=y
-CONFIG_LV_FONT_MONTSERRAT_32=y
-CONFIG_LV_FONT_MONTSERRAT_40=y
-CONFIG_LV_FONT_MONTSERRAT_48=y
-CONFIG_LV_FONT_DEFAULT_MONTSERRAT_32=y
-```
-
-Built-in fonts are preferred over runtime TTF because they cannot go missing: a TTF lives
-on the SD card, and an app that assumes one will break on a board whose card lacks it.
+The theme default is **Lexend Medium 32** — a face designed to reduce visual
+stress and improve reading performance, compiled into the firmware at
+24/26/32/40/48 with LVGL's icon glyphs baked into every size. Ask for a size
+with `lvgl.font(40)`; it cannot go missing with the SD card. (Honest caveat:
+Lexend's measured reading gains are strongest in its *wider* variants, which a
+368 px screen cannot spare — we inherit the design intent, not the measured
+effect.)
 
 **Above 48 px, LVGL's built-ins run out.** For a large clock or a hero numeral, use
 `lvgl.font_load()` with a TTF on the card — and wrap it in `pcall` with a built-in
@@ -196,7 +184,7 @@ Concrete, in priority order:
 
 | # | Change | From | To |
 | --- | --- | --- | --- |
-| 1 | Default font | Montserrat 14 | **Montserrat 32** |
+| 1 | Default font | Montserrat 14 | **32 px** (now Lexend, via the theme) |
 | 2 | `ROW_HEIGHT` | 72 px | **104 px** |
 | 3 | Row label | 14 px | **32 px** |
 | 4 | Header "Apps" | 14 px | **40 px** |
@@ -208,8 +196,8 @@ Items 1–3 are what make your photo legible. The rest is polish.
 
 **Status: applied and confirmed.** Implemented in `993c3ae` and verified on the device by
 eye — text is readable at wrist distance. The structural evidence was the row label's
-resolved font pointer matching `&lv_font_montserrat_32` with `line_height=35`, against 16
-for Montserrat 14. Cost: +136 KB flash (partition still 73% free) and **zero** internal
+resolved font pointer matching the 32 px face (now `&lv_font_lexend_32`, `line_height=36`),
+against 16 for Montserrat 14. Cost: +136 KB flash (partition still 73% free) and **zero** internal
 DRAM, since built-in fonts are flash-resident.
 
 ---
@@ -223,11 +211,92 @@ Short enough to remember; these belong in `docs/APP_CONTRACT.md`:
 3. **True black background** (`0x000000`) — battery and legibility.
 4. **White text for anything that matters.** Grey is for captions only.
 5. **One idea per screen**, two or three controls at most.
-6. **Vertical scrolling only.** Left-edge swipe belongs to the launcher.
+6. **Scroll vertically; page horizontally.** Sibling pages swipe left/right
+   (`lvgl.tileview` + `ui.dots`) — allowed precisely because Home is a hardware
+   button, so no edge is reserved. Never mix a drag control into a paged view.
 7. **Trim long text**; do not scroll it sideways.
-8. **Hero numbers 60 px+**, via `lvgl.font_load()` with a `pcall` fallback.
+8. **Hero numbers 48 px+** via `lvgl.font(48)`; above that, `lvgl.font_load()`
+   with a `pcall` fallback.
 
 ---
+
+## Physical inputs
+
+Every wearable platform reserves the way home and hands apps at most one
+button. We match: **BOOT (top right) is Home** — hardware, unconsumable, a
+direct GPIO read that survives a wedged I²C bus. **PWR (bottom right) belongs
+to apps** via `require("button")`.
+
+| Platform | Exit to home | App-accessible buttons |
+| --- | --- | --- |
+| Apple Watch | Crown press — reserved | None (Ultra: Action Button, user-assigned) |
+| Wear OS | Power — reserved | Stem buttons, with published rules |
+| Samsung | Home key | Ultra's Quick Button |
+| Garmin | — | All keys, but the root view always keeps back |
+
+Wear OS is the only platform with written rules for that button, and all four
+transfer (they are contract rules here): binary or eyes-free actions only; an
+on-screen equivalent always exists; one press, immediate; **never destructive**
+— PWR held ≥6 s powers the board off, so a destructive press sits one long
+hold from data loss. The button earns its place in exactly two app categories:
+health/fitness (start/stop, lap, rep) and media (play/pause).
+
+Voice (`require("voice")`) follows the same doctrine: an accelerator with a
+touch equivalent, never the only path. Commands want 2+ syllables — measured:
+"start" and "stop" verify, "lap" does not; use "lap time".
+
+## Navigation
+
+One model, stated once:
+
+| Level | Affordance | Owner |
+| --- | --- | --- |
+| Exit app → launcher | BOOT button | Launcher, unconsumable |
+| Back one level | Corner control, top-left | The app (`ui.header`) |
+| Between sibling pages | Horizontal swipe + `ui.dots` | The app |
+| Within a page | Vertical scroll | LVGL |
+
+Corner grammar: **`×` dismisses a sheet; `‹` pops a pushed screen; root
+screens get neither** (nothing to close — BOOT is the exit). The glyph that
+discards must never commit. Titles sit beside the corner control when one
+exists, centred otherwise.
+
+## Components
+
+Patterns from the watchOS gallery (Stopwatch, Strava, Spotify, Translate,
+Voice Memos, Home, NBA, Night Sky), as build-this-way guidance:
+
+| Pattern | Build with |
+| --- | --- |
+| Single-select ("radio") | `ui.select` — ✓-rows, no radio circles |
+| Dropdown / picker | `ui.picker` — a pushed page, never a popup |
+| Toggle | `ui.row` kind="toggle" — the whole row toggles |
+| Numeric value | `ui.stepper` — +/- with hold-to-repeat |
+| Drag-to-set value | `ui.fill` — its own screen, never inside a tileview |
+| Destructive action | `ui.confirm` — Cancel full-width, confirm armed after 400 ms |
+| Text entry | `require("keyboard")` — never a hand-rolled QWERTY |
+| Status feedback | `ui.toast` |
+| Wait state | `ui.busy` |
+| Attribute list | Bold label above, dim value below (recipe) |
+| Transport row | Three round buttons, centre larger (recipe) |
+| Big primary action | One large circular button + caption (recipe) |
+
+Rules this hardware taught us, kept so nobody re-learns them:
+
+- **Copy watchOS's arrangement, not its dimensions.** Apple's digitizer hits
+  ~30 px keys; ours drops half of 180×56. Layouts transfer, sizes don't.
+- **Visual size ≠ hit size.** Corner controls draw at ~72 px and hit at 88+
+  (`ui.corner_button`). Icon-only corner controls are circles; text gets pills.
+- **Coarse drags beat taps; fine drags lose to them.** The fill arc (coarse)
+  works; a roller needing a controlled flick-and-snap was "very challenging"
+  and became a dialer pad.
+- **A drag surface and horizontal paging cannot share a screen** — same
+  gesture domain. Fill-style controls open their own screen (Apple Home does
+  exactly this).
+- **A confirmation button must not sit where its trigger was**, and Cancel
+  must be at least as easy to hit as the destructive action.
+- **Silent no-ops read as broken** on a digitizer that drops taps — disabled
+  controls acknowledge, then refuse.
 
 ## Where the platforms are silent
 

@@ -321,6 +321,76 @@ lvgl.init({ buffer_lines = 40, font_path = "apps/big.ttf", font_size = 64 })
 `font_path` there resolves the same way, relative to the SD card root. If you skip all of
 this, you get the theme default — Lexend 32 — which is the right answer for most apps.
 
+### Shared UI: `require("ui")`
+
+The building blocks every watch app needs, with the design guide's sizes baked
+in — use these before hand-rolling. All of them ship in the launcher (apps
+cannot `require` files from the card).
+
+| Helper | What it gives you |
+| --- | --- |
+| `ui.title(scr, text)` | Page title, one consistent baseline across pages |
+| `ui.header(scr, {title=, on_back=, kind=, action=, on_action=})` | Top-left back control + title. `kind="sheet"` → `×`; default → `‹`. **Omit `on_back` on root screens** — they get no back control (BOOT is the exit) |
+| `ui.corner_button(scr, {text=, x=, y=, align=, w=, on_click=})` | Corner control: watch-scale visual, full 88px hit area. Icon-only → circle (omit `w`); text → pill (pass `w`) |
+| `ui.row(parent, {text=, kind="toggle"\|"check"\|"nav", ...})` | Full-width 104px settings row; for toggles the whole row toggles |
+| `ui.select(parent, {options=, selected=, disabled=}, cb)` | Single-select ✓-rows; owns the one-checked invariant; disabled rows acknowledge taps |
+| `ui.picker({title=, options=, selected=, disabled=}, cb)` | Full-page dropdown replacement on its own screen; `cb(i)` or `cb(nil)` |
+| `ui.confirm({title=, message=, confirm_label=, destructive=}, cb)` | **The only sanctioned path to a destructive action.** Full-width Cancel, 400ms arm delay on the confirm button |
+| `ui.dots(scr, tv, {count=})` | Page dots for a tileview, bottom centre |
+| `ui.toast(scr, text[, ms])` | Transient pill, 2.5s default (uses one of your 16 timer slots while up) |
+| `ui.stepper(parent, {min=, max=, step=, value=, label=}, cb)` | +/- value row with clamp and hold-to-repeat |
+| `ui.busy({text=})` | Modal spinner screen; call `h.done()` to dismiss |
+| `ui.fill({title=, min=, max=, value=, label=}, on_change, done)` | Big drag-to-set arc **on its own screen** — a drag surface and horizontal paging fight over the same gesture, so never embed one in a tileview |
+
+### Text entry: `require("keyboard")`
+
+Never hand-roll a QWERTY — its ~30px keys are unusable on this digitizer.
+
+```lua
+local keyboard = require("keyboard")
+keyboard.open({ title = "Name", mode = "text", initial = current }, function(t)
+    -- t == nil means cancelled; keep your old value then
+end)
+```
+
+Letters are two-stage: tap a group (`ABCDEF`), then the letter; the view stays
+in the group for repeats, `‹` goes back. `123` is a phone dialer. `Aa` toggles
+case (auto-downshifts after the first letter and after spaces). Backspace is
+always bottom-right; hold it to repeat. `×` asks before discarding non-empty
+text. A voice key appears when `voice` is available (below).
+
+`mode = "number"` opens straight to the dialer.
+
+### Voice: `require("voice")`
+
+Offline speech commands — MultiNet on the device, no network, no wake word.
+Push-to-talk: capture runs when your app asks.
+
+```lua
+local voice = require("voice")
+
+voice.available()   -- false if the model or mic is absent; degrade, don't die
+
+-- One-shot vocabulary match: cb(word) or cb(nil) on timeout/no-match
+voice.listen({ commands = { "start workout", "stop workout", "next set" } },
+    function(word) ... end)
+
+-- NATO spelling: say "romeo india charlie kilo", then "over".
+-- "delete that" removes one letter. cb(text) or cb(nil).
+voice.spell(function(text) ... end)
+
+voice.stop()        -- cancel an active capture
+```
+
+Rules that come from hardware testing, not taste:
+
+- **Commands want 2+ syllables.** "start"/"stop" verify; "lap" does not —
+  use "lap time". Very short words fall below the detection threshold.
+- Voice is an **accelerator**: every voice path needs a touch equivalent.
+- One capture at a time — a second `listen`/`spell` returns `nil, "busy"`.
+- A capture eats most of one core while running; keep them short and
+  user-initiated.
+
 ### Layout
 
 ```lua
@@ -364,7 +434,7 @@ caller:load()
 Ask if your app genuinely needs one — each is launcher work that blocks everyone:
 
 - Wi-Fi / networking
-- Audio playback and the microphone
+- Audio playback (the microphone is taken — see the `voice` module)
 - IMU, RTC, and battery readings
 - A dedicated persistent-storage API. There's no `app.store` — if you need to remember
   something across runs, use `io.open` on a file under `/sdcard` yourself (see the trust
@@ -442,8 +512,20 @@ Iterate without touching the SD card or reflashing:
 The same serial link can launch and stop apps without touching the screen:
 
 ```
-RUN myapp.lua   ->  RUN_OK myapp.lua   (or RUN_ERR bad_name|not_found|already_running)
-STOP            ->  STOP_OK            (or STOP_ERR not_running)
+RUN myapp.lua        ->  RUN_OK myapp.lua   (or RUN_ERR bad_name|not_found|already_running)
+STOP                 ->  STOP_OK            (or STOP_ERR not_running)
+LIST                 ->  APP <name> per line, then LIST_OK <n>
+DELETE myapp.lua     ->  DELETE_OK          (or DELETE_ERR not_found|delete_failed)
+SHOT                 ->  screenshot of the live screen (see tools/screenshot.py)
+TAP <x> <y>          ->  synthetic tap, same event pipeline as a finger
+SWIPE x0 y0 x1 y1 [ms] -> synthetic swipe/drag
+```
+
+`tools/push.py --list` and `--delete name.lua` wrap LIST/DELETE. For driving
+and seeing the UI without touching the device:
+
+```bash
+tools/drive.py run myapp.lua : sleep 1 : tap 184 224 : sleep 0.5 : shot out.png
 ```
 
 Watch the console live:
