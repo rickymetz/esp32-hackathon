@@ -58,6 +58,7 @@ static const lua_lvgl_event_name_t s_event_names[] = {
     {"ready",         LV_EVENT_READY},
     {"cancel",        LV_EVENT_CANCEL},
     {"gesture",       LV_EVENT_GESTURE},
+    {"long_pressed_repeat", LV_EVENT_LONG_PRESSED_REPEAT},
 };
 
 #define LUA_LVGL_EVENT_NAME_COUNT \

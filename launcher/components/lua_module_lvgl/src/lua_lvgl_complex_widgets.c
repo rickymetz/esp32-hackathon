@@ -1181,6 +1181,34 @@ int lua_lvgl_tileview_set_tile_by_index(lua_State *L)
     return 1;
 }
 
+/* 1-based creation-order index of the active tile. Geometry inference
+ * from Lua is impossible: lv_obj_get_x() is scroll-adjusted, so the
+ * visible tile always reads ~0 (ui.dots lit the wrong page on device). */
+int lua_lvgl_tileview_get_active_index(lua_State *L)
+{
+    esp_err_t err = lua_lvgl_lock();
+    lv_obj_t *tv;
+    lv_obj_t *act;
+    int found = 0;
+
+    if (err != ESP_OK) return lua_lvgl_error_esp(L, "lock", err);
+    tv = lua_lvgl_check_typed_obj(L, 1, LUA_LVGL_OBJ_TILEVIEW, "tileview");
+    act = lv_tileview_get_tile_active(tv);
+    if (act) {
+        uint32_t cnt = lv_obj_get_child_count(tv);
+        for (uint32_t i = 0; i < cnt; i++) {
+            if (lv_obj_get_child(tv, i) == act) {
+                found = (int)i + 1;
+                break;
+            }
+        }
+    }
+    lua_lvgl_unlock();
+    if (found > 0) lua_pushinteger(L, found);
+    else lua_pushnil(L);
+    return 1;
+}
+
 int lua_lvgl_tileview_get_active_tile(lua_State *L)
 {
     esp_err_t err = lua_lvgl_lock();

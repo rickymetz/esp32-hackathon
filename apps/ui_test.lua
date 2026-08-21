@@ -17,6 +17,7 @@ scr:set_style({ bg_color = "#000000" })
 
 local tv = lvgl.tileview(scr, {})
 tv:set_style({ bg_color = "#000000", bg_opa = 0 })
+tv:set_scroll({ scrollbar = "off" })
 
 local p1 = tv:add_tile(1, 1, "right")
 local p2 = tv:add_tile(2, 1, "hor")
@@ -26,11 +27,8 @@ ui.dots(scr, tv, { count = 3 })
 
 -- ---- page 1 ----
 
-ui.header(p1, {
-    title = "UI test",
-    kind = "sheet",
-    on_back = function() ui.toast(scr, "toast works") end,
-})
+-- Root pages get no back control (nothing to close; BOOT is the exit).
+ui.title(p1, "UI test")
 
 local list1 = lvgl.container(p1, {
     x = 0, y = 100, w = 368, h = 300,
@@ -42,6 +40,7 @@ ui.row(list1, {
     text = "Toggle me", kind = "toggle", checked = true,
     on_change = function() ui.toast(scr, "toggled") end,
 })
+list1:set_scroll({ scrollbar = "active" })
 
 local fruit = { "Apple", "Banana", "Cherry", "Durian" }
 local fruit_row
@@ -55,19 +54,26 @@ fruit_row = ui.row(list1, {
     end,
 })
 
+local name = ""
 local name_row
 name_row = ui.row(list1, {
-    text = "Name: ?", kind = "nav",
+    text = "Name: not set", kind = "nav",
     on_click = function()
-        keyboard.open({ title = "Name", mode = "text" }, function(t)
-            name_row.label:set_text("Name: " .. (t or "(cancelled)"))
+        -- Pass the current value and keep it on cancel -- the old demo
+        -- overwrote the name with "(cancelled)" and always restarted
+        -- from empty, teaching both anti-patterns (review).
+        keyboard.open({ title = "Name", mode = "text", initial = name }, function(t)
+            if t then
+                name = t
+                name_row.label:set_text("Name: " .. (name == "" and "not set" or name))
+            end
         end)
     end,
 })
 
 -- ---- page 2 ----
 
-lvgl.label(p2, { text = "Select + confirm", align = "top_mid", y = 24, text_color = "#FFFFFF" })
+ui.title(p2, "Select")
 
 local list2 = lvgl.container(p2, {
     x = 0, y = 70, w = 368, h = 236,
@@ -92,7 +98,7 @@ end)
 
 -- ---- page 3 ----
 
-lvgl.label(p3, { text = "Fill control", align = "top_mid", y = 24, text_color = "#FFFFFF" })
+ui.title(p3, "Fill")
 
 local bright = 40
 local bright_btn = lvgl.button(p3, {

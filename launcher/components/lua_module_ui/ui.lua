@@ -59,24 +59,48 @@ end
 -- ---------------------------------------------------------------- header
 -- Top-left back control (x for sheets, < for pushed screens), title,
 -- optional top-right action. The gallery pattern from every watchOS app.
+-- Title only -- exported so every page in an app can share one baseline
+-- (review finding: titles jiggled between tile pages at different y).
+function M.title(scr, text)
+    return lvgl.label(scr, {
+        text = text,
+        align = "top_mid", y = 26,
+        text_color = "#FFFFFF",
+        font = lvgl.font(40),
+    })
+end
+
 function M.header(scr, opts)
     opts = opts or {}
     local h = {}
 
-    local glyph = (opts.kind == "sheet") and lvgl.symbol.close or lvgl.symbol.left
-    -- Inset from the rounded glass; drawn at watch scale, hit at ours.
-    h.back = M.corner_button(scr, {
-        text = glyph,
-        x = 4, y = 4,
-        on_click = opts.on_back,
-    })
+    -- Grammar (review-driven): sheets get x, pushed screens get <, root
+    -- screens get NEITHER -- a back control with no on_back would be a
+    -- dead button, the worst kind of looks-tappable-isn't.
+    if opts.on_back then
+        local glyph = (opts.kind == "sheet") and lvgl.symbol.close or lvgl.symbol.left
+        h.back = M.corner_button(scr, {
+            text = glyph,
+            x = 4, y = 4,
+            on_click = opts.on_back,
+        })
+    end
 
     if opts.title then
-        h.title = lvgl.label(scr, {
-            text = opts.title,
-            align = "top_mid", y = 32,
-            text_color = "#FFFFFF",
-        })
+        if h.back then
+            -- With a corner control present, a centered title collides
+            -- with it ("Delete all?" ran into the x on device). Apple's
+            -- grammar: the title sits NEXT to the corner control,
+            -- leading-aligned.
+            h.title = lvgl.label(scr, {
+                text = opts.title,
+                x = 104, y = 26,
+                text_color = "#FFFFFF",
+                font = lvgl.font(40),
+            })
+        else
+            h.title = M.title(scr, opts.title)
+        end
     end
 
     if opts.action then
@@ -109,19 +133,39 @@ function M.confirm(opts, cb)
 
     lvgl.label(scr, {
         text = opts.message or "",
-        align = "center", y = -20,
+        align = "top_mid", y = 110,
         text_color = "#FFFFFF",
         w = 340,
     })
 
+    -- Review consensus (all three personas): the confirm button must NOT
+    -- sit where the triggering button was (bottom -- a double-tap bounce
+    -- would complete the destructive action), and a full-size Cancel must
+    -- exist -- the safe path cannot be the smallest target on screen. So:
+    -- confirm at CENTER, Cancel full-width at the BOTTOM, where the
+    -- sloppy second tap lands. The confirm button also ignores taps for
+    -- its first 400ms.
+    local armed = false
+    timer.after(400, function() armed = true end)
+
     local btn = lvgl.button(scr, {
         text = opts.confirm_label or "OK",
-        align = "bottom_mid", y = -12,
+        align = "center", y = 30,
         w = 344, h = ROW_H,
         bg_color = opts.destructive and "#B3261E" or "#2F80ED",
         text_color = "#FFFFFF", radius = 12,
     })
-    btn:on("clicked", function() finish(true) end)
+    btn:on("clicked", function()
+        if armed then finish(true) end
+    end)
+
+    local cancel = lvgl.button(scr, {
+        text = "Cancel",
+        align = "bottom_mid", y = -12,
+        w = 344, h = ROW_H,
+        bg_color = "#1E1E28", text_color = "#FFFFFF", radius = 12,
+    })
+    cancel:on("clicked", function() finish(false) end)
 
     scr:load()
 end
@@ -204,13 +248,26 @@ function M.select(parent, opts, cb)
             checked = (i == h.selected),
             dim = disabled[i],
             on_click = function()
-                if i == h.selected then return end
+                if i == h.selected then
+                    -- Tapping the current choice is confirmation, not a
+                    -- dead tap (review: users confirm by re-tapping).
+                    if opts.on_reselect then opts.on_reselect(i) end
+                    return
+                end
                 h.rows[h.selected].set_checked(false)
                 h.selected = i
                 row.set_checked(true)
                 if cb then cb(i) end
             end,
         })
+        -- A disabled row still acknowledges the tap: on this digitizer a
+        -- silent no-op is indistinguishable from a dropped tap, which
+        -- reads as "broken" (review). Acknowledge, then refuse.
+        if disabled[i] then
+            row.row:on("clicked", function()
+                M.toast(lvgl.active_screen(), "Unavailable")
+            end)
+        end
         h.rows[i] = row
     end
 
@@ -240,18 +297,21 @@ function M.picker(opts, cb)
         if cb then cb(result) end
     end
 
-    M.header(scr, { kind = "sheet", title = opts.title,
+    -- Pushed-screen grammar: rows with a chevron push, so this gets <,
+    -- not x -- the sheet glyph belongs to the keyboard (review finding).
+    M.header(scr, { title = opts.title,
                     on_back = function() finish(nil) end })
 
     local list = lvgl.container(scr, {
-        x = 0, y = TARGET + 8, w = 368, h = 448 - TARGET - 8,
+        x = 0, y = TARGET + 12, w = 368, h = 448 - TARGET - 12,
         bg_opa = 0, border_width = 0, pad = 12,
     })
     list:set_flex({ flow = "column", pad_row = 16 })
-    list:set_scroll({ dir = "ver" })
+    list:set_scroll({ dir = "ver", scrollbar = "active" })
 
     M.select(list, { options = opts.options, selected = opts.selected,
-                     disabled = opts.disabled },
+                     disabled = opts.disabled,
+                     on_reselect = function(i) finish(i) end },
              function(i) finish(i) end)
 
     scr:load()
@@ -286,27 +346,25 @@ function M.dots(scr, tv, opts)
     mark(1)
 
     tv:on("value_changed", function()
-        local tile = tv:get_active_tile()
-        if not tile then return end
-        local x = tile:get_pos()
-        local w = tv:get_size()
-        if w and w > 0 then
-            mark(math.floor(x / w + 0.5) + 1)
-        end
+        local page = tv:get_active_index()
+        if page then mark(page) end
     end)
     return h
 end
 
 -- ----------------------------------------------------------------- toast
 -- Transient status pill, self-dismissing. Costs one timer slot while up.
-function M.toast(scr, text)
+function M.toast(scr, text, ms)
+    -- 2.5s default (1.5s vanished before a glance landed -- the review's
+    -- own screenshot captured no toast at all) and lifted clear of the
+    -- page dots instead of covering the only paging affordance.
     local pill = lvgl.button(scr, {
         text = text,
-        align = "bottom_mid", y = -16,
+        align = "bottom_mid", y = -48,
         w = 300, h = 72,
         bg_color = "#24303C", text_color = "#FFFFFF", radius = 36,
     })
-    timer.after(1500, function()
+    timer.after(ms or 2500, function()
         pill:delete()
     end)
     return pill
@@ -358,7 +416,11 @@ function M.fill(opts, on_change, done)
         if on_change then on_change(arc:get_value()) end
     end)
 
-    M.header(scr, { kind = "sheet", title = opts.title,
+    -- Pushed-screen grammar: < means "go back", and values apply live
+    -- (on_change) -- so leaving commits by nature, and no glyph lies. The
+    -- old x-that-saved was the review's sharpest semantics finding: the
+    -- discard glyph must never commit.
+    M.header(scr, { title = opts.title,
                     on_back = function()
                         local v = arc:get_value()
                         caller:load()
@@ -366,6 +428,7 @@ function M.fill(opts, on_change, done)
                         if done then done(v) end
                     end })
 
+    scr:set_scroll({ dir = "none", scrollbar = "off" })
     scr:load()
 end
 

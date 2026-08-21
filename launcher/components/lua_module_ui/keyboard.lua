@@ -48,11 +48,25 @@ function M.open(opts, cb)
     -- 360px below stays key surface (a separate readout band did not fit
     -- the panel -- review finding).
     -- Corner controls drawn at watch scale, hit at ours (see
-    -- ui.corner_button).
+    -- ui.corner_button). The x guards non-empty text behind a confirm:
+    -- a name is 15-25 taps of work and a 10px drift above the top key
+    -- row lands here -- silent discard was the review's sharpest
+    -- keyboard finding.
     ui.corner_button(scr, {
         text = lvgl.symbol.close,
         x = 4, y = 4,
-        on_click = function() finish(nil) end,
+        on_click = function()
+            if text == "" then
+                finish(nil)
+            else
+                ui.confirm({ title = "Discard?",
+                             message = "Throw away what you typed?",
+                             confirm_label = "Discard", destructive = true },
+                    function(yes)
+                        if yes then finish(nil) end
+                    end)
+            end
+        end,
     })
 
     -- Icon-only corner controls are circles; only text labels get pills.
@@ -121,9 +135,12 @@ function M.open(opts, cb)
         for i, ch in ipairs(group.chars) do c[i] = cased(ch) end
         -- Picking a letter STAYS here (repeats from one group are one tap
         -- each -- jumping back after every pick was tedious on device);
-        -- the < cell returns to the groups.
+        -- the < cell returns to the groups. Backspace lives here too --
+        -- a mistype is most likely at the moment of picking a letter,
+        -- and it is pinned bottom-RIGHT in every view (review: it swapped
+        -- corners between views, and muscle memory hit ABC instead).
         bm:set_map({ c[1], c[2], "\n", c[3], c[4], "\n", c[5], c[6], "\n",
-                     lvgl.symbol.left, SPACE })
+                     lvgl.symbol.left, SPACE, BACKSPACE })
     end
 
     show_digits = function()
@@ -135,7 +152,7 @@ function M.open(opts, cb)
         bm:set_map({ "1", "2", "3", "\n",
                      "4", "5", "6", "\n",
                      "7", "8", "9", "\n",
-                     BACKSPACE, "0", (mode == "text") and "ABC" or "00" })
+                     (mode == "text") and "ABC" or "00", "0", BACKSPACE })
     end
 
     bm:on("value_changed", function()
@@ -164,9 +181,19 @@ function M.open(opts, cb)
                 show_groups()
             elseif t == SPACE then
                 text = text .. " "; update_readout()
+                upper = true            -- name/sentence case
+                show_letters(current_group)
+            elseif t == BACKSPACE then
+                text = text:sub(1, -2); update_readout()
             else
                 text = text .. t
                 update_readout()
+                if upper then
+                    -- Auto-downshift after the first letter, phone-style:
+                    -- the caps-lock default typed names as "RICK" (review).
+                    upper = false
+                    show_letters(current_group)
+                end
             end
         elseif view == "digits" then
             if t == BACKSPACE then
@@ -176,6 +203,15 @@ function M.open(opts, cb)
             else
                 text = text .. t; update_readout()   -- digits and "00"
             end
+        end
+    end)
+
+    -- Hold-to-repeat on backspace: standard on every keyboard, and
+    -- deleting a long entry one tap per character is not acceptable.
+    bm:on("long_pressed_repeat", function()
+        local idx = bm:get_selected()
+        if idx and bm:get_button_text(idx) == BACKSPACE and #text > 0 then
+            text = text:sub(1, -2); update_readout()
         end
     end)
 

@@ -404,6 +404,7 @@ int lua_lvgl_tileview_add_tile(lua_State *L);
 int lua_lvgl_tileview_set_tile(lua_State *L);
 int lua_lvgl_tileview_set_tile_by_index(lua_State *L);
 int lua_lvgl_tileview_get_active_tile(lua_State *L);
+int lua_lvgl_tileview_get_active_index(lua_State *L);
 int lua_lvgl_window_add_title(lua_State *L);
 int lua_lvgl_window_add_button(lua_State *L);
 int lua_lvgl_window_get_header(lua_State *L);

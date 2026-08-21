@@ -711,7 +711,9 @@ static void build_launcher_ui(void)
             lv_label_set_text(label, app.name);
             lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
             lv_obj_set_style_text_font(label, &lv_font_lexend_32, LV_PART_MAIN);
-            lv_obj_center(label);
+            /* Leading-aligned like every ui.row: the review flagged the
+             * centered launcher rows as a second list grammar. */
+            lv_obj_align(label, LV_ALIGN_LEFT_MID, 16, 0);
 
             if (i == 0) {
                 /* Structural proof (no board display to look at) that the

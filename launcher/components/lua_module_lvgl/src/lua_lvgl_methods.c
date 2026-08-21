@@ -251,6 +251,7 @@ static const luaL_Reg lua_lvgl_tileview_methods[] = {
     {"set_tile", lua_lvgl_tileview_set_tile},
     {"set_tile_by_index", lua_lvgl_tileview_set_tile_by_index},
     {"get_active_tile", lua_lvgl_tileview_get_active_tile},
+    {"get_active_index", lua_lvgl_tileview_get_active_index},
     {NULL, NULL},
 };
 

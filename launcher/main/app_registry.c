@@ -55,6 +55,13 @@ static void pretty_name(const char *filename, char *out, size_t out_size)
     if (out[0] >= 'a' && out[0] <= 'z') {
         out[0] -= 32;
     }
+    /* A 1-2 letter first word is almost certainly an initialism -- the
+     * review caught "ui_test.lua" rendering as "Ui test". Uppercase it
+     * whole ("UI test"); longer words keep plain first-letter casing. */
+    if (n >= 2 && out[1] >= 'a' && out[1] <= 'z' &&
+        (out[2] == ' ' || out[2] == '\0')) {
+        out[1] -= 32;
+    }
 }
 
 static bool has_lua_suffix(const char *name)
