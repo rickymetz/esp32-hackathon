@@ -50,7 +50,7 @@ stepper = ui.stepper(scr, { min = 40, max = 240, step = 5, value = bpm, label = 
 stepper.row:align("center", 0, 48)
 
 local start_btn = lvgl.button(scr, {
-    text = "Start", align = "bottom_mid", y = -24, w = 320, h = 96,
+    text = "Start", align = "bottom_mid", y = -20, w = 320, h = 100,
     bg_color = "#27ae60", text_color = "#ffffff",
 })
 

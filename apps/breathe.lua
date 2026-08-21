@@ -13,20 +13,22 @@ lvgl.init({ buffer_lines = 40 })
 local scr = lvgl.create_screen()
 scr:set_style({ bg_color = "#0b0d12" })
 
--- The paced cycle: grow in, hold, shrink out, hold.
+-- The paced cycle: grow in, hold, shrink out, hold. Max diameter is kept so
+-- the fully-inflated circle clears the Start button below it.
 local PHASES = {
-    { name = "Breathe in",  dur = 4000, from = 96,  to = 268 },
-    { name = "Hold",        dur = 1600, from = 268, to = 268 },
-    { name = "Breathe out", dur = 4000, from = 268, to = 96 },
+    { name = "Breathe in",  dur = 4000, from = 96,  to = 240 },
+    { name = "Hold",        dur = 1600, from = 240, to = 240 },
+    { name = "Breathe out", dur = 4000, from = 240, to = 96 },
     { name = "Hold",        dur = 1600, from = 96,  to = 96 },
 }
+local CIRCLE_Y = -46      -- centre offset; keeps the grown circle off the button
 
 local circle = lvgl.container(scr, {
-    align = "center", y = -20, w = 96, h = 96, radius = 48,
+    align = "center", y = CIRCLE_Y, w = 96, h = 96, radius = 48,
     bg_color = "#2f80ed", border_width = 0,
 })
 local caption = lvgl.label(scr, {
-    text = "Ready", align = "center", y = -20, text_color = "#ffffff",
+    text = "Ready", align = "center", y = CIRCLE_Y, text_color = "#ffffff",
 })
 caption:set_style({ font = lvgl.font(26) })
 
@@ -37,7 +39,7 @@ local phase_i, phase_elapsed = 1, 0
 local function set_size(d)
     circle:set_size(d, d)
     circle:set_style({ radius = d // 2 })
-    circle:align("center", 0, -20)   -- re-center after the resize
+    circle:align("center", 0, CIRCLE_Y)   -- re-center after the resize
 end
 
 local function reset_visual()
@@ -59,7 +61,7 @@ local function tick()
 end
 
 local start_btn = lvgl.button(scr, {
-    text = "Start", align = "bottom_mid", y = -28, w = 300, h = 96,
+    text = "Start", align = "bottom_mid", y = -24, w = 300, h = 100,
     bg_color = "#27ae60", text_color = "#ffffff",
 })
 
