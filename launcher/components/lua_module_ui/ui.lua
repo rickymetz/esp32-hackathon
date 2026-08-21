@@ -18,12 +18,13 @@ function M.header(scr, opts)
     local h = {}
 
     local glyph = (opts.kind == "sheet") and lvgl.symbol.close or lvgl.symbol.left
-    -- Inset 8px from the edges: the panel's glass corners are rounded and
-    -- clip anything drawn at x=0,y=0 (found by Rick on device).
+    -- Inset 8px from the edges (the glass corners are rounded and clip
+    -- x=0,y=0 content), and fully round: a circle sits naturally inside
+    -- the bezel's corner radius where a rounded square fought it.
     h.back = lvgl.button(scr, {
         text = glyph,
         x = 8, y = 8, w = TARGET, h = TARGET,
-        bg_color = "#1E1E28", text_color = "#9FB4C7", radius = 16,
+        bg_color = "#1E1E28", text_color = "#9FB4C7", radius = TARGET // 2,
     })
     if opts.on_back then
         h.back:on("clicked", opts.on_back)
@@ -41,7 +42,7 @@ function M.header(scr, opts)
         h.action = lvgl.button(scr, {
             text = opts.action,
             align = "top_right", x = -8, y = 8, w = TARGET + 24, h = TARGET,
-            bg_color = "#1E1E28", text_color = "#9FB4C7", radius = 16,
+            bg_color = "#1E1E28", text_color = "#9FB4C7", radius = TARGET // 2,
         })
         if opts.on_action then
             h.action:on("clicked", opts.on_action)

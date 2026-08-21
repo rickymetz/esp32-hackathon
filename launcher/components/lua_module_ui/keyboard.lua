@@ -46,18 +46,19 @@ function M.open(opts, cb)
     -- Header: x | readout | OK. The readout lives inline so the whole
     -- 360px below stays key surface (a separate readout band did not fit
     -- the panel -- review finding).
-    -- Inset 8px: the glass corners are rounded and clip x=0,y=0 content.
+    -- Inset 8px (the glass corners clip x=0,y=0 content) and fully round:
+    -- circles/pills sit naturally inside the bezel's corner radius.
     local cancel = lvgl.button(scr, {
         text = lvgl.symbol.close,
         x = 8, y = 8, w = 88, h = HEADER_H - 8,
-        bg_color = "#1E1E28", text_color = "#9FB4C7", radius = 16,
+        bg_color = "#1E1E28", text_color = "#9FB4C7", radius = (HEADER_H - 8) // 2,
     })
     cancel:on("clicked", function() finish(nil) end)
 
     local ok = lvgl.button(scr, {
         text = lvgl.symbol.ok,
         align = "top_right", x = -8, y = 8, w = 112, h = HEADER_H - 8,
-        bg_color = "#2F80ED", text_color = "#FFFFFF", radius = 16,
+        bg_color = "#2F80ED", text_color = "#FFFFFF", radius = (HEADER_H - 8) // 2,
     })
     ok:on("clicked", function() finish(text) end)
 
