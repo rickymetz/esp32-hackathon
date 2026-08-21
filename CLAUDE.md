@@ -136,7 +136,8 @@ version. Holding ≥6 s still powers off — that is the AXP2101 below us.
 Verified on hardware: launching and exiting an app repeatedly returns PSRAM to exactly
 the same free figure, so the launch/exit cycle does not leak.
 
-Verified on hardware: **Lua 5.5.0 runs**, VM costs ~15.5 KB of PSRAM. Its allocator is
+Verified on hardware: **Lua 5.5.0 runs**. A bare VM (no modules loaded) costs ~15.5 KB of
+PSRAM; a real app — `lvgl` module loaded, a screen created — costs ~40 KB. Its allocator is
 pointed at `MALLOC_CAP_SPIRAM` so apps cannot starve internal DRAM.
 
 Two dead ends, both checked — do not spend time re-discovering them:
