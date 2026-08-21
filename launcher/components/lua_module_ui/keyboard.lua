@@ -11,6 +11,7 @@
 
 local lvgl = require("lvgl")
 local ui = require("ui")
+local voice = require("voice")
 
 local M = {}
 
@@ -122,9 +123,23 @@ function M.open(opts, cb)
         map[#map + 1] = "\n"
         -- The case cell shows what you SWITCH TO, phone-style.
         map[#map + 1] = upper and "abc" or "ABC"
+        if voice.available() then
+            map[#map + 1] = lvgl.symbol.audio   -- NATO voice spelling
+        end
         map[#map + 1] = SPACE
         map[#map + 1] = BACKSPACE
         bm:set_map(map)
+    end
+
+    local function start_voice()
+        readout:set_text("say it...")
+        local ok = voice.spell(function(t)
+            if t and t ~= "" then
+                text = text .. t
+            end
+            update_readout()
+        end)
+        if not ok then update_readout() end
     end
 
     local current_group = nil
@@ -171,6 +186,8 @@ function M.open(opts, cb)
             elseif t == "abc" or t == "ABC" then
                 upper = not upper
                 show_groups()
+            elseif t == lvgl.symbol.audio then
+                start_voice()
             else
                 for _, g in ipairs(GROUPS) do
                     if cased(g.label) == t then show_letters(g); break end

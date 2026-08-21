@@ -917,9 +917,11 @@ void app_main(void)
     ESP_ERROR_CHECK(lua_module_lvgl_register_with_data_root(BSP_SD_MOUNT_POINT));
     ESP_ERROR_CHECK(app_timer_register());
     ESP_ERROR_CHECK(app_button_register());
-    /* After lvgl and timer: ui.lua/keyboard.lua require() both at load. */
-    ESP_ERROR_CHECK(lua_module_ui_register());
+    /* Order matters: cap_lua opens modules in registration order, and
+     * ui.lua/keyboard.lua require() lvgl, timer, and voice at load --
+     * so voice must register BEFORE the embedded-Lua modules. */
     ESP_ERROR_CHECK(app_voice_register());
+    ESP_ERROR_CHECK(lua_module_ui_register());
 
     /* BOOT (GPIO0) is the Home button. Input + pull-up matches its idle
      * state; it is only special during reset, where the ROM samples it as a
