@@ -814,12 +814,22 @@ void app_main(void)
     serial_push_start();
 
     /* Structural proof the theme font actually took (no board display to
-     * look at from here): Lexend 32's line_height is 36px. The row-label
-     * check above verifies the same thing on a real widget; this logs the
-     * theme's own font. LV_FONT_DEFAULT is Montserrat 14 by design and is
-     * deliberately NOT what is checked here. */
-    ESP_LOGI(TAG, "theme font line_height=%d (want 36 for lexend_32)",
-             (int)lv_font_get_line_height(&lv_font_lexend_32));
+     * look at from here). Advisor review caught that logging
+     * lv_font_lexend_32's own line_height proves nothing about the THEME --
+     * and the row-label check sets its font explicitly, so it doesn't
+     * either. This probes an UNSTYLED label: whatever font it resolves is
+     * what the theme hands every widget. Want lexend_32 (line_height 36);
+     * montserrat_14 (16) here means the theme init did not take. */
+    bsp_display_lock(0);
+    {
+        lv_obj_t *probe = lv_label_create(lv_screen_active());
+        const lv_font_t *resolved = lv_obj_get_style_text_font(probe, LV_PART_MAIN);
+        ESP_LOGI(TAG, "theme probe: resolved=%p lexend_32=%p line_height=%d (want 36)",
+                 (const void *)resolved, (const void *)&lv_font_lexend_32,
+                 (int)lv_font_get_line_height(resolved));
+        lv_obj_delete(probe);
+    }
+    bsp_display_unlock();
 
     ESP_LOGI(TAG, "ready: %u app(s), internal free=%u psram free=%u",
              (unsigned)app_registry_count(),
