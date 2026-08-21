@@ -25,4 +25,10 @@ void sim_display_service_boot(void);
  * framebuffer, then write it to `path` as a PNG. Returns 0 on success. */
 int sim_display_capture_png(const char *path);
 
+/* Count distinct RGB565 colors currently in the framebuffer, capped at `cap`.
+ * A blank/near-blank frame (a background and little else) yields a small count;
+ * a real rendered UI -- anti-aliased text, gradients -- yields many. Used by
+ * the `check` command as an "the app actually drew something" heuristic. */
+int sim_display_distinct_colors(int cap);
+
 #endif /* SIM_DISPLAY_H */

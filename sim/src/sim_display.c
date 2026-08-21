@@ -34,6 +34,25 @@ lv_display_t *sim_display_init(void)
     return s_disp;
 }
 
+int sim_display_distinct_colors(int cap)
+{
+    /* One bit per possible RGB565 value (64K bits = 8 KiB). */
+    static uint8_t seen[65536 / 8];
+    memset(seen, 0, sizeof(seen));
+
+    lv_refr_now(s_disp);
+
+    int count = 0;
+    for (int i = 0; i < SIM_HOR_RES * SIM_VER_RES; i++) {
+        uint16_t px = s_framebuf[i];
+        if (!(seen[px >> 3] & (1u << (px & 7)))) {
+            seen[px >> 3] |= (uint8_t)(1u << (px & 7));
+            if (++count >= cap) break;
+        }
+    }
+    return count;
+}
+
 int sim_display_capture_png(const char *path)
 {
     /* Render pending changes now so the framebuffer is current. */

@@ -162,6 +162,8 @@ static void pump_until_idle(lua_State *L)
 
 static lua_State *s_app;        /* the currently running app VM, or NULL */
 static const char *s_sdroot = ".";
+static int s_exit_code = 0;     /* nonzero if any command failed (for CI) */
+#define BLANK_COLOR_THRESHOLD 4 /* < this many distinct colors == "didn't draw" */
 
 /* Render the launcher's error screen so a SHOT after a failed RUN shows the
  * failure, not a stale frame. Mirrors show_error_screen() in launcher_main.c:
@@ -286,7 +288,7 @@ static void exec_cmd(int argc, char **argv)
 
     if (!strcmp(cmd, "run")) {
         if (!need(argc, 2, "run")) return;
-        app_run(argv[1]);
+        if (app_run(argv[1]) < 0) s_exit_code = 1;
     } else if (!strcmp(cmd, "stop")) {
         app_stop();
         printf("STOP_OK\n");
@@ -330,7 +332,21 @@ static void exec_cmd(int argc, char **argv)
         if (!need(argc, 2, "shot")) return;
         if (s_app) pump_once(s_app);
         if (sim_display_capture_png(argv[1]) == 0) printf("SHOT_OK %s\n", argv[1]);
-        else fprintf(stderr, "SHOT_ERR %s\n", argv[1]);
+        else { fprintf(stderr, "SHOT_ERR %s\n", argv[1]); s_exit_code = 1; }
+    } else if (!strcmp(cmd, "check")) {
+        /* Capture and assert the frame is non-blank -- "the app drew
+         * something". Sets the process exit code for CI. */
+        if (!need(argc, 2, "check")) return;
+        if (s_app) pump_once(s_app);
+        int rc = sim_display_capture_png(argv[1]);
+        int colors = sim_display_distinct_colors(BLANK_COLOR_THRESHOLD);
+        if (rc != 0) { fprintf(stderr, "CHECK_ERR %s (capture failed)\n", argv[1]); s_exit_code = 1; }
+        else if (colors < BLANK_COLOR_THRESHOLD) {
+            fprintf(stderr, "CHECK_FAIL %s (blank: %d colors)\n", argv[1], colors);
+            s_exit_code = 1;
+        } else {
+            printf("CHECK_OK %s (%d+ colors)\n", argv[1], colors);
+        }
     } else {
         fprintf(stderr, "unknown command: %s\n", cmd);
     }
@@ -375,5 +391,5 @@ int main(int argc, char **argv)
     }
 
     app_stop();
-    return 0;
+    return s_exit_code;
 }
