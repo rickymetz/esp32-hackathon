@@ -29,11 +29,55 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <signal.h>
+#include <unistd.h>
 
 #define EVENT_PUMP_MS 30
 
 uint32_t sim_tick_ms(void);
 void     sim_tick_init(void);
+
+/* ---- Watchdog ----------------------------------------------------------
+ * A runaway app (while-true) or a runaway callback must not wedge the sim --
+ * the device has the task watchdog for exactly this. We arm a SIGALRM around
+ * every stretch of Lua execution: on the first fire we set cap_lua's stop flag
+ * so the sandbox's interrupt hook unwinds the app (the graceful path, like
+ * BOOT/STOP on device); if the app is in an uninterruptible loop (a tight C
+ * call or coroutine body -- see APP_CONTRACT.md) and still hasn't stopped after
+ * a short grace period, the second fire hard-exits so CI reports the hang. */
+static int s_watchdog_s = 10;               /* per-Lua-call budget, seconds */
+static volatile sig_atomic_t s_wd_fired = 0;
+#define WATCHDOG_HARD_GRACE_S 3
+
+static void watchdog_handler(int sig)
+{
+    (void)sig;
+    if (!s_wd_fired) {
+        s_wd_fired = 1;
+        launcher_lua_request_stop(true);    /* async-signal-safe: atomic store */
+        alarm(WATCHDOG_HARD_GRACE_S);
+    } else {
+        static const char msg[] = "sim: watchdog timeout -- app did not stop, killing\n";
+        ssize_t n = write(2, msg, sizeof(msg) - 1);
+        (void)n;
+        _exit(124);
+    }
+}
+
+static void watchdog_arm(void)
+{
+    if (s_watchdog_s <= 0) return;
+    s_wd_fired = 0;
+    signal(SIGALRM, watchdog_handler);
+    alarm((unsigned)s_watchdog_s);
+}
+
+static void watchdog_disarm(void)
+{
+    if (s_watchdog_s <= 0) return;
+    alarm(0);
+    s_wd_fired = 0;
+}
 
 /* ---- Lua state lifecycle (mirrors the launcher's lua_setup_state) -------- */
 
@@ -80,11 +124,13 @@ static void drain_lua_events(lua_State *L)
 
 static void pump_once(lua_State *L)
 {
+    watchdog_arm();         /* guard this stretch of Lua/callback execution */
     app_button_run_pending(L);
     app_voice_run_pending(L);
     (void)app_timer_run_due(L);
     lv_timer_handler();     /* indev read, animations, refresh, event dispatch */
     drain_lua_events(L);
+    watchdog_disarm();
 }
 
 /* Pump for approximately `ms` of real time so timers fire and gestures play. */
@@ -113,7 +159,21 @@ static void pump_until_idle(lua_State *L)
 
 /* ---- Running app ------------------------------------------------------- */
 
-static lua_State *s_app;   /* the currently running app VM, or NULL */
+static lua_State *s_app;        /* the currently running app VM, or NULL */
+static const char *s_sdroot = ".";
+
+/* Resolve an app path: use it as given if it exists, else try it under the
+ * SD-card root (so `run apps/foo.lua` works from any directory, and bare
+ * `run foo.lua` finds apps/foo.lua the way the device resolves app names). */
+static const char *resolve_app_path(const char *path, char *buf, size_t bufsz)
+{
+    if (access(path, R_OK) == 0) return path;
+    snprintf(buf, bufsz, "%s/%s", s_sdroot, path);
+    if (access(buf, R_OK) == 0) return buf;
+    snprintf(buf, bufsz, "%s/apps/%s", s_sdroot, path);
+    if (access(buf, R_OK) == 0) return buf;
+    return path;   /* let luaL_loadfile report the original path */
+}
 
 static void app_stop(void)
 {
@@ -142,10 +202,18 @@ static int app_run(const char *path)
         return -1;
     }
 
+    char pathbuf[1024];
+    const char *rpath = resolve_app_path(path, pathbuf, sizeof(pathbuf));
+
     lua_pushcfunction(L, traceback_handler);
     int errfunc = lua_gettop(L);
-    if (luaL_loadfile(L, path) != LUA_OK || lua_pcall(L, 0, 0, errfunc) != LUA_OK) {
+    watchdog_arm();     /* the app's top-level chunk is the main runaway risk */
+    int load_rc = (luaL_loadfile(L, rpath) != LUA_OK) ||
+                  (lua_pcall(L, 0, 0, errfunc) != LUA_OK);
+    watchdog_disarm();
+    if (load_rc) {
         if (cap_lua_runtime_stop_requested(L)) {
+            fprintf(stderr, "RUN_ERR timeout %s (watchdog stopped a runaway app)\n", path);
             lua_close(L);
             return 0;
         }
@@ -215,8 +283,11 @@ int main(int argc, char **argv)
     int i = 1;
     while (i < argc && !strncmp(argv[i], "--", 2)) {
         if (!strcmp(argv[i], "--sdroot") && i + 1 < argc) { sdroot = argv[i + 1]; i += 2; }
+        else if (!strcmp(argv[i], "--timeout") && i + 1 < argc) { s_watchdog_s = atoi(argv[i + 1]); i += 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); i++; }
     }
+
+    s_sdroot = sdroot;
 
     lv_init();
     sim_tick_init();
