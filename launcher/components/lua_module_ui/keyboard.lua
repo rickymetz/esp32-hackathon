@@ -55,9 +55,10 @@ function M.open(opts, cb)
         on_click = function() finish(nil) end,
     })
 
+    -- Icon-only corner controls are circles; only text labels get pills.
     ui.corner_button(scr, {
         text = lvgl.symbol.ok,
-        align = "top_right", x = -4, y = 4, w = 112,
+        align = "top_right", x = -4, y = 4,
         bg_color = "#2F80ED", text_color = "#FFFFFF",
         on_click = function() finish(text) end,
     })

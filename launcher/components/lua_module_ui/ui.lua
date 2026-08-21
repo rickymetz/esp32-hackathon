@@ -18,11 +18,12 @@ local TARGET = 88          -- design guide: minimum tappable square
 -- invisible 88px-or-wider button on top as the actual target. Z-order
 -- means the visual never sees a tap, clickable or not.
 -- Supports the two placements the headers use: top-left via x/y, and
--- align="top_right" with a negative x.
+-- align="top_right" with a negative x. Rule (Rick): an icon-only control
+-- is a CIRCLE -- omit w. Pass w only for a text label, which gets a pill.
 function M.corner_button(scr, opts)
     opts = opts or {}
     local w = opts.w or TARGET
-    local vis_w, vis_h = w - 28, 60
+    local vis_w, vis_h = w - 16, 72
     local inset_x = (w - vis_w) // 2
     local inset_y = (TARGET - vis_h) // 2
 
