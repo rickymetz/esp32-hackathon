@@ -593,18 +593,21 @@ static void build_launcher_ui(void)
     lv_obj_set_style_text_font(header, &lv_font_lexend_40, LV_PART_MAIN);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 24);
 
-    lv_obj_t *refresh = lv_button_create(s_launcher_screen);
-    lv_obj_set_size(refresh, 200, 104);   /* >= 200x104; smaller drops taps */
-    lv_obj_align(refresh, LV_ALIGN_BOTTOM_MID, 0, -8);
-    lv_obj_set_style_bg_color(refresh, lv_color_hex(0x24303C), LV_PART_MAIN);
-    lv_obj_add_event_cb(refresh, refresh_clicked, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t *rlabel = lv_label_create(refresh);
-    lv_label_set_text(rlabel, "Refresh");
-    lv_obj_set_style_text_color(rlabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_center(rlabel);
-
     if (count == 0) {
+        /* Nothing else on screen, so a centered standalone button is safe
+         * here -- and necessary: after inserting a card this is the only
+         * way to rescan without rebooting. */
+        lv_obj_t *refresh = lv_button_create(s_launcher_screen);
+        lv_obj_set_size(refresh, 200, 104);   /* >= 200x104; smaller drops taps */
+        lv_obj_align(refresh, LV_ALIGN_BOTTOM_MID, 0, -16);
+        lv_obj_set_style_bg_color(refresh, lv_color_hex(0x24303C), LV_PART_MAIN);
+        lv_obj_add_event_cb(refresh, refresh_clicked, LV_EVENT_CLICKED, NULL);
+
+        lv_obj_t *rlabel = lv_label_create(refresh);
+        lv_label_set_text(rlabel, "Refresh");
+        lv_obj_set_style_text_color(rlabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        lv_obj_center(rlabel);
+
         lv_obj_t *empty = lv_label_create(s_launcher_screen);
         lv_label_set_text(empty, app_registry_sd_mounted()
                                      ? "No apps yet.\nCopy .lua files to\n/apps on the SD card."
@@ -677,6 +680,22 @@ static void build_launcher_ui(void)
             lv_obj_set_style_text_align(more, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
             lv_obj_set_width(more, LV_PCT(100));
         }
+
+        /* Refresh lives IN the list, as its last full-width row: the list
+         * container spans the screen bottom and its rows paint over anything
+         * behind it, which is exactly how the old standalone bottom button
+         * ended up invisible behind 3+ rows (found by Rick on device). A row
+         * scrolls into reach no matter how many apps precede it. */
+        lv_obj_t *refresh = lv_button_create(list);
+        lv_obj_set_size(refresh, LV_PCT(100), ROW_HEIGHT);
+        lv_obj_set_style_bg_color(refresh, lv_color_hex(0x24303C), LV_PART_MAIN);
+        lv_obj_set_style_radius(refresh, 12, LV_PART_MAIN);
+        lv_obj_add_event_cb(refresh, refresh_clicked, LV_EVENT_CLICKED, NULL);
+
+        lv_obj_t *rlabel = lv_label_create(refresh);
+        lv_label_set_text(rlabel, "Refresh");
+        lv_obj_set_style_text_color(rlabel, lv_color_hex(0x9FB4C7), LV_PART_MAIN);
+        lv_obj_center(rlabel);
     }
 
     lv_screen_load(s_launcher_screen);
