@@ -20,17 +20,20 @@ status:set_style({ font = lvgl.font(32) })
 -- Forward declarations so the pad handlers can see the game functions.
 local flash, on_pad, play, next_round, start_game
 
+-- Two columns on a 368px panel cap pad width at ~180 (below the ~200 ideal),
+-- so the pads are made as wide as the grid allows and extra tall (176) to keep
+-- the hit area generous -- height is what the digitizer is most sensitive to.
 local pads = {}
 local function make_pad(idx, x, y, dim, bright)
-    local p = lvgl.button(scr, { x = x, y = y, w = 166, h = 158, radius = 18, bg_color = dim })
+    local p = lvgl.button(scr, { x = x, y = y, w = 180, h = 176, radius = 18, bg_color = dim })
     pads[idx] = { obj = p, dim = dim, bright = bright }
     p:on("clicked", function() on_pad(idx) end)
 end
 
-make_pad(1,  18, 96, "#5a1e1e", "#ff5b4a")   -- red
-make_pad(2, 184, 96, "#14432a", "#52e08a")   -- green
-make_pad(3,  18, 258, "#16324f", "#6db3ff")  -- blue
-make_pad(4, 184, 258, "#4a3a12", "#ffd24a")  -- yellow
+make_pad(1,   4, 88, "#5a1e1e", "#ff5b4a")   -- red
+make_pad(2, 188, 88, "#14432a", "#52e08a")   -- green
+make_pad(3,   4, 268, "#16324f", "#6db3ff")  -- blue
+make_pad(4, 188, 268, "#4a3a12", "#ffd24a")  -- yellow
 
 local seq = {}
 local state = "idle"          -- idle | playing | input | wait | over

@@ -26,9 +26,11 @@ local function apply()
     hint:set_style({ text_color = on and "#303030" or "#505050" })
 end
 
--- Full-screen invisible button catches taps anywhere. Created before the
--- slider so the slider (added later, higher z-order) still gets its own taps.
-local pad = lvgl.button(scr, { x = 0, y = 0, w = 368, h = 448, bg_opa = 0 })
+-- Invisible toggle button over the top of the screen. It stops short of the
+-- bottom strip so it can't steal drags meant for the slider -- a thin slider
+-- over a full-screen pad would send near-misses to the pad and toggle the
+-- light off instead of dimming.
+local pad = lvgl.button(scr, { x = 0, y = 0, w = 368, h = 372, bg_opa = 0 })
 pad:on("clicked", function()
     on = not on
     apply()
@@ -36,7 +38,7 @@ end)
 
 local slider = lvgl.slider(scr, {
     min = 40, max = 255, value = level,
-    align = "bottom_mid", y = -40, w = 300,
+    align = "bottom_mid", y = -34, w = 300, h = 26,
 })
 slider:on("value_changed", function()
     level = slider:get_value()

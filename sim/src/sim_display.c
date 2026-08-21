@@ -36,11 +36,10 @@ lv_display_t *sim_display_init(void)
 
 int sim_display_distinct_colors(int cap)
 {
-    /* One bit per possible RGB565 value (64K bits = 8 KiB). */
+    /* One bit per possible RGB565 value (64K bits = 8 KiB). Reads the
+     * framebuffer as-is; the caller renders (via capture) beforehand. */
     static uint8_t seen[65536 / 8];
     memset(seen, 0, sizeof(seen));
-
-    lv_refr_now(s_disp);
 
     int count = 0;
     for (int i = 0; i < SIM_HOR_RES * SIM_VER_RES; i++) {

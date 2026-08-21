@@ -43,6 +43,8 @@ def main():
 
     sdroot = REPO
     if args and args[0] == "--sdroot":
+        if len(args) < 2:
+            sys.exit("--sdroot needs a directory")
         sdroot = args[1]
         args = args[2:]
 

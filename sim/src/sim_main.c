@@ -211,15 +211,26 @@ static const char *resolve_app_path(const char *path, char *buf, size_t bufsz)
     return path;   /* let luaL_loadfile report the original path */
 }
 
+/* Tear a Lua app state down the way the launcher's lua_app_task does on exit:
+ * reset the per-app module state (timers, button edges, any pending voice
+ * capture -- each holds registry refs into L), run cap_lua exit cleanup (which
+ * deinits the lvgl runtime the app may own), then close. Used by every path
+ * that disposes of an app state, so a failed run tears down as thoroughly as a
+ * clean stop -- otherwise the module statics keep refs into the freed state. */
+static void teardown_state(lua_State *L)
+{
+    launcher_lua_request_stop(true);
+    app_timer_reset(L);
+    app_button_reset(L);
+    app_voice_reset(L);
+    launcher_lua_run_exit_cleanup(L);
+    lua_close(L);
+}
+
 static void app_stop(void)
 {
     if (!s_app) return;
-    launcher_lua_request_stop(true);
-    app_timer_reset(s_app);
-    app_button_reset(s_app);
-    app_voice_reset(s_app);
-    launcher_lua_run_exit_cleanup(s_app);
-    lua_close(s_app);
+    teardown_state(s_app);
     s_app = NULL;
 }
 
@@ -234,7 +245,7 @@ static int app_run(const char *path)
     lua_pushcfunction(L, setup_state);
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
         fprintf(stderr, "RUN_ERR setup: %s\n", lua_tostring(L, -1));
-        lua_close(L);
+        teardown_state(L);
         return -1;
     }
 
@@ -250,17 +261,17 @@ static int app_run(const char *path)
     if (load_rc) {
         if (cap_lua_runtime_stop_requested(L)) {
             fprintf(stderr, "RUN_ERR timeout %s (watchdog stopped a runaway app)\n", path);
-            lua_close(L);
+            teardown_state(L);
             return 0;
         }
         const char *msg = lua_tostring(L, -1);
         fprintf(stderr, "app '%s' failed: %s\n", path, msg ? msg : "(nil)");
-        /* Copy the message before lua_close frees it; render the error screen
-         * after close so the app's exit cleanup (which may reset the display)
-         * runs first and can't clobber it. */
+        /* Copy the message before teardown frees it; render the error screen
+         * after teardown so the app's exit cleanup (which may reset the
+         * display) runs first and can't clobber it. */
         static char saved[4096];
         snprintf(saved, sizeof(saved), "%s", msg ? msg : "(nil)");
-        lua_close(L);
+        teardown_state(L);
         render_error_screen(path, saved);   /* so a following SHOT shows it */
         return -1;
     }

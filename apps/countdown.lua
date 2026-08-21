@@ -82,6 +82,10 @@ reset_btn:on("clicked", function()
     stop_tick()
     start_btn:set_text("Start")
     remaining = minutes * 60
+    -- A tap on the stepper while running advances its internal value even
+    -- though we ignore it (cb is guarded by `not running`); resync it here so
+    -- the next +/- steps from `minutes`, not from a drifted value.
+    stepper.set(minutes)
     show_minutes()
 end)
 

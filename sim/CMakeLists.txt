@@ -17,7 +17,7 @@ add_subdirectory(external/lvgl)
 # Same upstream core the device's espressif/lua component wraps. Build every
 # core+stdlib .c except the standalone mains (lua.c, luac.c), the amalgamation
 # (onelua.c), and the internal test harness (ltests.c).
-file(GLOB LUA_SRC ${CMAKE_CURRENT_SOURCE_DIR}/external/lua/*.c)
+file(GLOB LUA_SRC CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/external/lua/*.c)
 list(FILTER LUA_SRC EXCLUDE REGEX "/(lua|luac|onelua|ltests)\\.c$")
 add_library(lua STATIC ${LUA_SRC})
 target_include_directories(lua PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/external/lua)
@@ -44,11 +44,11 @@ set(LVGL_BINDING_SRC ${LAUNCHER}/components/lua_module_lvgl/src)
 
 # Every binding TU except the two hardware/component-only ones (eaf, demos),
 # which sim_stubs.c replaces with empty module tables.
-file(GLOB BINDING_SRC ${LVGL_BINDING_SRC}/*.c)
+file(GLOB BINDING_SRC CONFIGURE_DEPENDS ${LVGL_BINDING_SRC}/*.c)
 list(FILTER BINDING_SRC EXCLUDE REGEX "lua_lvgl_(eaf|demos)\\.c$")
 
 # fonts_lexend: the five baked-in faces lvgl.font(size) resolves to.
-file(GLOB LEXEND_SRC ${LAUNCHER}/components/fonts_lexend/*.c)
+file(GLOB LEXEND_SRC CONFIGURE_DEPENDS ${LAUNCHER}/components/fonts_lexend/*.c)
 
 add_library(bindings STATIC
     ${BINDING_SRC}
