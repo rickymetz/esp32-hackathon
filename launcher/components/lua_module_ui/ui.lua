@@ -10,6 +10,40 @@ local M = {}
 local ROW_H = 104          -- design guide: preferred row height
 local TARGET = 88          -- design guide: minimum tappable square
 
+-- A corner control drawn at watch scale but hit at ours: watchOS corner
+-- buttons read ~60px on this panel, and Apple can hit them -- our
+-- digitizer cannot. So the BUTTON is an invisible 88px (or wider)
+-- target, and the visible circle/pill is a label inside it -- labels are
+-- not clickable, so every tap lands on the button. Rick's call, matched
+-- against Apple Translate's corner close button.
+function M.corner_button(scr, opts)
+    opts = opts or {}
+    local w = opts.w or TARGET
+
+    local btn = lvgl.button(scr, {
+        x = opts.x, y = opts.y, align = opts.align,
+        w = w, h = TARGET,
+        bg_opa = 0,
+    })
+
+    local visual = lvgl.label(btn, {
+        text = opts.text or lvgl.symbol.close,
+        align = "center",
+        text_color = opts.text_color or "#9FB4C7",
+    })
+    visual:set_style({
+        bg_color = opts.bg_color or "#1E1E28",
+        bg_opa = 255,
+        radius = 32,
+        pad = 14,
+    })
+
+    if opts.on_click then
+        btn:on("clicked", opts.on_click)
+    end
+    return btn
+end
+
 -- ---------------------------------------------------------------- header
 -- Top-left back control (x for sheets, < for pushed screens), title,
 -- optional top-right action. The gallery pattern from every watchOS app.
@@ -18,17 +52,12 @@ function M.header(scr, opts)
     local h = {}
 
     local glyph = (opts.kind == "sheet") and lvgl.symbol.close or lvgl.symbol.left
-    -- Inset 8px from the edges (the glass corners are rounded and clip
-    -- x=0,y=0 content), and fully round: a circle sits naturally inside
-    -- the bezel's corner radius where a rounded square fought it.
-    h.back = lvgl.button(scr, {
+    -- Inset from the rounded glass; drawn at watch scale, hit at ours.
+    h.back = M.corner_button(scr, {
         text = glyph,
-        x = 8, y = 8, w = TARGET, h = TARGET,
-        bg_color = "#1E1E28", text_color = "#9FB4C7", radius = TARGET // 2,
+        x = 4, y = 4,
+        on_click = opts.on_back,
     })
-    if opts.on_back then
-        h.back:on("clicked", opts.on_back)
-    end
 
     if opts.title then
         h.title = lvgl.label(scr, {
@@ -39,14 +68,11 @@ function M.header(scr, opts)
     end
 
     if opts.action then
-        h.action = lvgl.button(scr, {
+        h.action = M.corner_button(scr, {
             text = opts.action,
-            align = "top_right", x = -8, y = 8, w = TARGET + 24, h = TARGET,
-            bg_color = "#1E1E28", text_color = "#9FB4C7", radius = TARGET // 2,
+            align = "top_right", x = -4, y = 4, w = TARGET + 24,
+            on_click = opts.on_action,
         })
-        if opts.on_action then
-            h.action:on("clicked", opts.on_action)
-        end
     end
     return h
 end
