@@ -122,12 +122,15 @@ size_t app_registry_count(void)
     return count;
 }
 
-const app_entry_t *app_registry_get(size_t index)
+bool app_registry_get_copy(size_t index, app_entry_t *out)
 {
     registry_lock();
-    const app_entry_t *app = (index < s_count) ? &s_apps[index] : NULL;
+    bool ok = (index < s_count);
+    if (ok) {
+        *out = s_apps[index];
+    }
     registry_unlock();
-    return app;
+    return ok;
 }
 
 /* "/sdcard/apps/counter.lua" -> "counter.lua" */

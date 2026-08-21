@@ -35,8 +35,17 @@ esp_err_t app_registry_scan(void);
 /** Number of apps found by the last scan. */
 size_t app_registry_count(void);
 
-/** App at `index`, or NULL if out of range. */
-const app_entry_t *app_registry_get(size_t index);
+/**
+ * @brief Copy the app at `index` out of the registry.
+ *
+ * Returns a copy because the shared array can be rewritten by a concurrent
+ * PUSH rescan at any time; a pointer into it is only valid while the lock is
+ * held, which callers cannot do.
+ *
+ * @return false if `index` is out of range at the moment of the call, which
+ *         also means "stop iterating" -- the array may have shrunk.
+ */
+bool app_registry_get_copy(size_t index, app_entry_t *out);
 
 /** Whether the SD card is currently mounted. */
 bool app_registry_sd_mounted(void);

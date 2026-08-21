@@ -268,3 +268,113 @@ errors.
    any visible flicker/stall on real hardware (should be a no-op given the recursive lock,
    but only hardware confirms timing).
 
+
+---
+
+## Addendum 2: remove app_registry_get() entirely — the two call sites the previous fix missed
+
+Board is still wedged: `ls /dev/cu.usbmodem101` returns nothing (device does not
+enumerate). Confirmed once, per instruction, then moved on. **Everything below is
+compile-verified only; nothing here has run on hardware.**
+
+### The gap
+
+The C1 fix in Addendum 1 added `app_registry_find_by_basename()` and moved
+`app_row_clicked()`/`launcher_run_app_by_name()` onto it, but left the pointer-returning
+`app_registry_get()` in place — and explicitly flagged (but did not fix)
+`serial_push.c`'s `registry_has_basename()` as having "the same unguarded-`app_registry_get()`
+shape." A second call site was missed entirely at the time: `launcher_main.c`'s
+`build_launcher_ui()` reads `app_registry_count()` once, then loops `app_registry_get(i)`
+and dereferences `app->path`/`app->name` with no NULL check — reachable by tapping Refresh
+while a PUSH is in flight, exactly the same race shape as C1.
+
+### Fix: delete the footgun instead of patching two more call sites
+
+- `launcher/main/app_registry.h` / `.c`: replaced `const app_entry_t *app_registry_get(size_t)`
+  with `bool app_registry_get_copy(size_t index, app_entry_t *out)`. Takes the registry
+  lock for the whole copy (so it can't tear), returns `false` if `index >= s_count` at that
+  instant — callers treat `false` as "stop iterating," since the array may have shrunk
+  under them.
+- `launcher/main/launcher_main.c`, `build_launcher_ui()`: the row-building loop now runs
+  `for (size_t i = 0; i < APP_MAX_COUNT; i++)`, copies one `app_entry_t` per iteration via
+  `app_registry_get_copy(i, &app)`, and `break`s on `false`. No 32-entry (~11.8 KB) stack
+  snapshot — one entry (~368 bytes) live at a time, well within the 32 KB Lua task stack
+  budget this shares headroom with. Also updated a stale comment above `s_current_app` that
+  still described launch as reading "a live `app_registry_get()` pointer"; the actual code
+  (from Addendum 1) already used `app_registry_find_by_basename()` — comment now matches.
+- `launcher/main/serial_push.c`, `registry_has_basename()`: deleted the hand-rolled
+  count-then-loop-then-dereference body; it now just calls the existing
+  `app_registry_find_by_basename()` into a throwaway `app_entry_t`, matching every other
+  registry lookup in the codebase.
+- Deleted `app_registry_get()` entirely — no remaining caller needed the pointer-returning
+  form, and none had a legitimate reason to hold a pointer into `s_apps[]` past the lock.
+
+Lock discipline unchanged: `s_app_mutex` (launcher_main.c) stays outer, the registry's
+internal `s_lock` stays inner and is acquired/released entirely inside a single
+`app_registry_*()` call, never held across a callback into launcher_main.c. Every call site
+touched here already took `s_app_mutex` (or, for `registry_has_basename`, runs on the
+serial task with no `s_app_mutex` involvement at all, same as before) before touching the
+registry, so no reordering was needed.
+
+### Grep proof the footgun is gone
+
+```
+$ grep -rn "app_registry_get\b" launcher --include="*.c" --include="*.h"
+(no output, exit code 1)
+```
+
+Only remaining textual hits are in `launcher/build/` binaries/maps (stale build artifacts
+from before this change, not source) and were not touched.
+
+### Walkthroughs (reasoned, not run — board wedged)
+
+- **PUSH landing mid-`build_launcher_ui()`:** the loop holds no pointer across iterations —
+  each `app_registry_get_copy()` call takes the registry lock fresh, copies one entry, and
+  releases. If `serial_push.c`'s `app_registry_scan()` (serial task) sets `s_count = 0`
+  and starts rewriting `s_apps[]` between two loop iterations, the next
+  `app_registry_get_copy(i, &app)` either blocks on the lock until the scan finishes (then
+  reads the fresh array) or, if it runs first and `i` is now past the new, possibly-smaller
+  `s_count`, returns `false` and the loop simply stops early. Either way: no dereference of
+  a half-written or reset entry, no NULL pointer read, at worst a UI showing fewer rows
+  than expected until the next Refresh.
+- **RUN racing a Refresh:** `registry_has_basename()` now calls
+  `app_registry_find_by_basename()`, which holds the registry lock for its entire linear
+  scan of `s_apps[]`. If Refresh's `app_registry_scan()` is mid-flight on the LVGL task, RUN
+  (serial task) simply blocks on the same lock until the scan completes, then searches a
+  complete, consistent array. Worst case the app was genuinely removed by the rescan and
+  `find_by_basename()` correctly reports not-found — never a crash, never a stale/garbage
+  match.
+- **Nothing racing:** `app_registry_count()` returns N, the loop runs `i = 0..N-1` (plus
+  possibly further while nothing changes, but `app_registry_get_copy` returns `false` right
+  at `s_count` so it stops exactly at N), each copy succeeds, rows render with correct
+  `name`/`path` exactly as before — behaviorally identical to the old pointer-returning
+  loop when there is no concurrent scan.
+
+### Build result
+
+`idf.py build` (clean CMake configure, ESP-IDF v5.5.5, LVGL 9.5.0):
+
+```
+[9/14] Linking C static library esp-idf/main/libmain.a
+...
+launcher.bin binary size 0xf8250 bytes. Smallest app partition is 0x400000 bytes. 0x307db0 bytes (76%) free.
+
+Project build complete.
+```
+
+No errors. Only warnings are the same pre-existing `LINE_MAX`/`NAME_MAX` redefinition
+notes in `serial_push.c` (from a newlib header, on lines untouched by this change) already
+noted in Addendum 1 — no new warnings from any file touched in this pass.
+
+### Outstanding hardware checks (board still wedged)
+
+1. Tap Refresh repeatedly while `tools/push.py` pushes land in a tight loop — targeted
+   repro for this exact class of bug: confirm no crash/reboot, list renders (possibly
+   briefly short) rather than faulting.
+2. Send `RUN <name>` over serial while spamming Refresh taps — confirm `registry_has_basename()`
+   never crashes and correctly reports not_found vs already_running under the race.
+3. General regression: normal Refresh with no concurrent PUSH still lists all apps
+   correctly by name and path; tapping each row after a plain Refresh still launches the
+   right app.
+4. Confirm `APP_MAX_COUNT`-bounded iteration in `build_launcher_ui()` doesn't visibly change
+   timing/flicker versus the old count-bounded loop on the real panel.

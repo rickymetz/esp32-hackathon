@@ -75,11 +75,11 @@ static esp_io_expander_handle_t s_expander;
 static SemaphoreHandle_t s_app_mutex;
 
 /* Single-app-at-a-time means a single static copy is enough: the launch
- * path fills this in (under s_app_mutex) from a live app_registry_get()
- * pointer just before starting the task, and lua_app_task reads only from
- * this copy for its whole run. That avoids holding a pointer into s_apps[]
- * across a run, which app_registry_scan() can rewrite at any time now that
- * a serial PUSH rescans at runtime. */
+ * path fills this in (under s_app_mutex) from app_registry_find_by_basename()
+ * just before starting the task, and lua_app_task reads only from this copy
+ * for its whole run. That avoids holding a pointer into s_apps[] across a
+ * run, which app_registry_scan() can rewrite at any time now that a serial
+ * PUSH rescans at runtime. */
 static app_entry_t s_current_app;
 
 static esp_err_t release_panel_reset(void)
@@ -526,15 +526,18 @@ static void build_launcher_ui(void)
         lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_row(list, 10, LV_PART_MAIN);
 
-        for (size_t i = 0; i < count; i++) {
-            const app_entry_t *app = app_registry_get(i);
+        for (size_t i = 0; i < APP_MAX_COUNT; i++) {
+            app_entry_t app;
+            if (!app_registry_get_copy(i, &app)) {
+                break;   /* end of list, or the array shrank under us */
+            }
 
             /* Own copy of the basename, not a pointer into app_registry's
              * static array: a rescan (Refresh, or a serial PUSH) rewrites
              * that array in place, and this row can outlive the scan that
              * built it. Freed in row_data_delete_cb when LVGL deletes the
              * row. */
-            char *basename = strdup(path_basename(app->path));
+            char *basename = strdup(path_basename(app.path));
 
             lv_obj_t *row = lv_button_create(list);
             lv_obj_set_size(row, LV_PCT(100), ROW_HEIGHT);
@@ -544,7 +547,7 @@ static void build_launcher_ui(void)
             lv_obj_add_event_cb(row, row_data_delete_cb, LV_EVENT_DELETE, basename);
 
             lv_obj_t *label = lv_label_create(row);
-            lv_label_set_text(label, app->name);
+            lv_label_set_text(label, app.name);
             lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
             lv_obj_center(label);
         }

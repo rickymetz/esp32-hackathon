@@ -39,16 +39,8 @@ static bool name_is_safe(const char *name)
  * launcher_run_app_by_name() API beyond the bool it was specified as. */
 static bool registry_has_basename(const char *basename)
 {
-    size_t count = app_registry_count();
-    for (size_t i = 0; i < count; i++) {
-        const app_entry_t *app = app_registry_get(i);
-        const char *slash = strrchr(app->path, '/');
-        const char *base = slash ? slash + 1 : app->path;
-        if (strcmp(base, basename) == 0) {
-            return true;
-        }
-    }
-    return false;
+    app_entry_t app;
+    return app_registry_find_by_basename(basename, &app);
 }
 
 static bool read_line(char *out, size_t cap)
