@@ -1,0 +1,68 @@
+name: sim
+
+# Build the headless app simulator and render-test every app. Because the sim
+# is pure host code (no ESP-IDF, no board), this runs on a normal Linux runner
+# and gates PRs on "every app still loads and draws something".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sim/**'
+      - 'apps/**'
+      - 'launcher/components/lua_module_lvgl/**'
+      - 'launcher/components/lua_module_ui/**'
+      - 'launcher/components/cap_lua/**'
+      - 'launcher/components/fonts_lexend/**'
+      - 'launcher/main/app_timer.*'
+      - 'launcher/main/app_sandbox.*'
+      - 'launcher/components/lua_module_button/**'
+      - '.github/workflows/sim.yml'
+  pull_request:
+    paths:
+      - 'sim/**'
+      - 'apps/**'
+      - 'launcher/components/lua_module_lvgl/**'
+      - 'launcher/components/lua_module_ui/**'
+      - 'launcher/components/cap_lua/**'
+      - 'launcher/components/fonts_lexend/**'
+      - 'launcher/main/app_timer.*'
+      - 'launcher/main/app_sandbox.*'
+      - 'launcher/components/lua_module_button/**'
+      - '.github/workflows/sim.yml'
+  workflow_dispatch:
+
+jobs:
+  render-apps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
+
+      # LVGL + Lua are cloned into sim/external by setup.sh; cache them so we
+      # don't re-clone LVGL (~270 MB checkout) every run. setup.sh skips the
+      # clone when the directory already exists.
+      - name: Cache third-party sources
+        uses: actions/cache@v4
+        with:
+          path: sim/external
+          key: sim-external-${{ hashFiles('sim/setup.sh') }}
+
+      - name: Fetch deps
+        run: ./sim/setup.sh
+
+      - name: Build
+        run: ./sim/build.sh
+
+      - name: Render-test all apps
+        run: ./sim/test.sh
+
+      - name: Upload rendered frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-screenshots
+          path: sim/build/shots/
+          if-no-files-found: ignore

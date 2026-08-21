@@ -101,14 +101,19 @@ sim/
   external/                     # LVGL + Lua sources (gitignored; setup.sh)
 ```
 
-## CI
+## Testing
 
-Because the sim is headless and self-contained, a workflow can build it and
-assert every app at least loads and renders:
+`sim/test.sh` render-tests every app in `apps/` (skipping the intentional
+error/runaway/no-UI fixtures): it runs each app, lets it settle, and asserts
+the frame is non-blank. Shots land in `sim/build/shots/`.
 
 ```bash
-cd sim && ./setup.sh && ./build.sh
-for app in ../apps/*.lua; do
-  ./build/sim --sdroot .. run "$app" : shot "/tmp/$(basename "$app").png" || exit 1
-done
+sim/test.sh              # exits nonzero if any app crashes or draws nothing
 ```
+
+## CI
+
+`.github/workflows/sim.yml` runs exactly that on every PR that touches the sim,
+the apps, or the bindings they depend on: it builds the sim on a plain Linux
+runner (no ESP-IDF, no board) and runs `test.sh`, uploading the rendered
+frames as an artifact. The LVGL/Lua checkout is cached between runs.
