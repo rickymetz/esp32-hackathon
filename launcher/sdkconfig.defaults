@@ -27,3 +27,8 @@ CONFIG_FATFS_MAX_LFN=255
 # LVGL + Lua + the LVGL bindings.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Serial push needs an INPUT path. The USB-Serial/JTAG secondary console is
+# output-only, so promote it to primary -- the board talks to the host over
+# native USB, not UART0.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

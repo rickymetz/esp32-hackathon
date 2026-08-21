@@ -40,6 +40,8 @@
 #include "display_service.h"
 #include "lua_module_lvgl.h"
 #include "app_registry.h"
+#include "launcher_main.h"
+#include "serial_push.h"
 
 static const char *TAG = "launcher";
 
@@ -194,6 +196,55 @@ static void app_row_clicked(lv_event_t *e)
                 (void *)app, 5, &s_app_task);
 }
 
+/* "/sdcard/apps/counter.lua" -> "counter.lua" */
+static const char *path_basename(const char *path)
+{
+    const char *slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
+/* Launcher-side API for other modules (serial_push) to drive app lifecycle
+ * the same way a screen tap or the PWR button would. Reuses the exact same
+ * task-creation and stop-request machinery as app_row_clicked() and
+ * back_button_task() so RUN/STOP behave identically to a physical launch. */
+bool launcher_run_app_by_name(const char *basename)
+{
+    if (basename == NULL || basename[0] == '\0') {
+        return false;
+    }
+    if (s_app_task != NULL) {
+        ESP_LOGW(TAG, "RUN '%s': an app is already running", basename);
+        return false;
+    }
+
+    size_t count = app_registry_count();
+    const app_entry_t *match = NULL;
+    for (size_t i = 0; i < count; i++) {
+        const app_entry_t *app = app_registry_get(i);
+        if (strcmp(path_basename(app->path), basename) == 0) {
+            match = app;
+            break;
+        }
+    }
+    if (match == NULL) {
+        ESP_LOGW(TAG, "RUN '%s': not found", basename);
+        return false;
+    }
+
+    xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
+                (void *)match, 5, &s_app_task);
+    return true;
+}
+
+bool launcher_stop_app(void)
+{
+    if (s_app_task == NULL) {
+        return false;
+    }
+    launcher_lua_request_stop(true);
+    return true;
+}
+
 static void build_launcher_ui(void)
 {
     size_t count = app_registry_count();
@@ -304,6 +355,7 @@ void app_main(void)
     app_registry_scan();
     build_launcher_ui();
     xTaskCreate(back_button_task, "back_btn", 3072, NULL, 6, NULL);
+    serial_push_start();
 
     ESP_LOGI(TAG, "ready: %u app(s), internal free=%u psram free=%u",
              (unsigned)app_registry_count(),
