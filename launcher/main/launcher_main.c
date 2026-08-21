@@ -61,8 +61,11 @@ static const char *TAG = "launcher";
 
 /* Touch on this panel is not pixel-accurate, so small targets get missed.
  * Verified on hardware: a 240x120 button catches every tap where a 180x56
- * one dropped roughly half. Keep launcher rows at least this tall. */
-#define ROW_HEIGHT      72
+ * one dropped roughly half. Both watchOS (44pt) and Wear OS (48dp) land on
+ * 88-96px at this panel's 2x scale; 104px is Wear OS's standard Chip height
+ * and comfortable here -- see docs/DESIGN_GUIDE.md. Keep launcher rows at
+ * least this tall. */
+#define ROW_HEIGHT      104
 
 static lv_obj_t *s_launcher_screen;
 static TaskHandle_t s_app_task;
@@ -162,12 +165,13 @@ static int traceback_handler(lua_State *L)
     return 1;
 }
 
-/* Body label sits between the title (top, ~44px) and the "press PWR" hint
- * (bottom, ~40px) on the 368x448 panel. Capped and scrollable so a deep
+/* Body label sits between the title (Montserrat 40, line_height 44, top ~8px)
+ * and the "press PWR" hint (default font is now Montserrat 32, line_height
+ * 35, bottom ~8px) on the 368x448 panel. Capped and scrollable so a deep
  * traceback stays reachable instead of overlapping the hint or being
  * silently clipped. */
-#define ERROR_BODY_TOP     44
-#define ERROR_BODY_HEIGHT  330
+#define ERROR_BODY_TOP     60
+#define ERROR_BODY_HEIGHT  300
 
 /* Show a failure on the panel. Five people debugging through one USB cable is
  * miserable; the error belongs where they are already looking. Returns the
@@ -179,12 +183,16 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     bsp_display_lock(0);
 
     lv_obj_t *scr = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x2A0E0E), LV_PART_MAIN);
+    /* True black, not a red field: the guide warns against full-screen
+     * colour on a long-lived view (this can sit up until PWR is pressed).
+     * The red title alone carries the "something failed" signal. */
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_pad_all(scr, 12, LV_PART_MAIN);
 
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text_fmt(title, "%s failed", app_name);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_40, LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
 
     lv_obj_t *body = lv_label_create(scr);
@@ -195,6 +203,7 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
     lv_label_set_text(body, msg ? msg : "(no message)");
     lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
+    lv_obj_set_style_text_font(body, &lv_font_montserrat_26, LV_PART_MAIN);
     lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, ERROR_BODY_TOP);
 
     lv_obj_t *hint = lv_label_create(scr);
@@ -491,17 +500,20 @@ static void build_launcher_ui(void)
     bsp_display_lock(0);
 
     s_launcher_screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(s_launcher_screen, lv_color_hex(0x0B0B0F), LV_PART_MAIN);
+    /* True black, not near-black: watchOS/Wear OS are dark-theme only, and on
+     * OLED a black pixel is an off pixel -- see docs/DESIGN_GUIDE.md. */
+    lv_obj_set_style_bg_color(s_launcher_screen, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_launcher_screen, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_launcher_screen, 0, LV_PART_MAIN);
 
     lv_obj_t *header = lv_label_create(s_launcher_screen);
     lv_label_set_text(header, "Apps");
     lv_obj_set_style_text_color(header, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(header, &lv_font_montserrat_40, LV_PART_MAIN);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 24);
 
     lv_obj_t *refresh = lv_button_create(s_launcher_screen);
-    lv_obj_set_size(refresh, 200, 100);   /* >= 200x100; smaller drops taps */
+    lv_obj_set_size(refresh, 200, 104);   /* >= 200x104; smaller drops taps */
     lv_obj_align(refresh, LV_ALIGN_BOTTOM_MID, 0, -8);
     lv_obj_set_style_bg_color(refresh, lv_color_hex(0x24303C), LV_PART_MAIN);
     lv_obj_add_event_cb(refresh, refresh_clicked, LV_EVENT_CLICKED, NULL);
@@ -518,6 +530,7 @@ static void build_launcher_ui(void)
                                      : "No SD card.\nInsert one with an\n/apps directory.");
         lv_obj_set_style_text_color(empty, lv_color_hex(0x8A8A99), LV_PART_MAIN);
         lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_font(empty, &lv_font_montserrat_26, LV_PART_MAIN);
         lv_obj_center(empty);
     } else {
         lv_obj_t *list = lv_obj_create(s_launcher_screen);
@@ -527,7 +540,7 @@ static void build_launcher_ui(void)
         lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
         lv_obj_set_style_pad_all(list, 12, LV_PART_MAIN);
         lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_style_pad_row(list, 10, LV_PART_MAIN);
+        lv_obj_set_style_pad_row(list, 16, LV_PART_MAIN);
 
         for (size_t i = 0; i < APP_MAX_COUNT; i++) {
             app_entry_t app;
@@ -552,7 +565,23 @@ static void build_launcher_ui(void)
             lv_obj_t *label = lv_label_create(row);
             lv_label_set_text(label, app.name);
             lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+            lv_obj_set_style_text_font(label, &lv_font_montserrat_32, LV_PART_MAIN);
             lv_obj_center(label);
+
+            if (i == 0) {
+                /* Structural proof (no board display to look at) that the
+                 * 32px font is actually resolved on a row label, not just
+                 * requested: log the font object LVGL resolved for this
+                 * label and its line_height. Montserrat 14's line_height is
+                 * 16px; Montserrat 32's is 35px. */
+                const lv_font_t *resolved =
+                    lv_obj_get_style_text_font(label, LV_PART_MAIN);
+                ESP_LOGI(TAG, "row label font check: resolved=%p want=%p "
+                         "(montserrat_32), line_height=%d",
+                         (const void *)resolved,
+                         (const void *)&lv_font_montserrat_32,
+                         lv_font_get_line_height(resolved));
+            }
         }
     }
 
@@ -627,6 +656,13 @@ void app_main(void)
     build_launcher_ui();
     xTaskCreate(back_button_task, "back_btn", 3072, NULL, 6, NULL);
     serial_push_start();
+
+    /* Structural proof the default font actually changed (no board display
+     * to look at from here): Montserrat 14's line_height is 16px;
+     * Montserrat 32's is 35px. CONFIG_LV_FONT_DEFAULT_MONTSERRAT_32 in
+     * sdkconfig.defaults is what lv_font_default() resolves below. */
+    ESP_LOGI(TAG, "default font line_height=%d (want 35 for montserrat_32)",
+             (int)lv_font_get_line_height(lv_font_get_default()));
 
     ESP_LOGI(TAG, "ready: %u app(s), internal free=%u psram free=%u",
              (unsigned)app_registry_count(),

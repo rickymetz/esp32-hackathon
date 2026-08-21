@@ -18,6 +18,16 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_LV_USE_TINY_TTF=y
 CONFIG_LV_TINY_TTF_FILE_SUPPORT=y
 
+# 14px (Montserrat 14, LVGL's built-in default) is ~7pt-equivalent on this
+# panel's 2x scale -- under half watchOS's sanctioned 12pt minimum. 32px is
+# the converged Apple/Wear body size at that scale; see docs/DESIGN_GUIDE.md.
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_26=y
+CONFIG_LV_FONT_MONTSERRAT_32=y
+CONFIG_LV_FONT_MONTSERRAT_40=y
+CONFIG_LV_FONT_MONTSERRAT_48=y
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_32=y
+
 # App files on SD need real names, not 8.3. Without this, "weather_clock.lua"
 # is invisible to the launcher.
 CONFIG_FATFS_LFN_HEAP=y
