@@ -1,303 +1,354 @@
-# Launcher SDK — Design
+# Launcher SDK — Design v2
 
 **Date:** 2026-08-20
-**Status:** Draft for review
+**Status:** Draft for review — revised after a four-persona review (embedded, app author, security, QA/delivery)
+
+## What changed in v2, and why
+
+v1 was reviewed by four personas. It contained one claim that was false, two bugs in
+shipped code, and a hole big enough to sink most of the app categories. Summary of the
+substantive corrections, because they justify most of this document:
+
+| Finding | v1 said | Reality |
+| --- | --- | --- |
+| **No timer API exists** | Phase 2 "unlocks clocks, pedometers, workout counters" | Apps run code *only* on touch. Zero `lv_timer_create` bindings. Clocks, stopwatches, animation, live sensor display were all impossible, and the Phase-2 API freeze would have cemented that. |
+| **App exit raced the LVGL task** | "verified, no leak" | `display_service_close()` deleted the app's LVGL tree outside the lock while the LVGL task ran on the other core. **Fixed and verified.** |
+| **A Lua typo froze the display forever** | "errors are caught, not fatal" | Bindings `longjmp` past their unlock; `lvgl_mux` is `portMAX_DELAY`. **Fixed and verified.** |
+| **Serial push has no input path** | "listens on the existing USB serial" | Console is UART-primary with USB *secondary*, which is output-only. Needs a console reconfiguration. |
+| **Memory gate measured the wrong thing** | "record free internal DRAM at boot" | Boot is when nothing is allocated. Misses the 32 KB app stack, the 64 KB LVGL pool, and contiguity. |
+
+Three reviewers also reported that `docs/APP_CONTRACT.md` describes an obsolete `app.*` API.
+**This is false** — it was rewritten in `b80a466`; they were served a stale cached copy.
+Recorded here so nobody re-opens it.
 
 ## Context
 
-The shared app launcher works end to end: apps are Lua files on the SD card, the launcher
-lists them, tapping one runs it in its own VM, and PWR returns to the list. Verified on
-hardware, including that PSRAM returns to an identical free figure across launch/exit
-cycles.
-
-Today it exposes display and touch only. This design covers the two weeks before the
-hackathon, so 5–6 people can write apps against a stable SDK.
+The launcher works end to end: apps are Lua files on SD, the launcher lists them, tapping
+one runs it in its own VM, PWR returns to the list, and PSRAM returns to an identical free
+figure across cycles.
 
 ### Fixed constraints
 
 | | |
 | --- | --- |
 | Participants | 5–6, mixed embedded experience |
-| Boards | **One each** — no sharing |
-| Runway | ~2 weeks, i.e. **10 working days** |
+| Boards | **One each** — no sharing, **no spares** |
+| Runway | ~2 weeks = **10 working days** |
 | Board | Waveshare ESP32-S3-Touch-AMOLED-1.8 (V2), 368×448, 8 MB PSRAM, 16 MB flash |
-| Free internal DRAM after boot | **173,639 bytes** (measured) |
 
-Two of these do more work than they look like they do:
-
-**One board each** means app authors never need ESP-IDF — they flash a prebuilt binary
-once, then only copy files. It also kills the Emscripten simulator, which was only ever
-insurance against sharing a single board.
-
-**Free internal DRAM** is the scarce resource in this project, not PSRAM. See Risk 1.
+One board each means app authors never need ESP-IDF, and kills the Emscripten simulator.
+It also means **a dead board removes a participant** — buy 1–2 spares, it is the cheapest
+risk mitigation available.
 
 ### Wanted app categories
 
 Motion toys · clocks and watch faces · pedometers and workout counters · games and demos ·
 sound · BLE (advertising, GATT server, HID) · battery utilities · network apps ·
-LLM pass-throughs.
-
-Tailscale was raised and **dropped**: no official ESP32 client, and a real one means
-WireGuard plus the coordination protocol.
-
-## Approach
-
-Distribution first, then cheap capability wins, then audio and BLE, then networking.
-
-Rejected: **network-first** (highest ceiling, but if it slips the cheap wins never land
-and people are left with display-only apps) and **build-on-demand** (lowest waste, but
-people hit walls mid-build and block on one person).
-
-The chosen order front-loads what blocks five people, banks the high-value-per-hour APIs
-early, and puts the riskiest work where slipping is survivable.
+LLM pass-throughs. Tailscale was raised and dropped.
 
 ## Architecture
 
 ### Capability modules
 
-One Lua module per capability, each an ESP-IDF component under `launcher/components/`,
-registered through the existing `cap_lua` shim and reached with `require`.
-
-Reuse is uneven, and that drives the estimates:
+One Lua module per capability, an ESP-IDF component under `launcher/components/`,
+registered through `cap_lua` and reached with `require`.
 
 | Capability | Source | Cost |
 | --- | --- | --- |
-| `store`, `json`, `system` | Vendor from `espressif/esp-claw`, zero dependencies | Cheap |
-| `imu` | `waveshare/qmi8658` v2.0.1 driver + hand-written binding | Medium |
-| `rtc`, `battery` | No component exists; write I²C drivers for PCF85063 / AXP2101 | Medium |
-| `audio` | BSP already provides `bsp_audio_init` + speaker/mic codec init | Medium |
-| `ble` | Vendor `lua_module_ble` + `_hid`; needs only `bt`, `esp_timer`, `nvs_flash`, `cap_lua` | Medium |
+| `store`, `json`, `system` | Vendor from esp-claw, zero dependencies | Cheap |
+| `timer` | **Launcher-side, no vendored changes** (see below) | Cheap |
+| `imu` | `waveshare/qmi8658` v2.0.1 + hand-written binding | Medium |
+| `rtc`, `battery` | No component; write I²C drivers for PCF85063 / AXP2101 | Medium |
+| `audio` | BSP provides `bsp_audio_init` + speaker/mic codec init | Medium |
+| `ble` | Vendor `lua_module_ble` + `_hid` (NimBLE) | Medium-large |
 | `net` | Nothing reusable; `esp_wifi` + `esp_http_client` + TLS | Large |
 
-Two traps found while scoping, both of which would have cost a day each:
+Traps found while scoping: esp-claw's `lua_module_imu` is the **wrong chip** (BMI270 /
+ICM42670, not QMI8658), and its `lua_module_audio` drags in MP3 decode and resampling we
+do not need. Also note vendoring is never free — `lua_module_lvgl` required hand-writing
+`cap_lua` (83 lines) *and* `display_service` (175 lines). Budget a shim for BLE too.
 
-- **esp-claw's `lua_module_imu` is the wrong chip.** It supports BMI270 and ICM42670, not
-  the QMI8658 fitted here.
-- **esp-claw's `lua_module_audio` is far heavier than we need.** It pulls
-  `esp_audio_codec`, `esp_asrc` and `esp-dsp` for MP3 decode and resampling. The BSP path
-  gives us tone, WAV and mic level without any of it.
+### The timer — the single most important addition in v2
 
-### Three rules every capability module must follow
+Apps currently run code only when a finger touches a widget. That makes clocks,
+stopwatches, animation, games and live sensor display impossible.
 
-These are architectural requirements, not style preferences. Each exists because
-violating it breaks the launcher for everyone.
+The fix needs **no changes to vendored code**: the launcher's pump loop already runs
+periodically on the app task, which is exactly where Lua callbacks must run.
 
-**1. Release hardware on app exit.** Every module that claims a peripheral must register
-a `cap_lua_register_exit_cleanup` callback that frees it. Today only the display session
-does this. If the BLE or audio module skips it, the *second* app to use that peripheral
-fails, and the failure looks like a bug in the app rather than the launcher.
+```lua
+timer.every(1000, function() ... end)   -- returns a handle
+timer.after(250,  function() ... end)
+handle:cancel()                          -- all timers auto-cancel on app exit
+```
 
-**2. Degrade, don't raise.** Modules return `nil, "message"` on failure. A missing SD
-card, absent Wi-Fi, or unavailable sensor must not kill the app.
+The pump keeps a small list of `{deadline, period, lua_ref}`, fires whatever is due, and
+shortens its own wait to the next deadline. Ship a plain `update(dt)` global first if
+`timer` slips — ten lines, and it unblocks the same categories.
 
-**3. Pump cooperatively.** Any module with its own event queue (BLE, like LVGL) is driven
-from the app task's single pump loop. No module gets its own polling task, and no module
-may starve another.
+**This lands in Phase 1.** Without it the SDK is a static-poster generator, and freezing
+the API at end of Phase 2 would make it permanent.
 
-### Launcher owns `lvgl.init()`
+### Four rules every capability module must follow
 
-Apps currently must call `lvgl.init()` or fail confusingly. The launcher will call it
-before running the app, so apps begin at `local scr = lvgl.screen()`.
+**1. Register cleanup at boot, not per launch.** `cap_lua`'s cleanup table is a global
+8-slot array. Registering from `luaopen_*` — the obvious reading — runs *per app launch*
+and silently overflows on the second launch with seven modules. Register from your
+module's one-time `*_register()` function instead. Cleanups run for every app regardless
+of use, so each must be **no-op-safe and idempotent**. Raise `MAX_CLEANUPS`/`MAX_MODULES`
+and check the return value at boot.
 
-This preserves the isolation property that matters: the display session still belongs to
-the app's VM, so exiting deletes the app's screen and every widget parented to it.
+**2. Degrade, don't raise.** Return `nil, "message"`. Missing SD, absent Wi-Fi, or an
+unavailable sensor must not kill the app.
 
-Implementation note: the launcher calls it via `lua_getglobal` + `lua_pcall` after opening
-modules. `lvgl.init()` must be made **idempotent** — it currently errors with "already
-initialized", and existing apps (and every esp-claw example) call it explicitly. A second
-call should return success, not fail.
+**3. Own your task, drain from the pump.** *(Reworded — v1 had this backwards.)* LVGL is
+**not** driven by the pump; `esp_lvgl_port` runs its own task and the pump drains only the
+queued Lua callbacks. NimBLE likewise creates its own host task and cannot be pumped. So
+the rule is the pattern LVGL already demonstrates: **your task enqueues, the app pump
+dequeues and calls into Lua.** Never enter a `lua_State` from a foreign task.
+
+**4. Blocking C functions must poll the stop flag and have a timeout.** `net.get`,
+`net.connect`, `audio.play` and TLS handshakes can block for seconds. A Lua debug hook
+does not fire inside C, so without this the PWR escape hatch stops working exactly as the
+SDK grows. See below.
 
 ### Stopping a runaway app
 
-**The current design cannot stop an app that never yields.** PWR sets an atomic flag which
-is checked in the pump loop; a Lua `while true do end` never reaches the pump, so the flag
-is never read. The app contract says "do not block", but with 5–6 people someone will do
-it by accident, and the failure mode is a device that needs a physical power cycle.
+PWR sets an atomic flag read in the pump loop; a Lua `while true do end` never reaches the
+pump. Fix: `lua_sethook(L, hook, LUA_MASKCOUNT, 10000)`, installed **on the app task
+before `luaL_dofile`** — never cross-task, which would race `L->hook` and walk the
+CallInfo chain under the app.
 
-Fix: install a Lua debug hook with `lua_sethook(L, hook, LUA_MASKCOUNT, 10000)`. The hook
-fires every ~10k VM instructions, checks the stop flag, and calls `lua_error` to unwind
-the app. This is the standard technique for interrupting embedded Lua and costs a few
-percent of throughput.
+Four holes to close, all identified in review:
 
-This belongs in **Phase 1**, not later — it is the difference between "the launcher is
-robust" and "the launcher is robust as long as nobody makes a mistake".
+- **`debug.sethook(nil)` disables it in one line.** Nil out `debug` in the app VM.
+- **`pcall` swallows the error.** The hook must *latch*: on first fire, re-arm with count 1
+  so every subsequent instruction re-raises and forward progress is impossible.
+- **Coroutines start with `hookmask == 0`.** Either nil out `coroutine` or set the hook on
+  each new thread.
+- **Hooks never fire inside C functions** — hence rule 4.
 
-### API freeze
+Hard-deadline fallback is **`esp_restart()`, not `vTaskDelete`**. A deleted task may still
+hold `lvgl_mux`, the I2C mutex or a FATFS lock, which produces a frozen display — the exact
+failure this is meant to prevent.
 
-The surface below freezes **at the end of Phase 2**, which is when app authors have enough
-to start real work. Additions after that are additive only: new modules and new functions,
-never changed signatures.
+Current behaviour, stated accurately: `CONFIG_ESP_TASK_WDT_PANIC` is unset, so a spinner
+produces a watchdog warning every 5 s **forever**, flooding the console — which will also
+corrupt serial push, since they share it.
+
+### Not a sandbox — state it plainly
+
+`luaL_openlibs` gives apps the full stdlib: `io`, `os`, `debug`, `package`, `coroutine`.
+An app can read or overwrite anything on the SD card, including other people's apps and
+any credentials, and `os.exit()` restarts the chip.
+
+**Building a sandbox is the wrong call** — days of work, breaks legitimate apps, and
+everyone can already reflash everyone's board. The right move is to delete the false
+promise from the app contract and replace it with the honest trust statement: *apps run
+unsandboxed; only run apps you'd trust with your board.*
+
+Do nil out the four things that break the launcher rather than the user: `debug`,
+`os.exit`, `os.execute`, `package`. Also drop `CONFIG_LUA_MAXSTACK` from 1000000 — runaway
+recursion currently tries to allocate ~16 MB of Lua stack before erroring.
+
+### Launcher owns `lvgl.init()`
+
+Apps must currently call it or exit instantly with a confusing error naming a function
+they never called. The launcher will call it on the **app's own `lua_State`** after
+opening modules, so apps begin at `local scr = lvgl.screen()`.
+
+Idempotency is narrower than v1 implied: `runtime_owner == L` → return true;
+`runtime_owner != L` → error. A second call carrying options (`font_path`, `font_size`)
+must warn rather than silently ignore them.
+
+### Memory: measure the right thing
+
+Baseline is **173,631 bytes** free internal DRAM after boot. That number alone is
+misleading, because internal DRAM — not PSRAM — is what runs out. Three consumers v1
+missed:
+
+- **32 KB app task stack per running app**, internal, not in the baseline.
+  **Free win:** `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` is already set, so
+  `xTaskCreateWithCaps(..., MALLOC_CAP_SPIRAM)` recovers all of it.
+- **A fixed 64 KB LVGL pool** (`CONFIG_LV_MEM_SIZE_KILOBYTES=64`, builtin TLSF) shared by
+  the launcher and every app and never reset. Add `lv_mem_monitor` to the memory check.
+- **Wi-Fi/lwIP buffers and the NimBLE controller pools**, which are the real pressure.
+  Two knobs absent from v1: `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y` and
+  `CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL`.
+
+Conversely v1 **over-worried TLS**: `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384` already
+pushes mbedTLS's 16 KB buffers to PSRAM, and they are tunable.
+
+Track `heap_caps_get_largest_free_block()` and `heap_caps_get_minimum_free_size()` **at
+peak with an app running**, not free-total at boot.
 
 ## Phases
 
-Estimates are **person-days**. See Effort and sequencing for how they fit the runway.
+Estimates are person-days.
 
-### Phase 1 — Unblock five people, and make the launcher actually robust (~3 days)
+### Phase 0 — Two hours, day 1, before anything else
 
-Nothing else matters until this is done.
+1. **Push to a git remote.** Everything lives on one laptop. Five minutes, blocks five people.
+2. **`.gitignore`**: `wifi.conf`, `secrets*`, `*.key`, `.env` — before there is a remote or
+   anything to leak.
+3. **The memory spike.** Enable BT + Wi-Fi, bring both radios up, log largest free block.
+   This either de-risks Phases 3–4 or tells you to re-scope them **while re-scoping is
+   still cheap**. Deferring it puts the discovery at day 7 of 10.
+4. **Order spare boards.**
 
-- **Git remote and repo hygiene** — there is currently no remote; nobody can clone
-- **`firmware/` + `flash.sh`** that pip-installs `esptool` and flashes. App authors never
-  install ESP-IDF; only the launcher maintainer does. No CI initially; add it if manual
-  refreshes become annoying.
-- **Runaway-app protection** via the debug hook above
-- **Serial file push**: launcher listens on the existing USB serial; `push.py` sends a
-  `.lua` straight to the SD card
-- **Refresh button** — rescan apps without rebooting
-- **Scrolling app list** — the current list breaks past roughly five apps
-- **App errors shown on screen**, not only on serial
+### Phase 1 — Unblock five people, and make the launcher genuinely robust (~5 days)
 
-Serial push exists because the alternative is eject SD → adapter → Mac → copy → back →
-reboot: roughly 30 seconds, repeated 20+ times per author per day. It is the worst
-friction in the current design and it hits everyone.
+Revised up from 3. It absorbs the timer, the console rework, and the robustness items,
+and it does **not** parallelise.
 
-Two things to design up front rather than discover:
+- **`timer.every` / `timer.after`** — the SDK is not usable without it
+- **Runaway-app protection** — hook + latching + `debug` removed + `esp_restart` fallback
+- **Stdlib trim** (`debug`, `os.exit`, `os.execute`, `package`) and `LUA_MAXSTACK`
+- **`firmware/` + `flash.sh`**, pip-installing `esptool`. Put the BOOT/PWR recovery
+  sequence in the script's error message — the first reflash over a hung app will need it.
+- **Serial push + `push.py`**, including the console reconfiguration
+- **Refresh button** — must clear the `s_mounted` latch and remount, rebuild the row UI
+  rather than reusing pointers into the rescanned array, and be disabled while an app runs
+- **Scrolling app list** — verify first, it may already work
+- **App errors shown on screen** — including callback errors, which are currently silent
+- **`luaL_traceback` message handler** — five lines, and the contract already (wrongly)
+  promises tracebacks
+- **Reconcile the app contract** with reality: no-sandbox statement, document `lvgl.font_load`,
+  state that Lua 5.5 stdlib is available, fix the callback-argument and VM-cost claims
 
-- **Framing.** Push traffic shares the port with log output. Needs a delimiter and a
-  checksum, not just raw bytes.
-- **Port contention.** `idf.py monitor` holds the port, so pushing while monitoring will
-  fail — the same class of problem as flashing while monitoring. `push.py` should detect
-  this and say so plainly rather than hanging.
+Serial push design items: framing **with base64 or hex** (the console VFS translates
+CR/LF), **log suppression during transfer** (`esp_log_set_vprintf`) not just framing,
+**filename validation** (basename only, `.lua`, size cap), and port contention with
+`idf.py monitor`. Scope it to `.lua` — WAVs and fonts need a different path. Note it is
+*not* a recovery path: a crashed app takes USB with it.
 
-App sharing is the repo: apps live in `apps/`, people push theirs, others `git pull`.
+### Phase 2 — Cheap wins (~3 days)
 
-### Phase 2 — Cheap wins (~4 days)
-
-Unlocks motion toys, clocks, pedometers and workout counters.
+Revised down; `store`/`json`/`system` are vendored and `imu` has a driver.
 
 ```lua
-store.get(k) / store.set(k, v)     -- survives reboot; namespaced, see below
-imu.accel() -> x, y, z             -- g
-imu.gyro()  -> x, y, z             -- deg/s
-imu.steps() -> count               -- QMI8658 hardware pedometer
-rtc.now()   -> {year, month, day, hour, min, sec, wday}
+store.get(k) / store.set(k, v)
+imu.accel() / imu.gyro() / imu.steps()
+rtc.now() / rtc.set(t)
 battery.percent() / .volts() / .charging()
 json.encode(t) / json.decode(s)
 ```
 
-`store` is namespaced by the app's **filename stem** (`weather_clock.lua` → namespace
-`weather_clock`). Two consequences to document: renaming a file orphans its data, and two
-people's apps sharing a filename share storage.
+**`rtc.set()` is not optional.** A PCF85063 that has never been set returns garbage, and
+the only other way to set it is NTP — in Phase 4, the droppable phase. Ship a set-time
+screen using the existing `roller`/`spinbox` widgets.
 
-The QMI8658's **hardware pedometer** makes step counters and workout apps nearly free
-rather than a signal-processing exercise.
+**`store` must not live in NVS.** The NVS partition is 24 KB and is shared with Wi-Fi
+credentials and, after Phase 3, BLE bonding keys; one app writing in a timer callback
+would break the radios in a way that looks nothing like the cause. Use the unused 4 MB FAT
+`storage` partition or the SD card, and write atomically (`tmp` + rename) — power loss
+mid-write on FAT can corrupt the whole card.
 
-**API freezes at the end of this phase.**
+Verify the `waveshare/qmi8658` driver actually exposes the hardware pedometer before
+promising step counting. Fifteen minutes.
 
-### Phase 3 — Audio and BLE (~3.5 days)
+**API freezes at the end of this phase**, on a named date.
 
-#### Audio (~1.5 days)
+### Phase 3 — Audio and BLE (~4.5 days)
 
-```lua
-audio.tone(freq_hz, ms)      -- synth, feedback beeps
-audio.play(path)             -- WAV/PCM from the SD card
-audio.mic_level() -> 0..1    -- RMS, for visualisers
-```
+Audio (~1.5 d): `audio.tone`, `audio.play` (WAV from SD), `audio.mic_level`. Built on BSP
+entry points; no MP3 decode, no resampling.
 
-Built on the BSP's audio entry points. No MP3 decode, no resampling.
-
-#### BLE (~2 days)
-
-Vendored from esp-claw exactly as `lua_module_lvgl` was — it needs only IDF built-ins plus
-the `cap_lua` shim already written.
+BLE (~3 d, revised up): vendored NimBLE peripheral + HID.
 
 ```lua
-ble.init() / ble.set_name(s)
-ble.adv_start({ data = { name = "..." } })   -- advertise
-ble.gatts_define(profile)                    -- GATT server: services, characteristics,
-                                             -- read/write/notify/indicate
--- plus lua_module_ble_hid for keyboard, mouse, media keys
+ble.init() / ble.set_name(s) / ble.adv_start{...} / ble.gatts_define(profile)
 ```
 
-**Peripheral only.** The module explicitly does not support scanning, observer mode,
-Central mode, or GATT Client. The board can advertise and be connected *to*, but cannot
-connect *to* another device such as a heart-rate strap. Confirmed acceptable.
+**Peripheral only** — no Central, so no heart-rate straps. Confirmed acceptable.
+Keep NimBLE (~40–60 KB) over Bluedroid (100 KB+).
 
-**It uses NimBLE, not Bluedroid** — roughly 40–60 KB of internal DRAM rather than 100 KB+.
-Keep it that way; switching stacks would likely make BLE and Wi-Fi mutually exclusive.
+Two things that turn 2 days into 4 if discovered late:
+- **GATT reads cannot be deferred to the pump.** `ble_gatts_access_fn` must fill the
+  response synchronously on the host task, and you cannot enter the app's `lua_State`
+  there. Reads must be served from a C-side cached value that Lua writes. Check what
+  esp-claw actually does here **before** committing to the estimate.
+- **HID needs bonding to function**, not merely to be secure — macOS/Windows/iOS reject
+  HID from unpaired peripherals. Persisting keys loops back to the NVS budget.
+
+Default the advertised name to include a MAC suffix; six boards advertising the same name
+in one room is its own afternoon.
 
 ### Phase 4 — Networking (~5 days)
 
 ```lua
-net.scan()    -> {{ssid, rssi}, ...}
-net.connect(ssid, pass)
-net.status()  -> "connected" | "connecting" | "disconnected"
-net.get(url, opts)  -> body, status
-net.post(url, opts) -> body, status    -- HTTPS, so LLM APIs work
+net.scan() / net.connect(ssid, pass) / net.status()
+net.get(url, opts) / net.post(url, opts)
 ```
 
-Credentials come from **both** `/wifi.conf` on the SD card **and** an on-screen picker
-using the touch keyboard. `lvgl.textarea` and `lvgl.keyboard` already exist in the
-bindings, so the picker is wiring rather than new widgets — and text entry becomes an SDK
-capability apps can use too.
+Credentials from `/wifi.conf` **and** an on-screen keyboard picker (widgets already exist).
 
-LLM pass-throughs ride on `net.post` + HTTPS; not a separate feature.
-
-If this phase slips, everyone still has a working device and six app categories.
+- **Use `esp_crt_bundle_attach`. Never `CONFIG_ESP_TLS_INSECURE`.**
+- **SNTP is required, not optional.** Certificate validity needs a correct clock; a cold
+  board reads every cert as not-yet-valid, and the "fix" people find at 2am is disabling
+  verification. This is the mechanism by which the API key ends up in cleartext.
+- **API keys live outside `apps/`** — e.g. `/sdcard/secrets.conf`, never in a `.lua` file
+  in the shared repo. Own key per person, spend cap, revoked after.
 
 ## Effort and sequencing
 
-**15.5 person-days against 10 working days.** That only fits with two people on the
-launcher, and only because the work parallelises cleanly: after Phase 1, each capability
-is an independent component behind the `cap_lua` interface, so two people can build
-different modules without touching the same files.
+**17.5 person-days against 10 working days**, with Phase 1 (5 days) serial. Critical path
+is 5 + (12.5 / 2) = **11.25 days for two people. It does not fit.**
 
-Phase 1 is the exception — it is mostly launcher-core work and does not parallelise well.
-Treat it as one person, three days, and start it immediately.
+That is the honest arithmetic, and v1's "only achievable because two people" hand-waved
+it. The plan is therefore a **priority queue with a freeze date**, not a schedule:
 
-**Each phase gets its own implementation plan.** Phase 1 is blocking and separable; plan
-and ship it before planning the rest.
+- Phase 0 and Phase 1 are non-negotiable.
+- Phase 2 is what makes the SDK worth having.
+- Phase 3 and 4 are what fits.
 
-If the runway compresses, drop from the bottom: Phase 4 first, then BLE, then audio. Never
-drop Phase 1 — without it there is no way for five people to participate at all.
+Also not in any estimate, and real: five example apps (which *are* the verification, 3+
+days), supporting five teammates, contract updates every phase, integration, and the
+crash-recovery tax — which is a multi-minute physical ritual per crash, in the two phases
+most likely to crash.
+
+**Put dates on:** API freeze (end of Phase 2), firmware freeze (T-2), and a dry run at T-1
+where everyone flashes and runs everyone else's apps.
 
 ## Out of scope
 
-- **Tailscale** — dropped, see Context
-- **Emscripten simulator** — pointless with one board per person
-- **BLE Central / GATT Client** — connecting *to* sensors; not vendorable
-- **Camera; Wi-Fi app upload** — the latter could follow Phase 4 and would supersede
-  serial push
-- **USB Mass Storage** — the S3's serial/JTAG console and TinyUSB cannot both own the USB
-  pins, so MSC costs the serial console. Bad trade during a hackathon.
-- **App icons, multitasking, app store UI** — not asked for
+Tailscale · Emscripten simulator · BLE Central/GATT Client · camera · USB Mass Storage
+(shares the USB PHY with the console) · a Lua sandbox (see above) · app icons · app store UI.
+
+Worth noting: 8 MB of flash is unallocated and there is no OTA partition. Two 4 MB OTA
+slots plus `net`-based OTA would beat CI as the answer to the maintainer bottleneck, if
+Phase 4 lands.
 
 ## Verification
 
-Every phase ends with a check that would fail if the phase were faked.
-
-- **Phase 1:** a second person, on a machine with **no ESP-IDF**, clones the repo, runs
-  `flash.sh`, pushes an app with `push.py`, and runs it. Separately: an app containing
-  `while true do end` must still be killable with PWR.
-- **Phases 2–4:** one example app per capability, living in `apps/` as documentation that
-  cannot rot — a level or dice app for the IMU, a clock for the RTC, a soundboard for
-  audio, an HID remote for BLE, a weather or LLM app for `net`.
-- **Memory, every phase:** record free internal DRAM at boot and compare against the
-  173,639-byte baseline. A phase that costs more than its budget (Risk 1) stops and gets
-  re-scoped rather than continuing.
-- **Regression, every phase:** launch and exit apps repeatedly; PSRAM must return to the
-  same free figure. This holds today and must keep holding.
-- **Hardware release:** launch an app that uses a peripheral, exit, launch it again. The
-  second run must work. This is the check that catches a missing exit-cleanup callback.
+- **Phase 0:** the spike produces a number, and that number re-scopes Phases 3–4 or doesn't.
+- **Phase 1:** a second person, **on their own board**, on a machine with **no ESP-IDF**,
+  clones, runs `flash.sh`, pushes an app with `push.py`, and runs it. Board diversity
+  matters — only one board has ever run this firmware.
+- **Runaway app:** test all three variants — bare `while true do end`, one wrapped in
+  `pcall`, and one inside a coroutine. v1 tested only the easiest.
+- **Phases 2–4:** one example app per capability, in `apps/`, as documentation that cannot rot.
+- **Unhappy path:** a `smoke.lua` that calls every SDK function with the SD card ejected
+  and radios down, asserting nothing throws. This is the only check for Rule 2, and there
+  is currently none.
+- **Rule 3:** `grep -rn "xTaskCreate" launcher/components/` as a review gate.
+- **Hardware release:** launch → exit → launch again, per peripheral. Catches a missing
+  cleanup callback.
+- **Memory:** largest free block and minimum free, **at peak with an app running**, plus
+  `lv_mem_monitor`. Run the launch/exit loop 50 times and watch internal, not just PSRAM.
+- **CI:** a compile-only job in `espressif/idf:v5.5.5`. The value is catching build breakage
+  between two people editing shared CMake and `sdkconfig` files — not firmware distribution.
 
 ## Risks
 
-**1. Internal DRAM exhaustion — the top technical risk.** 173,639 bytes free today.
-NimBLE needs ~40–60 KB and Wi-Fi ~50 KB, so both together plausibly consume 60% of what
-is left, before TLS buffers, which are also internal and can be tens of KB per connection.
-BLE and Wi-Fi being simultaneously usable is **an assumption, not a fact**. Measure after
-Phase 3 and again during Phase 4. If they do not fit, the fallback is making them mutually
-exclusive — an app declares which radio it wants — rather than shipping something that
-fails unpredictably under memory pressure.
-
-**2. Networking slips.** Contained by being last; six app categories survive without it.
-
-**3. API churn after people start writing.** Mitigated by the end-of-Phase-2 freeze and by
-later phases only adding modules rather than changing them.
-
-**4. A capability module forgets its exit cleanup**, so the second app to use that
-peripheral fails and it looks like an app bug. Mitigated by the explicit verification step
-above.
-
-**5. The launcher maintainer is a bottleneck for firmware updates.** Acceptable at this
-size; CI is the escape hatch.
+1. **Internal DRAM exhaustion.** BLE + Wi-Fi coexisting is an **assumption**. Phase 0's
+   spike converts it to a fact on day 1. Fallback: mutually exclusive radios.
+2. **The plan does not fit the runway.** Managed by the priority queue and freeze date, not
+   by optimism.
+3. **API churn.** The timer arriving in Phase 1 rather than after the freeze is the whole
+   point of v2.
+4. **A module forgets its exit cleanup**, or registers it per-launch and overflows the
+   8-slot table. Covered by rule 1 and the launch-exit-launch check.
+5. **Single points of failure:** no remote (Phase 0), no spare boards (Phase 0), one person
+   holding the crash-recovery knowledge (move it into the README, not just CLAUDE.md), and
+   five boards that have never run this firmware.
