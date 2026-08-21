@@ -151,6 +151,48 @@ static void show_launcher_screen(void)
     bsp_display_unlock();
 }
 
+/* Message handler for lua_pcall: converts the error into a traceback. Without
+ * this you get a bare one-line message with no call stack -- exactly what
+ * happened before this was added: one untraceable line on serial and a
+ * silent return to the launcher. */
+static int traceback_handler(lua_State *L)
+{
+    const char *msg = lua_tostring(L, 1);
+    luaL_traceback(L, L, msg ? msg : "(non-string error)", 1);
+    return 1;
+}
+
+/* Show a failure on the panel. Five people debugging through one USB cable is
+ * miserable; the error belongs where they are already looking. */
+static void show_error_screen(const char *app_name, const char *msg)
+{
+    bsp_display_lock(0);
+
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x2A0E0E), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(scr, 12, LV_PART_MAIN);
+
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text_fmt(title, "%s failed", app_name);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t *body = lv_label_create(scr);
+    lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(body, LV_PCT(96));
+    lv_label_set_text(body, msg ? msg : "(no message)");
+    lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, 44);
+
+    lv_obj_t *hint = lv_label_create(scr);
+    lv_label_set_text(hint, "press PWR to go back");
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x9A9AA5), LV_PART_MAIN);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    lv_screen_load(scr);
+    bsp_display_unlock();
+}
+
 /* Runs one app in its own VM. A failing app is reported and torn down; it
  * must never take the launcher with it. */
 static void lua_app_task(void *arg)
@@ -177,17 +219,36 @@ static void lua_app_task(void *arg)
     app_sandbox_apply(L);
     app_sandbox_install_hook(L);
 
-    if (luaL_dofile(L, app->path) != LUA_OK) {
-        ESP_LOGE(TAG, "app '%s' failed: %s", app->name, lua_tostring(L, -1));
+    lua_pushcfunction(L, traceback_handler);
+    int errfunc = lua_gettop(L);
+
+    if (luaL_loadfile(L, app->path) != LUA_OK ||
+        lua_pcall(L, 0, 0, errfunc) != LUA_OK) {
+        const char *msg = lua_tostring(L, -1);
+        ESP_LOGE(TAG, "app '%s' failed: %s", app->name, msg ? msg : "(nil)");
         /* The error may have unwound out of an LVGL binding that was holding
-         * the display lock. Without this the LVGL task blocks forever. */
+         * the display lock. Without this the LVGL task blocks forever. The
+         * error screen's own bsp_display_lock() below must come after this. */
         lua_lvgl_force_unlock_if_held();
+        show_error_screen(app->name, msg);
+        /* Leave the error on screen; PWR (via STOP / cap_lua_runtime_stop_requested)
+         * returns to the launcher. */
+        while (!cap_lua_runtime_stop_requested(L)) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
         goto close;
     }
+    lua_remove(L, errfunc);
     lua_settop(L, 0);
 
     ESP_LOGI(TAG, "app '%s' running, vm psram cost = %d bytes", app->name,
              (int)(psram_before - heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    /* Widget callback errors are swallowed by design (dispatch must keep
+     * going so one dead button doesn't take the whole app down), and logged
+     * by the vendored binding under tag 'lua_lvgl_evt' -- point people at it
+     * once per run so a dead button isn't a total dead end. */
+    ESP_LOGI(TAG, "app '%s' running (callback errors appear under tag 'lua_lvgl_evt')",
+             app->name);
 
     /* Event pump: this is what makes Lua callbacks actually fire. Timers run
      * first each iteration, and the wait is shortened to the next timer
