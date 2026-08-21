@@ -275,43 +275,60 @@ function M.toast(scr, text)
 end
 
 -- ------------------------------------------------------------------ fill
--- Big drag-to-set value control. An arc, not a slider: the binding has no
--- per-part styling, and a screen-sized slider's indicator renders as an
--- illegible blob (found by Rick on device). The arc is theme-native, the
--- reading sits in its hole on true black, and dragging the ring needs no
--- tap precision. cb() on change; read with h.get().
-function M.fill(scr, opts, cb)
+-- Big drag-to-set value control, on ITS OWN SCREEN -- like Apple Home's
+-- brightness fill, which is always a pushed screen with an x, never a
+-- paged tile: a drag surface and horizontal paging fight over the same
+-- gesture, and embedding this in a tileview made page swipes nearly
+-- impossible (found by Rick on device).
+--
+-- An arc, not a slider (the binding has no per-part styling, and a
+-- screen-sized slider's indicator renders as an illegible blob); the
+-- reading sits in the arc's hole on true black, and dragging the ring
+-- needs no tap precision.
+--
+-- on_change() fires live on every change; the x closes the screen and
+-- calls done(final_value).
+function M.fill(opts, on_change, done)
     opts = opts or {}
-    local h = {}
+    local caller = lvgl.active_screen()
+    local scr = lvgl.create_screen()
+    scr:set_style({ bg_color = "#000000" })
 
-    h.arc = lvgl.arc(scr, {
+    local arc = lvgl.arc(scr, {
         min = opts.min or 0, max = opts.max or 100,
         value = opts.value or 0,
-        align = "center",
-        w = 320, h = 320,
+        align = "center", y = 20,
+        w = 300, h = 300,
         arc_width = 28,
     })
 
-    h.label = lvgl.label(scr, {
+    local label = lvgl.label(scr, {
         text = "",
-        align = "center",
+        align = "center", y = 20,
         text_color = "#FFFFFF",
         font = lvgl.font(48),
     })
 
     local fmt = opts.label or "%d"
     local function update()
-        h.label:set_text(string.format(fmt, h.arc:get_value()))
+        label:set_text(string.format(fmt, arc:get_value()))
     end
     update()
 
-    h.arc:on("value_changed", function()
+    arc:on("value_changed", function()
         update()
-        if cb then cb() end
+        if on_change then on_change(arc:get_value()) end
     end)
 
-    h.get = function() return h.arc:get_value() end
-    return h
+    M.header(scr, { kind = "sheet", title = opts.title,
+                    on_back = function()
+                        local v = arc:get_value()
+                        caller:load()
+                        scr:delete()
+                        if done then done(v) end
+                    end })
+
+    scr:load()
 end
 
 return M

@@ -92,7 +92,22 @@ end)
 
 -- ---- page 3 ----
 
-ui.fill(p3, { min = 0, max = 100, value = 40, label = "%d%%" },
-    function() end)
+lvgl.label(p3, { text = "Fill control", align = "top_mid", y = 24, text_color = "#FFFFFF" })
+
+local bright = 40
+local bright_btn = lvgl.button(p3, {
+    text = "Brightness: 40%",
+    align = "center",
+    w = 344, h = 104,
+    bg_color = "#1E1E28", text_color = "#FFFFFF", radius = 12,
+})
+bright_btn:on("clicked", function()
+    ui.fill({ title = "Brightness", min = 0, max = 100, value = bright, label = "%d%%" },
+        nil,
+        function(v)
+            bright = v
+            bright_btn:set_text("Brightness: " .. v .. "%")
+        end)
+end)
 
 scr:load()
