@@ -1,0 +1,38 @@
+- generic [ref=f4e2]:
+  - navigation [ref=f4e5]:
+    - link [ref=f4e6] [cursor=pointer]:
+      - /url: ../
+      - img "interface.watch logo" [ref=f4e8]
+    - link "About the maker" [ref=f4e12] [cursor=pointer]:
+      - /url: https://mathieu-william.com/
+  - main [ref=f4e13]:
+    - generic [ref=f4e17]:
+      - link "Go back" [ref=f4e18] [cursor=pointer]:
+        - /url: /
+      - generic [ref=f4e19]:
+        - img "Night Sky logo" [ref=f4e21]
+        - generic [ref=f4e23]:
+          - heading "Night Sky" [level=2] [ref=f4e24]
+          - text: Lifestyle
+      - generic [ref=f4e25]:
+        - generic [ref=f4e26]:
+          - generic [ref=f4e27]: Total screenshots
+          - heading "14" [level=3] [ref=f4e28]
+        - generic [ref=f4e30]:
+          - generic [ref=f4e31]: Version
+          - heading "watchOS 11.5" [level=3] [ref=f4e32]
+    - generic [ref=f4e35]:
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e38]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e41]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e44]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e47]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e50]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e53]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e56]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e59]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e62]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e65]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e68]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e71]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e74]
+      - img "WatchOS user interface for the Night Sky application" [ref=f4e77]

@@ -1,0 +1,40 @@
+- generic [ref=f3e2]:
+  - navigation [ref=f3e5]:
+    - link [ref=f3e6] [cursor=pointer]:
+      - /url: ../
+      - img "interface.watch logo" [ref=f3e8]
+    - link "About the maker" [ref=f3e12] [cursor=pointer]:
+      - /url: https://mathieu-william.com/
+  - main [ref=f3e13]:
+    - generic [ref=f3e17]:
+      - link "Go back" [ref=f3e18] [cursor=pointer]:
+        - /url: /
+      - generic [ref=f3e19]:
+        - img "Spotify logo" [ref=f3e21]
+        - generic [ref=f3e23]:
+          - heading "Spotify" [level=2] [ref=f3e24]
+          - text: Entertainment & Media
+      - generic [ref=f3e25]:
+        - generic [ref=f3e26]:
+          - generic [ref=f3e27]: Total screenshots
+          - heading "16" [level=3] [ref=f3e28]
+        - generic [ref=f3e30]:
+          - generic [ref=f3e31]: Version
+          - heading "watchOS 11.5" [level=3] [ref=f3e32]
+    - generic [ref=f3e35]:
+      - img "WatchOS user interface for the Spotify application" [ref=f3e38]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e41]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e44]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e47]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e50]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e53]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e56]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e59]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e62]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e65]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e68]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e71]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e74]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e77]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e80]
+      - img "WatchOS user interface for the Spotify application" [ref=f3e83]

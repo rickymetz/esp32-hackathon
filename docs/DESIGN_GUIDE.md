@@ -206,6 +206,12 @@ Concrete, in priority order:
 
 Items 1–3 are what make your photo legible. The rest is polish.
 
+**Status: applied and confirmed.** Implemented in `993c3ae` and verified on the device by
+eye — text is readable at wrist distance. The structural evidence was the row label's
+resolved font pointer matching `&lv_font_montserrat_32` with `line_height=35`, against 16
+for Montserrat 14. Cost: +136 KB flash (partition still 73% free) and **zero** internal
+DRAM, since built-in fonts are flash-resident.
+
 ---
 
 ## Rules for app authors

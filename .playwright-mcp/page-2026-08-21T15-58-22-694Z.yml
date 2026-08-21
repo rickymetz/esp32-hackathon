@@ -1,0 +1,36 @@
+- generic [ref=f1e2]:
+  - navigation [ref=f1e5]:
+    - link [ref=f1e6] [cursor=pointer]:
+      - /url: ../
+      - img "interface.watch logo" [ref=f1e8]
+    - link "About the maker" [ref=f1e12] [cursor=pointer]:
+      - /url: https://mathieu-william.com/
+  - main [ref=f1e13]:
+    - generic [ref=f1e17]:
+      - link "Go back" [ref=f1e18] [cursor=pointer]:
+        - /url: /
+      - generic [ref=f1e19]:
+        - img "Apple Stopwatch logo" [ref=f1e21]
+        - generic [ref=f1e23]:
+          - heading "Apple Stopwatch" [level=2] [ref=f1e24]
+          - text: Utilities & Complications
+      - generic [ref=f1e25]:
+        - generic [ref=f1e26]:
+          - generic [ref=f1e27]: Total screenshots
+          - heading "12" [level=3] [ref=f1e28]
+        - generic [ref=f1e30]:
+          - generic [ref=f1e31]: Version
+          - heading "watchOS 11.5" [level=3] [ref=f1e32]
+    - generic [ref=f1e35]:
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e38]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e41]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e44]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e47]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e50]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e53]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e56]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e59]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e62]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e65]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e68]
+      - img "WatchOS user interface for the Apple Stopwatch application" [ref=f1e71]

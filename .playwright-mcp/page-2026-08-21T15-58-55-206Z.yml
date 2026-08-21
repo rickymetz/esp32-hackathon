@@ -1,0 +1,33 @@
+- generic [ref=f2e2]:
+  - navigation [ref=f2e5]:
+    - link [ref=f2e6] [cursor=pointer]:
+      - /url: ../
+      - img "interface.watch logo" [ref=f2e8]
+    - link "About the maker" [ref=f2e12] [cursor=pointer]:
+      - /url: https://mathieu-william.com/
+  - main [ref=f2e13]:
+    - generic [ref=f2e17]:
+      - link "Go back" [ref=f2e18] [cursor=pointer]:
+        - /url: /
+      - generic [ref=f2e19]:
+        - img "Strava logo" [ref=f2e21]
+        - generic [ref=f2e23]:
+          - heading "Strava" [level=2] [ref=f2e24]
+          - text: Health & Fitness
+      - generic [ref=f2e25]:
+        - generic [ref=f2e26]:
+          - generic [ref=f2e27]: Total screenshots
+          - heading "9" [level=3] [ref=f2e28]
+        - generic [ref=f2e30]:
+          - generic [ref=f2e31]: Version
+          - heading "watchOS 11.5" [level=3] [ref=f2e32]
+    - generic [ref=f2e35]:
+      - img "WatchOS user interface for the Strava application" [ref=f2e38]
+      - img "WatchOS user interface for the Strava application" [ref=f2e41]
+      - img "WatchOS user interface for the Strava application" [ref=f2e44]
+      - img "WatchOS user interface for the Strava application" [ref=f2e47]
+      - img "WatchOS user interface for the Strava application" [ref=f2e50]
+      - img "WatchOS user interface for the Strava application" [ref=f2e53]
+      - img "WatchOS user interface for the Strava application" [ref=f2e56]
+      - img "WatchOS user interface for the Strava application" [ref=f2e59]
+      - img "WatchOS user interface for the Strava application" [ref=f2e62]

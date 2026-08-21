@@ -1,0 +1,30 @@
+- generic [ref=f3e2]:
+  - navigation [ref=f3e5]:
+    - link [ref=f3e6] [cursor=pointer]:
+      - /url: ../
+      - img "interface.watch logo" [ref=f3e8]
+    - link "About the maker" [ref=f3e12] [cursor=pointer]:
+      - /url: https://mathieu-william.com/
+  - main [ref=f3e13]:
+    - generic [ref=f3e17]:
+      - link "Go back" [ref=f3e18] [cursor=pointer]:
+        - /url: /
+      - generic [ref=f3e19]:
+        - img "NBA logo" [ref=f3e21]
+        - generic [ref=f3e23]:
+          - heading "NBA" [level=2] [ref=f3e24]
+          - text: Entertainment & Media
+      - generic [ref=f3e25]:
+        - generic [ref=f3e26]:
+          - generic [ref=f3e27]: Total screenshots
+          - heading "6" [level=3] [ref=f3e28]
+        - generic [ref=f3e30]:
+          - generic [ref=f3e31]: Version
+          - heading "watchOS 11.5" [level=3] [ref=f3e32]
+    - generic [ref=f3e35]:
+      - img "WatchOS user interface for the NBA application" [ref=f3e38]
+      - img "WatchOS user interface for the NBA application" [ref=f3e41]
+      - img "WatchOS user interface for the NBA application" [ref=f3e44]
+      - img "WatchOS user interface for the NBA application" [ref=f3e47]
+      - img "WatchOS user interface for the NBA application" [ref=f3e50]
+      - img "WatchOS user interface for the NBA application" [ref=f3e53]
