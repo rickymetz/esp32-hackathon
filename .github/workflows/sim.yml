@@ -56,6 +56,11 @@ jobs:
       - name: Build
         run: ./sim/build.sh
 
+      - name: Unit tests (sim internals)
+        run: |
+          ninja -C sim/build sim_tests
+          ./sim/build/sim_tests
+
       - name: Render-test all apps
         run: ./sim/test.sh
 

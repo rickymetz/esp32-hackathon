@@ -115,6 +115,13 @@ the frame is non-blank. Shots land in `sim/build/shots/`.
 sim/test.sh              # exits nonzero if any app crashes or draws nothing
 ```
 
+The sim's own hand-written C (the PNG writer, the synthetic-input queue) has
+unit tests:
+
+```bash
+ninja -C sim/build sim_tests && sim/build/sim_tests
+```
+
 ## CI
 
 `.github/workflows/sim.yml` runs exactly that on every PR that touches the sim,

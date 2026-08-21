@@ -105,3 +105,14 @@ add_executable(sim
 )
 target_include_directories(sim PRIVATE src)
 target_link_libraries(sim PRIVATE bindings)
+
+# --- Unit tests for the sim's own hand-written C ------------------------
+add_executable(sim_tests
+    test/test_units.c
+    src/png_write.c
+    src/sim_input.c
+    src/sim_tick.c
+    shim/esp_shim.c
+)
+target_include_directories(sim_tests PRIVATE src shim)
+target_link_libraries(sim_tests PRIVATE lvgl m)
