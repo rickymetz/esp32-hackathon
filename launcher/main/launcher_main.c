@@ -114,6 +114,7 @@ static bool pump_events(lua_State *L, int timeout_ms)
     if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
         ESP_LOGE(TAG, "process_events failed: %s", lua_tostring(L, -1));
         lua_pop(L, 2);
+        lua_lvgl_force_unlock_if_held();
         return false;
     }
     lua_pop(L, 2);   /* result + lvgl table */
@@ -151,6 +152,9 @@ static void lua_app_task(void *arg)
 
     if (luaL_dofile(L, app->path) != LUA_OK) {
         ESP_LOGE(TAG, "app '%s' failed: %s", app->name, lua_tostring(L, -1));
+        /* The error may have unwound out of an LVGL binding that was holding
+         * the display lock. Without this the LVGL task blocks forever. */
+        lua_lvgl_force_unlock_if_held();
         goto close;
     }
     lua_settop(L, 0);
@@ -299,7 +303,6 @@ void app_main(void)
 
     app_registry_scan();
     build_launcher_ui();
-
     xTaskCreate(back_button_task, "back_btn", 3072, NULL, 6, NULL);
 
     ESP_LOGI(TAG, "ready: %u app(s), internal free=%u psram free=%u",

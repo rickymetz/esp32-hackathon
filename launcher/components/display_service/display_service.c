@@ -100,19 +100,30 @@ esp_err_t display_service_close(display_service_session_handle_t session)
         return ESP_ERR_INVALID_ARG;
     }
 
+    /* Take the LVGL lock for the WHOLE teardown, including the cleanup
+     * callback. The callback deletes the app's LVGL objects, and the LVGL
+     * port task is concurrently running lv_timer_handler on the other core.
+     * LVGL is built without LV_USE_OS, so it does no internal locking --
+     * calling the callback outside the lock is a data race on the object
+     * tree, on every single app exit.
+     *
+     * The lock is recursive, so the callback re-acquiring it is fine. */
+    esp_err_t locked = display_service_lock();
+
     if (session->cleanup_cb) {
         session->cleanup_cb(session, session->user_ctx);
     }
 
     /* Restore the previous screen and delete the app's, which takes every
      * widget the app parented to it with it. */
-    if (display_service_lock() == ESP_OK) {
-        if (session->prev_screen != NULL) {
-            lv_screen_load(session->prev_screen);
-        }
-        if (session->screen != NULL && session->screen != session->prev_screen) {
-            lv_obj_delete(session->screen);
-        }
+    if (session->prev_screen != NULL) {
+        lv_screen_load(session->prev_screen);
+    }
+    if (session->screen != NULL && session->screen != session->prev_screen) {
+        lv_obj_delete(session->screen);
+    }
+
+    if (locked == ESP_OK) {
         display_service_unlock();
     }
 

@@ -8,6 +8,24 @@
 static const char *TAG = "lua_lvgl";
 lua_lvgl_state_t s_lvgl;
 
+/* LAUNCHER PATCH (not upstream esp-claw).
+ *
+ * The bindings take these locks and then call luaL_checkinteger /
+ * lua_lvgl_check_typed_obj, which longjmp on bad input and skip the unlock.
+ * Because lvgl_mux is taken with portMAX_DELAY, one Lua typo would otherwise
+ * wedge the LVGL task forever: frozen display, dead touch, no way back to the
+ * launcher. Roughly 200 call sites have this shape, so we recover at the one
+ * choke point instead of patching each one. */
+static volatile TaskHandle_t s_lock_owner;
+
+void lua_lvgl_force_unlock_if_held(void)
+{
+    if (s_lock_owner == xTaskGetCurrentTaskHandle()) {
+        ESP_LOGW(TAG, "releasing lvgl lock leaked by a Lua error");
+        lua_lvgl_unlock();
+    }
+}
+
 esp_err_t lua_lvgl_lock(void)
 {
     esp_err_t err;
@@ -34,11 +52,13 @@ esp_err_t lua_lvgl_lock(void)
         }
         return ESP_ERR_TIMEOUT;
     }
+    s_lock_owner = xTaskGetCurrentTaskHandle();
     return ESP_OK;
 }
 
 void lua_lvgl_unlock(void)
 {
+    s_lock_owner = NULL;
     if (s_lvgl.mutex) {
         xSemaphoreGive(s_lvgl.mutex);
     }
