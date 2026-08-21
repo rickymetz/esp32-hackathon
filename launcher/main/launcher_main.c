@@ -46,6 +46,7 @@
 #include "app_timer.h"
 #include "app_button.h"
 #include "lv_font_lexend.h"
+#include "lua_module_ui.h"
 #include "driver/gpio.h"
 #include "launcher_main.h"
 #include "serial_push.h"
@@ -816,6 +817,8 @@ void app_main(void)
     ESP_ERROR_CHECK(lua_module_lvgl_register_with_data_root(BSP_SD_MOUNT_POINT));
     ESP_ERROR_CHECK(app_timer_register());
     ESP_ERROR_CHECK(app_button_register());
+    /* After lvgl and timer: ui.lua/keyboard.lua require() both at load. */
+    ESP_ERROR_CHECK(lua_module_ui_register());
 
     /* BOOT (GPIO0) is the Home button. Input + pull-up matches its idle
      * state; it is only special during reset, where the ROM samples it as a
