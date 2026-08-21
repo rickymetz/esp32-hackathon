@@ -14,6 +14,10 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_FREERTOS_HZ=1000
 
+# SHOT over serial re-renders the active screen with lv_snapshot so an
+# agent can see the UI without a human photographing the panel.
+CONFIG_LV_USE_SNAPSHOT=y
+
 # lua_module_lvgl uses LVGL's Tiny TTF for runtime fonts
 CONFIG_LV_USE_TINY_TTF=y
 CONFIG_LV_TINY_TTF_FILE_SUPPORT=y

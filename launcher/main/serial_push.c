@@ -4,6 +4,8 @@
 #include "serial_push.h"
 #include "app_registry.h"
 #include "launcher_main.h"
+#include "lvgl.h"
+#include "bsp/esp-bsp.h"
 #include "esp_log.h"
 #include "esp_crc.h"
 #include "mbedtls/base64.h"
@@ -221,6 +223,51 @@ static void handle_delete(const char *header)
     printf("DELETE_OK %s\n", name);
 }
 
+/* SHOT -- re-render the active screen into a PSRAM buffer with
+ * lv_snapshot and stream it out base64, so an agent can SEE the UI
+ * without a human photographing the panel. Rick's request after a day
+ * of design tuning over photos.
+ *
+ * Format: "SHOT <w> <h> <stride>" then base64 lines then "ENDSHOT".
+ * Pixel data is RGB565 little-endian, h*stride bytes. The snapshot runs
+ * under the display lock; streaming happens after it is released, from
+ * our own copy of nothing -- the draw buf stays valid because only this
+ * task frees it, and LVGL never touches snapshot bufs it did not make. */
+static void handle_shot(void)
+{
+    bsp_display_lock(0);
+    lv_obj_t *act = lv_screen_active();
+    lv_draw_buf_t *buf = act ? lv_snapshot_take(act, LV_COLOR_FORMAT_RGB565) : NULL;
+    bsp_display_unlock();
+
+    if (buf == NULL) {
+        printf("SHOT_ERR failed\n");
+        return;
+    }
+
+    uint32_t w = buf->header.w, h = buf->header.h, stride = buf->header.stride;
+    size_t total = (size_t)h * stride;
+    printf("SHOT %u %u %u\n", (unsigned)w, (unsigned)h, (unsigned)stride);
+
+    const unsigned char *d = buf->data;
+    unsigned char line[132];   /* 90 bytes -> 120 b64 chars + NUL + slack */
+    for (size_t off = 0; off < total; off += 90) {
+        size_t chunk = total - off < 90 ? total - off : 90;
+        size_t olen = 0;
+        if (mbedtls_base64_encode(line, sizeof(line), &olen, d + off, chunk) != 0) {
+            break;
+        }
+        line[olen] = '\0';
+        fputs((const char *)line, stdout);
+        fputc('\n', stdout);
+    }
+    printf("ENDSHOT\n");
+
+    bsp_display_lock(0);
+    lv_draw_buf_destroy(buf);
+    bsp_display_unlock();
+}
+
 /* STOP -- ask the running app to stop, exactly as pressing BOOT does. */
 static void handle_stop(void)
 {
@@ -252,6 +299,8 @@ static void serial_push_task(void *arg)
             handle_list();
         } else if (strncmp(line, "DELETE ", 7) == 0) {
             handle_delete(line);
+        } else if (strcmp(line, "SHOT") == 0) {
+            handle_shot();
         }
     }
 }
