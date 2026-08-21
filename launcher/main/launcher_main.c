@@ -25,6 +25,7 @@
 #include <inttypes.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_heap_caps.h"
@@ -63,6 +64,20 @@ static const char *TAG = "launcher";
 static lv_obj_t *s_launcher_screen;
 static TaskHandle_t s_app_task;
 static esp_io_expander_handle_t s_expander;
+
+/* Guards s_app_task's check-then-act (launch/stop) across the three tasks
+ * that touch it: the LVGL/UI task (app_row_clicked), the serial task
+ * (launcher_run_app_by_name / launcher_stop_app), and lua_app_task itself
+ * clearing it on exit. Created in app_main() before anything can launch. */
+static SemaphoreHandle_t s_app_mutex;
+
+/* Single-app-at-a-time means a single static copy is enough: the launch
+ * path fills this in (under s_app_mutex) from a live app_registry_get()
+ * pointer just before starting the task, and lua_app_task reads only from
+ * this copy for its whole run. That avoids holding a pointer into s_apps[]
+ * across a run, which app_registry_scan() can rewrite at any time now that
+ * a serial PUSH rescans at runtime. */
+static app_entry_t s_current_app;
 
 static esp_err_t release_panel_reset(void)
 {
@@ -137,7 +152,11 @@ static void show_launcher_screen(void)
  * must never take the launcher with it. */
 static void lua_app_task(void *arg)
 {
-    const app_entry_t *app = (const app_entry_t *)arg;
+    (void)arg;
+    /* Read only from the static copy the launch path filled in -- never a
+     * pointer into app_registry's s_apps[], which a concurrent PUSH-driven
+     * rescan can rewrite mid-run. */
+    const app_entry_t *app = &s_current_app;
     size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
     lua_State *L;
 
@@ -180,7 +199,9 @@ close:
 
 out:
     show_launcher_screen();
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
     s_app_task = NULL;
+    xSemaphoreGive(s_app_mutex);
     vTaskDelete(NULL);
 }
 
@@ -188,12 +209,16 @@ static void app_row_clicked(lv_event_t *e)
 {
     const app_entry_t *app = (const app_entry_t *)lv_event_get_user_data(e);
 
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
     if (s_app_task != NULL) {
+        xSemaphoreGive(s_app_mutex);
         ESP_LOGW(TAG, "an app is already running");
         return;
     }
+    s_current_app = *app;
     xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
-                (void *)app, 5, &s_app_task);
+                NULL, 5, &s_app_task);
+    xSemaphoreGive(s_app_mutex);
 }
 
 /* "/sdcard/apps/counter.lua" -> "counter.lua" */
@@ -212,7 +237,11 @@ bool launcher_run_app_by_name(const char *basename)
     if (basename == NULL || basename[0] == '\0') {
         return false;
     }
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+
     if (s_app_task != NULL) {
+        xSemaphoreGive(s_app_mutex);
         ESP_LOGW(TAG, "RUN '%s': an app is already running", basename);
         return false;
     }
@@ -227,18 +256,25 @@ bool launcher_run_app_by_name(const char *basename)
         }
     }
     if (match == NULL) {
+        xSemaphoreGive(s_app_mutex);
         ESP_LOGW(TAG, "RUN '%s': not found", basename);
         return false;
     }
 
+    s_current_app = *match;
     xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
-                (void *)match, 5, &s_app_task);
+                NULL, 5, &s_app_task);
+    xSemaphoreGive(s_app_mutex);
     return true;
 }
 
 bool launcher_stop_app(void)
 {
-    if (s_app_task == NULL) {
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    bool running = (s_app_task != NULL);
+    xSemaphoreGive(s_app_mutex);
+
+    if (!running) {
         return false;
     }
     launcher_lua_request_stop(true);
@@ -338,6 +374,15 @@ void app_main(void)
     printf("\n=== ESP32-S3-Touch-AMOLED-1.8 Launcher ===\n");
     printf("LVGL %d.%d.%d / %s\n",
            LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH, LUA_RELEASE);
+
+    /* Created before anything that can launch an app (UI build, serial
+     * task): app_row_clicked, launcher_run_app_by_name, launcher_stop_app,
+     * and lua_app_task's own exit path all take this. */
+    s_app_mutex = xSemaphoreCreateMutex();
+    if (s_app_mutex == NULL) {
+        ESP_LOGE(TAG, "failed to create app mutex");
+        return;
+    }
 
     ESP_ERROR_CHECK(release_panel_reset());
 

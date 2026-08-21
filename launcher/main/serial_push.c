@@ -70,6 +70,21 @@ static bool read_line(char *out, size_t cap)
         out[n++] = (char)c;
     }
     out[cap - 1] = '\0';
+
+    /* Oversized line: cap-1 bytes were consumed but the rest of this
+     * physical line is still sitting in the stream. Drain and discard up
+     * to the next '\n' (or EOF) so every call to read_line consumes exactly
+     * one whole line and the next call starts at the next line, not mid-line. */
+    for (;;) {
+        int c = fgetc(stdin);
+        if (c == EOF) {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        if (c == '\n') {
+            break;
+        }
+    }
     return false;
 }
 
@@ -157,12 +172,13 @@ static void handle_push(const char *header)
     }
 
     ESP_LOGI(TAG, "received %s (%u bytes)", name, (unsigned)got);
-    printf("PUSH_OK %s\n", name);
 
-    /* A freshly-pushed app is not in the registry yet -- pick it up now so
-     * a RUN sent right after a PUSH (the whole point of this channel) finds
-     * it without a manual rescan. */
+    /* A freshly-pushed app is not in the registry yet -- pick it up now,
+     * before replying, so a RUN sent the instant the host sees PUSH_OK (the
+     * whole point of this channel) cannot race the rescan and see a stale
+     * registry. */
     app_registry_scan();
+    printf("PUSH_OK %s\n", name);
 }
 
 /* RUN <basename.lua> -- launch an app exactly as tapping its row does.
