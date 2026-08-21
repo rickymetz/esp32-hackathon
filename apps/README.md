@@ -31,6 +31,8 @@ contract — start from the one closest to what you're building.
 | `reaction.lua` | Randomised `timer.after`, and measuring elapsed time with a 10 ms timer |
 | `flashlight.lua` | A full-screen tap target under a slider; recoloring the screen |
 | `metronome.lua` | A repeating beat with retempo-on-the-fly; a flash via `timer.after` |
+| `color.lua` | Live-updating sliders and a contrast-aware hex readout |
+| `simon.lua` | A game state machine with chained timers on a 2&times;2 grid |
 | `hello_world.lua` | A gentle tour of widgets |
 
 Two gotchas these examples were written to avoid — both bite silently:

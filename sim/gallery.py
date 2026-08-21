@@ -36,6 +36,10 @@ SCENES = [
                    "Split a bill; number pad + steppers."),
     ("flashlight", ["sleep","0.2"],
                    "The whole screen is the light."),
+    ("color",      ["swipe","200","236","320","236","300",":","swipe","200","364","66","364","300"],
+                   "Mix an RGB color; hex flips for contrast."),
+    ("simon",      ["_simon"],
+                   "Memory game: repeat the flashing sequence."),
     ("tip_kbd",    ["@tip","tap","184","130",":","sleep","0.5"],
                    "The number keypad (require('keyboard'))."),
     ("ui_test",    ["sleep","0.4"],
@@ -78,6 +82,30 @@ def run_scene(app, tail):
     if tail and tail[0].startswith("@"):
         real_app = tail[0][1:]
         tail = tail[1:]
+    if tail == ["_simon"]:
+        # Start the game, capture across the sequence playback, and keep the
+        # frame with the brightest pad (a lit flash reads better than dim).
+        cmd = ["run", f"apps/{app}.lua", ":", "tap", "100", "175"]
+        frames = []
+        for k in range(40):
+            f = os.path.join(HERE, "build", f"gallery_{app}_{k}.png")
+            cmd += [":", "sleep", "0.04", ":", "shot", f]
+            frames.append(f)
+        subprocess.run([SIM, "--sdroot", REPO] + cmd, cwd=REPO, capture_output=True)
+        best, best_bright = frames[0], -1
+        for f in frames:
+            w, h, raw = decode_png(f)
+            # brightest pixel anywhere in the pad grid (y 96..416)
+            mx = 0
+            for y in range(110, 400, 12):
+                base = y * (1 + w*3) + 1
+                for x in range(30, 350, 12):
+                    o = base + x*3
+                    mx = max(mx, raw[o] + raw[o+1] + raw[o+2])
+            if mx > best_bright:
+                best_bright, best = mx, f
+        os.replace(best, png)
+        return png
     if tail == ["_beat"]:
         # Metronome: capture across a beat and keep the frame whose dot center
         # is bluest (the flash).
