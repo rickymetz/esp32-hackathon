@@ -14,6 +14,11 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_FREERTOS_HZ=1000
 
+# Voice module (Part G): English MultiNet 7 for offline command
+# recognition, models flashed to the "model" partition. No wake word --
+# capture is push-to-talk from the keyboard's mic key.
+CONFIG_SR_MN_EN_MULTINET7_QUANT=y
+
 # SHOT over serial re-renders the active screen with lv_snapshot so an
 # agent can see the UI without a human photographing the panel.
 CONFIG_LV_USE_SNAPSHOT=y

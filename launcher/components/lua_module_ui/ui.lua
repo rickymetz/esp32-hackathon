@@ -412,20 +412,27 @@ function M.stepper(parent, opts, cb)
         if cb then cb(value) end
     end
 
-    local minus = lvgl.button(h.row, {
-        text = lvgl.symbol.minus,
-        align = "left_mid", x = 0, w = 96, h = ROW_H,
-        bg_color = "#24303C", text_color = "#FFFFFF", radius = 12,
-    })
-    local plus = lvgl.button(h.row, {
-        text = lvgl.symbol.plus,
-        align = "right_mid", x = 0, w = 96, h = ROW_H,
-        bg_color = "#24303C", text_color = "#FFFFFF", radius = 12,
-    })
-    minus:on("clicked", function() apply(value - step) end)
-    plus:on("clicked", function() apply(value + step) end)
-    minus:on("long_pressed_repeat", function() apply(value - step) end)
-    plus:on("long_pressed_repeat", function() apply(value + step) end)
+    -- Same split as corner_button (Rick: full-height slabs read
+    -- oversized): a 72x64 rounded rect is what you see -- rects, not
+    -- circles, inside rows (Rick's call) -- and the invisible
+    -- 96 x ROW_H button on top is what you hit.
+    local function side_button(glyph, side, on_fire)
+        lvgl.button(h.row, {
+            text = glyph,
+            align = side .. "_mid", x = (side == "left") and 12 or -12,
+            w = 72, h = 64,
+            bg_color = "#24303C", text_color = "#FFFFFF", radius = 16,
+        })
+        local hit = lvgl.button(h.row, {
+            align = side .. "_mid", x = 0,
+            w = 96, h = ROW_H,
+            bg_opa = 0,
+        })
+        hit:on("clicked", on_fire)
+        hit:on("long_pressed_repeat", on_fire)
+    end
+    side_button(lvgl.symbol.minus, "left", function() apply(value - step) end)
+    side_button(lvgl.symbol.plus, "right", function() apply(value + step) end)
 
     h.get = function() return value end
     h.set = function(v) apply(v) end
