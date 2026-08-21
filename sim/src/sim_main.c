@@ -21,6 +21,7 @@
 #include "lua_module_ui.h"
 #include "sim_display.h"
 #include "sim_input.h"
+#include "lv_font_lexend.h"
 
 #include "lvgl.h"
 
@@ -162,6 +163,39 @@ static void pump_until_idle(lua_State *L)
 static lua_State *s_app;        /* the currently running app VM, or NULL */
 static const char *s_sdroot = ".";
 
+/* Render the launcher's error screen so a SHOT after a failed RUN shows the
+ * failure, not a stale frame. Mirrors show_error_screen() in launcher_main.c:
+ * black field, red title, scrollable wrapped traceback. Built in C on the sim's
+ * display, independent of any Lua state (the app VM is already gone). */
+static void render_error_screen(const char *app_name, const char *msg)
+{
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(scr, 12, LV_PART_MAIN);
+
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text_fmt(title, "%s failed", app_name);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, &lv_font_lexend_40, LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t *body = lv_label_create(scr);
+    lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(body, LV_PCT(96));
+    lv_obj_set_height(body, 320);
+    lv_label_set_text(body, msg ? msg : "(no message)");
+    lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
+    lv_obj_set_style_text_font(body, &lv_font_lexend_26, LV_PART_MAIN);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, 64);
+
+    lv_obj_t *hint = lv_label_create(scr);
+    lv_label_set_text(hint, "press the top button to go back");
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x9A9AA5), LV_PART_MAIN);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    lv_screen_load(scr);
+}
+
 /* Resolve an app path: use it as given if it exists, else try it under the
  * SD-card root (so `run apps/foo.lua` works from any directory, and bare
  * `run foo.lua` finds apps/foo.lua the way the device resolves app names). */
@@ -217,8 +251,15 @@ static int app_run(const char *path)
             lua_close(L);
             return 0;
         }
-        fprintf(stderr, "app '%s' failed: %s\n", path, lua_tostring(L, -1));
+        const char *msg = lua_tostring(L, -1);
+        fprintf(stderr, "app '%s' failed: %s\n", path, msg ? msg : "(nil)");
+        /* Copy the message before lua_close frees it; render the error screen
+         * after close so the app's exit cleanup (which may reset the display)
+         * runs first and can't clobber it. */
+        static char saved[4096];
+        snprintf(saved, sizeof(saved), "%s", msg ? msg : "(nil)");
         lua_close(L);
+        render_error_screen(path, saved);   /* so a following SHOT shows it */
         return -1;
     }
     lua_remove(L, errfunc);
