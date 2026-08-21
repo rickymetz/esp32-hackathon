@@ -127,11 +127,16 @@ That pump needs **a positive timeout and a yield**. `process_events(0)` returns
 immediately when the queue is empty; looping on it starves the idle task and trips the
 task watchdog.
 
-**Back to the launcher is the PWR button** (EXIO4 on the expander, active high, reads
-`0x10`). Deliberately hardware: no app can consume it or paint over it, so a misbehaving
-app is always escapable. Polled every 20 ms in `back_button_task`; it requests stop
-unconditionally rather than gating on "is an app running", which is what broke the first
-version. Holding ≥6 s still powers off — that is the AXP2101 below us.
+**Back to the launcher is the BOOT button** (GPIO0, top right, active low — a direct
+GPIO read, so unlike the old PWR path it has no I²C dependency and survives a wedged bus).
+Deliberately hardware: no app can consume it or paint over it, so a misbehaving app is
+always escapable. Polled every 20 ms in `button_poll_task` with a two-sample debounce; it
+requests stop unconditionally rather than gating on "is an app running", which is what
+broke the first version.
+
+**PWR (EXIO4 on the expander, active high) belongs to apps** via `require("button")` —
+pressed/released/long_pressed(2 s). Holding PWR ≥6 s still powers off — that is the
+AXP2101 below us, which is also why the contract bans destructive actions on it.
 
 Verified on hardware: launching and exiting an app repeatedly returns PSRAM to exactly
 the same free figure, so the launch/exit cycle does not leak.

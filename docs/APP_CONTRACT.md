@@ -47,13 +47,14 @@ That is a complete, working app.
    every tap, while a 180×56 one dropped roughly half. **Keep tappable targets ≥ ~200×100.**
    If your buttons feel broken, this is almost certainly why.
 4. **Errors are visible, not fatal.** A Lua error stops your app and shows a red,
-   full-screen error with a traceback, then waits for PWR — or `STOP` over serial — before
+   full-screen error with a traceback, then waits for BOOT — or `STOP` over serial — before
    returning to the launcher. It does not vanish silently, and it does not reboot the
    board. This is different for an error *inside an event callback* (a `btn:on(...)`
    handler): that is caught, logged to serial under the tag `lua_lvgl_evt`, and your app
    keeps running — see Events, below.
-5. **PWR returns you to the launcher — almost always instantly.** It is hardware: no app
-   can consume or override it. Under the hood, PWR works by interrupting the Lua
+5. **BOOT (the top-right button) returns you to the launcher — almost always instantly.**
+   It is hardware: no app can consume or override it. (PWR, bottom right, belongs to your
+   app — see the `button` module.) Under the hood, BOOT works by interrupting the Lua
    interpreter, which is fast but can't reach everywhere: a tight loop **inside a
    coroutine body, or inside a blocking C call**, is invisible to that interrupt. Those get
    caught by a watchdog instead, which reboots the *entire board* — not just your app —
@@ -221,6 +222,40 @@ Declare the local first, assign second:
 local h
 h = timer.every(200, function() h:cancel() end)  -- correct: h is in scope when called
 ```
+
+### Physical buttons
+
+PWR — the bottom-right button — is yours. BOOT (top right) is Home and apps never see it.
+
+```lua
+local button = require("button")
+
+local h = button.on("pwr", "pressed", function()
+    print("PWR down")
+end)
+
+button.off(h)               -- or h:off()
+button.is_down("pwr")       -- -> boolean
+```
+
+Events: `pressed`, `released`, `long_pressed` (fires once, after a 2 s hold). Callbacks
+take **no arguments**, and an error inside one is logged and dispatch continues — same as
+LVGL event callbacks. Every subscription is released automatically when your app exits.
+
+The rules, adopted from Wear OS's multifunction-button guidance:
+
+1. Use the button only for an **obvious binary action** (start/stop, play/pause, lap) or
+   when the user isn't looking at the screen.
+2. **Every button action must also be reachable from an on-screen control.** The button is
+   an accelerator, never the only path.
+3. One press, immediate. No multi-step or confirm-then-commit.
+4. **Reversible only — never a destructive action.** Holding PWR ≥6 s powers the board
+   off (hardware, below the launcher), so anything destructive sits one long press from
+   data loss.
+
+Latency is ~150 ms worst case (debounce + event pump) — fine for lap/pause, wrong for a
+rhythm game. `button.on("boot", ...)` raises: Home is not interceptable, so a misbehaving
+app is always escapable.
 
 ### Fonts
 

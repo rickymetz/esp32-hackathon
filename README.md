@@ -64,8 +64,9 @@ Two apps ship in [`apps/`](apps/): `counter.lua` (the template — copy this) an
 ### 4. Using it
 
 - Tap a row to launch that app.
-- **Press PWR briefly to return to the launcher.** It is hardware, so it works even if an
-  app misbehaves. (Holding ≥6 s still powers the board off.)
+- **Press BOOT (the top-right button) to return to the launcher.** It is hardware, so it
+  works even if an app misbehaves. PWR (bottom right) is the app's button — apps may give
+  it a job like lap or play/pause. (Holding PWR ≥6 s still powers the board off.)
 
 ---
 
