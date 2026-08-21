@@ -67,6 +67,14 @@ static const char *TAG = "launcher";
  * least this tall. */
 #define ROW_HEIGHT      104
 
+/* I3: caps rows actually rendered, independent of APP_MAX_COUNT (32). Only
+ * ~3 rows fit on screen at once, so 16 is ample headroom without paging --
+ * and it bounds refresh_clicked()'s peak LVGL-pool usage (it builds the new
+ * screen before deleting the old one, so peak is ~2x one screen's rows)
+ * regardless of how many apps the SD card accumulates. A truncated list
+ * always says so below the last row rather than silently hiding apps. */
+#define MAX_VISIBLE_ROWS 16
+
 static lv_obj_t *s_launcher_screen;
 static TaskHandle_t s_app_task;
 static esp_io_expander_handle_t s_expander;
@@ -119,6 +127,12 @@ static void *lua_psram_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
     return heap_caps_realloc(ptr, nsize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 }
 
+/* I4: raised by lua_module_lvgl's process_events whenever the app has never
+ * called lvgl.init() -- nothing in the app contract requires it, so a
+ * timer-only, sensor-only, or print-only app must not be treated as failed
+ * just because there is no LVGL runtime to drain. */
+#define LVGL_NOT_INITIALIZED_ERRMSG "lvgl runtime is not initialized"
+
 /* Drain queued LVGL events into their Lua callbacks.
  * Returns false if the call errored, which ends the app. */
 static bool pump_events(lua_State *L, int timeout_ms)
@@ -135,7 +149,22 @@ static bool pump_events(lua_State *L, int timeout_ms)
     }
     lua_pushinteger(L, timeout_ms);
     if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
-        ESP_LOGE(TAG, "process_events failed: %s", lua_tostring(L, -1));
+        const char *msg = lua_tostring(L, -1);
+
+        if (msg != NULL && strstr(msg, LVGL_NOT_INITIALIZED_ERRMSG) != NULL) {
+            /* Not a crash -- there is simply nothing queued to drain. Sleep
+             * for the requested wait ourselves (process_events never got to)
+             * so app_timer_run_due()'s timers keep firing on schedule and
+             * the app stays alive instead of being torn down after its first
+             * pump. */
+            lua_pop(L, 2);
+            if (timeout_ms > 0) {
+                vTaskDelay(pdMS_TO_TICKS(timeout_ms));
+            }
+            return true;
+        }
+
+        ESP_LOGE(TAG, "process_events failed: %s", msg);
         lua_pop(L, 2);
         lua_lvgl_force_unlock_if_held();
         return false;
@@ -216,6 +245,61 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     return scr;
 }
 
+/* Shared by every path that ends an app run with an error on screen: shows
+ * `msg`, blocks until PWR/STOP asks to go back, then restores the launcher
+ * screen and frees the error screen. Never call this while still holding an
+ * LVGL lock the error path itself needs (see lua_lvgl_force_unlock_if_held()
+ * at each call site below). */
+static void show_error_and_wait_for_stop(lua_State *L, const char *app_name, const char *msg)
+{
+    lv_obj_t *err_scr = show_error_screen(app_name, msg);
+    /* msg may point into the Lua stack; it has been copied into the label,
+     * so it is safe to drop now. */
+    lua_settop(L, 0);
+
+    while (!cap_lua_runtime_stop_requested(L)) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    /* Load the launcher screen before deleting the error screen so the
+     * currently-active screen is never the one being freed. Nothing else can
+     * see err_scr to clean it up -- lv_screen_load() does not free the
+     * screen it replaces, so without this every crash leaked a screen plus
+     * its labels. */
+    show_launcher_screen();
+    bsp_display_lock(0);
+    lv_obj_delete(err_scr);
+    bsp_display_unlock();
+}
+
+/* I6: everything a fresh lua_State needs before any app code loads --
+ * opening the standard libs, installing every cap_lua module (this is what
+ * runs luaopen_lvgl, building ~45 LVGL metatables, and the timer module's
+ * opener), resetting timer state, and applying the sandbox. Pushed as a
+ * C function and run via lua_pcall (see lua_app_task) rather than called
+ * directly: with no protected call yet on this lua_State, an error anywhere
+ * in this chain -- an allocation failure while building those metatables,
+ * a future module that can fail to open -- has no error jump buffer to
+ * unwind through, and Lua's default panic function calls abort(), taking
+ * the whole board down with it. */
+static int lua_setup_state(lua_State *L)
+{
+    luaL_openlibs(L);
+
+    esp_err_t err = launcher_lua_open_modules(L);
+    if (err != ESP_OK) {
+        /* Was ESP_ERROR_CHECK(): that aborts on failure. Raising a Lua error
+         * instead lets the lua_pcall around this function catch it, so the
+         * caller can report it on screen rather than panicking. */
+        return luaL_error(L, "launcher_lua_open_modules failed: %s", esp_err_to_name(err));
+    }
+
+    app_timer_reset(L);   /* no timers leak in from a previous app */
+    app_sandbox_apply(L);
+    app_sandbox_install_hook(L);
+    return 0;
+}
+
 /* Runs one app in its own VM. A failing app is reported and torn down; it
  * must never take the launcher with it. */
 static void lua_app_task(void *arg)
@@ -236,11 +320,17 @@ static void lua_app_task(void *arg)
         ESP_LOGE(TAG, "lua_newstate failed for '%s'", app->name);
         goto out;
     }
-    luaL_openlibs(L);
-    ESP_ERROR_CHECK(launcher_lua_open_modules(L));
-    app_timer_reset(L);   /* no timers leak in from a previous app */
-    app_sandbox_apply(L);
-    app_sandbox_install_hook(L);
+    lua_pushcfunction(L, lua_setup_state);
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+        const char *msg = lua_tostring(L, -1);
+        ESP_LOGE(TAG, "lua state setup failed for '%s': %s", app->name, msg ? msg : "(nil)");
+        /* Nothing here can be holding the LVGL lock yet, but every other
+         * error exit calls this first -- keep it uniform in case that ever
+         * changes. */
+        lua_lvgl_force_unlock_if_held();
+        show_error_and_wait_for_stop(L, app->name, msg ? msg : "lua state setup failed");
+        goto close;
+    }
 
     lua_pushcfunction(L, traceback_handler);
     int errfunc = lua_gettop(L);
@@ -268,26 +358,7 @@ static void lua_app_task(void *arg)
          * the display lock. Without this the LVGL task blocks forever. The
          * error screen's own bsp_display_lock() below must come after this. */
         lua_lvgl_force_unlock_if_held();
-        lv_obj_t *err_scr = show_error_screen(app->name, msg);
-        /* msg has now been copied into the label; safe to drop the Lua
-         * stack values (message handler + error string) it pointed into. */
-        lua_settop(L, 0);
-
-        /* Leave the error on screen; PWR (via STOP / cap_lua_runtime_stop_requested)
-         * returns to the launcher. */
-        while (!cap_lua_runtime_stop_requested(L)) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-
-        /* Load the launcher screen before deleting the error screen so the
-         * currently-active screen is never the one being freed. Nothing
-         * else can see err_scr to clean it up -- lv_screen_load() does not
-         * free the screen it replaces, so without this every crash leaked
-         * a screen plus its three labels. */
-        show_launcher_screen();
-        bsp_display_lock(0);
-        lv_obj_delete(err_scr);
-        bsp_display_unlock();
+        show_error_and_wait_for_stop(L, app->name, msg);
         goto close;
     }
     lua_remove(L, errfunc);
@@ -542,7 +613,8 @@ static void build_launcher_ui(void)
         lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_row(list, 16, LV_PART_MAIN);
 
-        for (size_t i = 0; i < APP_MAX_COUNT; i++) {
+        size_t visible = (count < MAX_VISIBLE_ROWS) ? count : MAX_VISIBLE_ROWS;
+        for (size_t i = 0; i < visible; i++) {
             app_entry_t app;
             if (!app_registry_get_copy(i, &app)) {
                 break;   /* end of list, or the array shrank under us */
@@ -582,6 +654,18 @@ static void build_launcher_ui(void)
                          (const void *)&lv_font_montserrat_32,
                          lv_font_get_line_height(resolved));
             }
+        }
+
+        if (count > MAX_VISIBLE_ROWS) {
+            /* Silent truncation would be worse than the bug this caps --
+             * say what's missing instead of just hiding it. */
+            lv_obj_t *more = lv_label_create(list);
+            lv_label_set_text_fmt(more, "%u more not shown",
+                                   (unsigned)(count - MAX_VISIBLE_ROWS));
+            lv_obj_set_style_text_color(more, lv_color_hex(0x8A8A99), LV_PART_MAIN);
+            lv_obj_set_style_text_font(more, &lv_font_montserrat_26, LV_PART_MAIN);
+            lv_obj_set_style_text_align(more, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+            lv_obj_set_width(more, LV_PCT(100));
         }
     }
 

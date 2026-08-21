@@ -18,6 +18,24 @@ CONFIG_FREERTOS_HZ=1000
 CONFIG_LV_USE_TINY_TTF=y
 CONFIG_LV_TINY_TTF_FILE_SUPPORT=y
 
+# I3: default is 64. Refresh's rebuild-before-delete briefly holds both the
+# old and new launcher UI in this pool at once; with MAX_VISIBLE_ROWS capping
+# rendered rows (launcher_main.c), peak usage is now well under the default
+# too, but 128 buys real headroom for ~450B/row plus fragmentation. Internal
+# DRAM has ~205 KB free at boot, so the extra 64 KB is affordable.
+CONFIG_LV_MEM_SIZE_KILOBYTES=128
+
+# I3: CONFIG_LV_USE_ASSERT_MALLOC's default handler (LV_ASSERT_HANDLER) is
+# `while(1);` -- an lv_malloc() failure spins the calling task forever
+# instead of returning NULL, and CONFIG_ESP_TASK_WDT_PANIC then turns that
+# into a 10s-late whole-board panic. This symbol only controls the header
+# `#include`d before the handler body; the handler body itself
+# (CONFIG_LV_ASSERT_HANDLER) has no backing Kconfig entry -- confirmed by
+# building with it set and finding it dropped with "unknown kconfig symbol"
+# and absent from sdkconfig.h. The actual handler override lives in
+# CMakeLists.txt / lv_assert_override.h as a force-included header instead.
+CONFIG_LV_ASSERT_HANDLER_INCLUDE="esp_system.h"
+
 # 14px (Montserrat 14, LVGL's built-in default) is ~7pt-equivalent on this
 # panel's 2x scale -- under half watchOS's sanctioned 12pt minimum. 32px is
 # the converged Apple/Wear body size at that scale; see docs/DESIGN_GUIDE.md.
