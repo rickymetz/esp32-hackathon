@@ -117,3 +117,17 @@ sim/test.sh              # exits nonzero if any app crashes or draws nothing
 the apps, or the bindings they depend on: it builds the sim on a plain Linux
 runner (no ESP-IDF, no board) and runs `test.sh`, uploading the rendered
 frames as an artifact. The LVGL/Lua checkout is cached between runs.
+
+## Sanitizers
+
+The runner is hand-written C, so it's worth checking under ASan/UBSan:
+
+```bash
+cmake -S sim -B sim/build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS="-fsanitize=address,undefined -g" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+ninja -C sim/build-asan sim
+ASAN_OPTIONS=detect_leaks=1 sim/build-asan/sim --sdroot . run apps/counter.lua : tap 184 224
+```
+
+The suite (app-switching, error paths, keyboard, the watchdog) runs clean.
