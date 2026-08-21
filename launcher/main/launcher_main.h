@@ -1,6 +1,6 @@
 /*
  * Small launcher-side API for other modules (e.g. serial_push) to drive app
- * lifecycle the same way a screen tap or the PWR button would, without
+ * lifecycle the same way a screen tap or the BOOT button would, without
  * reaching into launcher_main.c's statics directly.
  */
 
@@ -22,7 +22,7 @@ extern "C" {
 bool launcher_run_app_by_name(const char *basename);
 
 /**
- * @brief Ask the currently running app to stop, exactly as pressing PWR
+ * @brief Ask the currently running app to stop, exactly as pressing BOOT
  * does.
  *
  * @return true if a stop was requested, false if no app is running.

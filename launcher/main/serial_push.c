@@ -177,7 +177,7 @@ static void handle_run(const char *header)
     printf("RUN_OK %s\n", name);
 }
 
-/* STOP -- ask the running app to stop, exactly as pressing PWR does. */
+/* STOP -- ask the running app to stop, exactly as pressing BOOT does. */
 static void handle_stop(void)
 {
     if (!launcher_stop_app()) {

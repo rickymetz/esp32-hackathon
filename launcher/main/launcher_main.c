@@ -44,6 +44,8 @@
 #include "app_registry.h"
 #include "app_sandbox.h"
 #include "app_timer.h"
+#include "app_button.h"
+#include "driver/gpio.h"
 #include "launcher_main.h"
 #include "serial_push.h"
 
@@ -195,7 +197,7 @@ static int traceback_handler(lua_State *L)
 }
 
 /* Body label sits between the title (Montserrat 40, line_height 44, top ~8px)
- * and the "press PWR" hint (default font is now Montserrat 32, line_height
+ * and the "press the top button" hint (default font is Montserrat 32, line_height
  * 35, bottom ~8px) on the 368x448 panel. Capped and scrollable so a deep
  * traceback stays reachable instead of overlapping the hint or being
  * silently clipped. */
@@ -213,7 +215,7 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
 
     lv_obj_t *scr = lv_obj_create(NULL);
     /* True black, not a red field: the guide warns against full-screen
-     * colour on a long-lived view (this can sit up until PWR is pressed).
+     * colour on a long-lived view (this can sit up until BOOT is pressed).
      * The red title alone carries the "something failed" signal. */
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_pad_all(scr, 12, LV_PART_MAIN);
@@ -236,7 +238,7 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, ERROR_BODY_TOP);
 
     lv_obj_t *hint = lv_label_create(scr);
-    lv_label_set_text(hint, "press PWR to go back");
+    lv_label_set_text(hint, "press the top button to go back");
     lv_obj_set_style_text_color(hint, lv_color_hex(0x9A9AA5), LV_PART_MAIN);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
 
@@ -246,7 +248,7 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
 }
 
 /* Shared by every path that ends an app run with an error on screen: shows
- * `msg`, blocks until PWR/STOP asks to go back, then restores the launcher
+ * `msg`, blocks until BOOT/STOP asks to go back, then restores the launcher
  * screen and frees the error screen. Never call this while still holding an
  * LVGL lock the error path itself needs (see lua_lvgl_force_unlock_if_held()
  * at each call site below). */
@@ -295,6 +297,7 @@ static int lua_setup_state(lua_State *L)
     }
 
     app_timer_reset(L);   /* no timers leak in from a previous app */
+    app_button_reset(L);  /* nor edges recorded before this app launched */
     app_sandbox_apply(L);
     app_sandbox_install_hook(L);
     return 0;
@@ -341,7 +344,7 @@ static void lua_app_task(void *arg)
 
         if (cap_lua_runtime_stop_requested(L)) {
             /* The interrupt hook raises a Lua error to unwind a runaway app
-             * when PWR/STOP was pressed deliberately -- that is not a crash
+             * when BOOT/STOP was pressed deliberately -- that is not a crash
              * and must not flash the red error screen. Check the atomic
              * stop flag, never the message string: an app can raise this
              * exact text itself (deliberately, or by re-raising a caught
@@ -377,6 +380,7 @@ static void lua_app_task(void *arg)
      * first each iteration, and the wait is shortened to the next timer
      * deadline so a short timer is not stuck behind a long event wait. */
     while (!cap_lua_runtime_stop_requested(L)) {
+        app_button_run_pending(L);
         int64_t next_due = app_timer_run_due(L);
 
         int wait_ms = EVENT_PUMP_MS;
@@ -400,6 +404,7 @@ close:
      * the LVGL mutex, whatever path got us here. */
     lua_lvgl_force_unlock_if_held();
     app_timer_reset(L);
+    app_button_reset(L);
     launcher_lua_run_exit_cleanup(L);
     lua_close(L);
     {
@@ -480,7 +485,7 @@ static void app_row_clicked(lv_event_t *e)
 }
 
 /* Launcher-side API for other modules (serial_push) to drive app lifecycle
- * the same way a screen tap or the PWR button would. Reuses the exact same
+ * the same way a screen tap or the BOOT button would. Reuses the exact same
  * task-creation and stop-request machinery as app_row_clicked() and
  * back_button_task() so RUN/STOP behave identically to a physical launch. */
 bool launcher_run_app_by_name(const char *basename)
@@ -675,35 +680,70 @@ static void build_launcher_ui(void)
     bsp_display_unlock();
 }
 
-/* PWR button (EXIO4, active high) is the universal way back to the launcher.
+/* BOOT (GPIO0, top right) is Home: the universal way back to the launcher.
  * It is deliberately hardware: no app can consume it or paint over it, so a
- * misbehaving app can always be escaped. Holding it >=6s still powers the
- * board off -- that is the AXP2101 acting below us, not something we handle.
+ * misbehaving app can always be escaped. PWR (EXIO4, bottom right) belongs
+ * to apps via the `button` module -- but holding PWR >=6s still powers the
+ * board off, which is the AXP2101 acting below us, not something we handle.
  *
- * Runs whether or not an app is up: pressing it with no app running is a
+ * Runs whether or not an app is up: pressing BOOT with no app running is a
  * harmless no-op. */
-static void back_button_task(void *arg)
+
+/* Two-consecutive-sample debounce on the 20 ms poll tick. Returns true
+ * exactly when the stable level changes, with the new level in *stable. */
+typedef struct {
+    bool raw_prev;
+    bool stable;
+} debounce_t;
+
+static bool debounce_step(debounce_t *d, bool raw, bool *stable)
+{
+    bool edge = false;
+
+    if (raw == d->raw_prev && raw != d->stable) {
+        d->stable = raw;
+        edge = true;
+    }
+    d->raw_prev = raw;
+    *stable = d->stable;
+    return edge;
+}
+
+/* Polls both physical buttons every 20 ms.
+ *
+ * BOOT (GPIO0, top right) is Home: a press requests app stop,
+ * unconditionally -- harmless when nothing is running, and it must not gate
+ * on s_app_task being assigned (gating was why the first version never
+ * returned). A direct GPIO read with no bus dependency: unlike the old
+ * PWR-based back button this survives an I2C wedge, so the escape hatch is
+ * strictly stronger than before.
+ *
+ * PWR (EXIO4, bottom right, via the I2C expander) belongs to apps: edges go
+ * to the button module, which the app task drains. This task never touches
+ * the Lua state. A failed expander read skips the sample -- never treat a
+ * failed read as an edge. */
+static void button_poll_task(void *arg)
 {
     (void)arg;
-    bool was_pressed = false;
+    debounce_t boot_db = {0};
+    debounce_t pwr_db = {0};
+    bool level;
 
     for (;;) {
-        uint32_t level = 0;
-        esp_err_t err = ESP_FAIL;
-        if (s_expander != NULL) {
-            err = esp_io_expander_get_level(s_expander, EXIO_PWR_BTN, &level);
+        /* BOOT: active low. */
+        if (debounce_step(&boot_db, gpio_get_level(GPIO_NUM_0) == 0, &level) && level) {
+            ESP_LOGI(TAG, "BOOT pressed -- returning to launcher");
+            launcher_lua_request_stop(true);
         }
-        if (err == ESP_OK) {
-            bool pressed = (level != 0);
 
-            /* Request stop unconditionally. Harmless when nothing is running,
-             * and it avoids depending on s_app_task being assigned yet --
-             * gating on that was why the first version never returned. */
-            if (pressed && !was_pressed) {
-                ESP_LOGI(TAG, "PWR pressed -- returning to launcher");
-                launcher_lua_request_stop(true);
+        /* PWR: active high, behind the expander. */
+        if (s_expander != NULL) {
+            uint32_t raw = 0;
+            if (esp_io_expander_get_level(s_expander, EXIO_PWR_BTN, &raw) == ESP_OK) {
+                if (debounce_step(&pwr_db, raw != 0, &level)) {
+                    app_button_record_edge(level);
+                }
             }
-            was_pressed = pressed;
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -737,10 +777,23 @@ void app_main(void)
     display_service_attach(disp);
     ESP_ERROR_CHECK(lua_module_lvgl_register_with_data_root(BSP_SD_MOUNT_POINT));
     ESP_ERROR_CHECK(app_timer_register());
+    ESP_ERROR_CHECK(app_button_register());
+
+    /* BOOT (GPIO0) is the Home button. Input + pull-up matches its idle
+     * state; it is only special during reset, where the ROM samples it as a
+     * strapping pin -- configuring it as an input afterwards is free. */
+    {
+        const gpio_config_t boot_cfg = {
+            .pin_bit_mask = 1ULL << GPIO_NUM_0,
+            .mode = GPIO_MODE_INPUT,
+            .pull_up_en = GPIO_PULLUP_ENABLE,
+        };
+        ESP_ERROR_CHECK(gpio_config(&boot_cfg));
+    }
 
     app_registry_scan();
     build_launcher_ui();
-    xTaskCreate(back_button_task, "back_btn", 3072, NULL, 6, NULL);
+    xTaskCreate(button_poll_task, "buttons", 3072, NULL, 6, NULL);
     serial_push_start();
 
     /* Structural proof the default font actually changed (no board display
