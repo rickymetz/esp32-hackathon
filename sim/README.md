@@ -79,6 +79,10 @@ layer. These still need the board:
   10 s TWDT; PSRAM budgets.
 - Exact **color** — the panel is RGB565 and the sim matches that, but real
   AMOLED brightness/gamma differ.
+- **Filesystem paths.** `--sdroot` resolves the app and `font_load` paths
+  (via the binding), but raw `io.open` goes straight to the host FS — an app
+  that persists to `/sdcard/...` won't find that path on the host. Test
+  persistence on the board.
 
 Treat a green sim run as "the logic and layout are right", then confirm feel
 on hardware.
