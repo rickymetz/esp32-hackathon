@@ -87,7 +87,6 @@ function M.open(opts, cb)
         bg_color = "#000000", bg_opa = 255, border_width = 0, pad = 4,
     })
 
-    local roller = nil
     local upper = true   -- case for appended letters; the Aa cell flips it
     local view   -- forward: "groups" | "letters" | "digits"
     local show_groups, show_letters, show_digits
@@ -96,15 +95,7 @@ function M.open(opts, cb)
         return upper and c:upper() or c:lower()
     end
 
-    local function hide_roller()
-        if roller then
-            roller:delete()
-            roller = nil
-        end
-    end
-
     show_groups = function()
-        hide_roller()
         view = "groups"
         local map = {}
         for i = 1, 4, 2 do
@@ -137,24 +128,14 @@ function M.open(opts, cb)
 
     show_digits = function()
         view = "digits"
-        -- Roller for the digit itself; the matrix shrinks to one action
-        -- row at the bottom: backspace | add | back-to-letters (or OK-only
-        -- confirmation lives in the header as always).
-        bm:set_map({ BACKSPACE, "+", (mode == "text") and "ABC" or "00" })
-        bm:set_size(368, 120)
-        bm:set_pos(0, 448 - 120)
-
-        local digits = {}
-        for d = 0, 9 do digits[#digits + 1] = tostring(d) end
-        roller = lvgl.roller(scr, {
-            options = digits, selected = 1, visible_rows = 3,
-            align = "center", y = -20,
-        })
-    end
-
-    local function restore_full_matrix()
-        bm:set_size(368, BODY_H)
-        bm:set_pos(0, BODY_Y)
+        -- Phone-dialer pad: one tap per digit. The roller this replaced
+        -- needed a precise drag plus an add tap and was, in Rick's words,
+        -- very challenging. Keys are 122x88 -- same class as the letter
+        -- keys that verified fine on device.
+        bm:set_map({ "1", "2", "3", "\n",
+                     "4", "5", "6", "\n",
+                     "7", "8", "9", "\n",
+                     BACKSPACE, "0", (mode == "text") and "ABC" or "00" })
     end
 
     bm:on("value_changed", function()
@@ -188,19 +169,12 @@ function M.open(opts, cb)
                 update_readout()
             end
         elseif view == "digits" then
-            if t == "+" then
-                if roller then
-                    text = text .. tostring(roller:get_value() - 1)
-                    update_readout()
-                end
-            elseif t == BACKSPACE then
+            if t == BACKSPACE then
                 text = text:sub(1, -2); update_readout()
             elseif t == "ABC" then
-                hide_roller()
-                restore_full_matrix()
                 show_groups()
-            elseif t == "00" then
-                text = text .. "00"; update_readout()
+            else
+                text = text .. t; update_readout()   -- digits and "00"
             end
         end
     end)
