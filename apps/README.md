@@ -33,6 +33,7 @@ contract — start from the one closest to what you're building.
 | `metronome.lua` | A repeating beat with retempo-on-the-fly; a flash via `timer.after` |
 | `color.lua` | Live-updating sliders and a contrast-aware hex readout |
 | `simon.lua` | A game state machine with chained timers on a 2&times;2 grid |
+| `breathe.lua` | A paced size animation driven by a 50&nbsp;ms timer |
 | `hello_world.lua` | A gentle tour of widgets |
 
 Two gotchas these examples were written to avoid — both bite silently:

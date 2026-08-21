@@ -40,6 +40,8 @@ SCENES = [
                    "Mix an RGB color; hex flips for contrast."),
     ("simon",      ["_simon"],
                    "Memory game: repeat the flashing sequence."),
+    ("breathe",    ["pwr",":","sleep","2"],
+                   "Paced breathing; the circle guides the rhythm."),
     ("tip_kbd",    ["@tip","tap","184","130",":","sleep","0.5"],
                    "The number keypad (require('keyboard'))."),
     ("ui_test",    ["sleep","0.4"],
