@@ -17,18 +17,41 @@ lua_lvgl_state_t s_lvgl;
  * launcher. Roughly 200 call sites have this shape, so we recover at the one
  * choke point instead of patching each one. */
 static volatile TaskHandle_t s_lock_owner;
+/* Depth of the current owner's hold. bsp_display_lock() (reached via
+ * display_service_lock()) is itself recursive, so a binding that ends up
+ * calling back into lua_lvgl_lock() while already holding it (e.g. a
+ * nested binding, or an LV_EVENT_DELETE callback fired synchronously out of
+ * a locked lv_obj_delete()) must not deadlock retaking s_lvgl.mutex -- and
+ * force_unlock_if_held() must unwind every one of those holds, not just
+ * one, or the mutex/bsp lock stays held after a Lua error longjmps past
+ * all of them at once. */
+static volatile int s_lock_depth;
 
 void lua_lvgl_force_unlock_if_held(void)
 {
-    if (s_lock_owner == xTaskGetCurrentTaskHandle()) {
-        ESP_LOGW(TAG, "releasing lvgl lock leaked by a Lua error");
+    TaskHandle_t self = xTaskGetCurrentTaskHandle();
+    int released = 0;
+
+    while (s_lock_owner == self) {
         lua_lvgl_unlock();
+        released++;
+        if (released >= 16) {
+            /* Should be unreachable -- bail rather than spin forever if the
+             * owner bookkeeping is somehow stuck. */
+            ESP_LOGE(TAG, "lua_lvgl_force_unlock_if_held: giving up after %d releases", released);
+            break;
+        }
+    }
+    if (released > 0) {
+        ESP_LOGW(TAG, "releasing lvgl lock leaked by a Lua error (%d nested lock(s))", released);
     }
 }
 
 esp_err_t lua_lvgl_lock(void)
 {
     esp_err_t err;
+    TaskHandle_t self = xTaskGetCurrentTaskHandle();
+    bool already_owned = (s_lock_owner == self);
 
     if (display_service_is_started()) {
         err = display_service_lock();
@@ -46,21 +69,32 @@ esp_err_t lua_lvgl_lock(void)
         }
         return ESP_ERR_NO_MEM;
     }
-    if (xSemaphoreTake(s_lvgl.mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
-        if (display_service_is_started()) {
-            display_service_unlock();
+    /* s_lvgl.mutex is a plain (non-recursive) FreeRTOS mutex, so a same-task
+     * re-entry must not attempt to take it again -- that would just block
+     * against itself. Only the first, outermost hold actually takes it. */
+    if (!already_owned) {
+        if (xSemaphoreTake(s_lvgl.mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+            if (display_service_is_started()) {
+                display_service_unlock();
+            }
+            return ESP_ERR_TIMEOUT;
         }
-        return ESP_ERR_TIMEOUT;
     }
-    s_lock_owner = xTaskGetCurrentTaskHandle();
+    s_lock_owner = self;
+    s_lock_depth++;
     return ESP_OK;
 }
 
 void lua_lvgl_unlock(void)
 {
-    s_lock_owner = NULL;
-    if (s_lvgl.mutex) {
-        xSemaphoreGive(s_lvgl.mutex);
+    if (s_lock_depth > 0) {
+        s_lock_depth--;
+    }
+    if (s_lock_depth == 0) {
+        s_lock_owner = NULL;
+        if (s_lvgl.mutex) {
+            xSemaphoreGive(s_lvgl.mutex);
+        }
     }
     if (display_service_is_started()) {
         display_service_unlock();
@@ -159,7 +193,6 @@ static void lua_lvgl_release_runtime_locked(void)
 
 static void lua_lvgl_session_cleanup_cb(display_service_session_handle_t session, void *user_ctx)
 {
-    (void)session;
     (void)user_ctx;
 
     if (s_lvgl.mutex && xSemaphoreTake(s_lvgl.mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
@@ -167,6 +200,10 @@ static void lua_lvgl_session_cleanup_cb(display_service_session_handle_t session
         return;
     }
     lua_lvgl_release_runtime_locked();
+    /* We just deleted the runtime's root screen, which is the same
+     * lv_obj_t as session->screen -- clear it here so display_service_close()
+     * never sees a stale pointer to already-freed memory. */
+    display_service_session_clear_screen(session);
     if (s_lvgl.mutex) {
         xSemaphoreGive(s_lvgl.mutex);
     }

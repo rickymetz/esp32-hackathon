@@ -115,13 +115,23 @@ esp_err_t display_service_close(display_service_session_handle_t session)
     }
 
     /* Restore the previous screen and delete the app's, which takes every
-     * widget the app parented to it with it. */
+     * widget the app parented to it with it.
+     *
+     * session->screen may already have been deleted by cleanup_cb above
+     * (lua_lvgl_session_cleanup_cb deletes the runtime's root screen, which
+     * is the same lv_obj_t) -- cleanup_cb clears session->screen once it
+     * has, but guard with lv_obj_is_valid() too rather than trust that
+     * alone, since this pointer must never be handed to lv_obj_delete()
+     * twice. Without both, this was a use-after-free/double-delete masked
+     * only by LVGL 9's is_deleting bit surviving in freed memory by luck. */
     if (session->prev_screen != NULL) {
         lv_screen_load(session->prev_screen);
     }
-    if (session->screen != NULL && session->screen != session->prev_screen) {
+    if (session->screen != NULL && session->screen != session->prev_screen &&
+            lv_obj_is_valid(session->screen)) {
         lv_obj_delete(session->screen);
     }
+    session->screen = NULL;
 
     if (locked == ESP_OK) {
         display_service_unlock();
@@ -171,6 +181,13 @@ esp_err_t display_service_session_load_screen_locked(display_service_session_han
     session->screen = screen;
     lv_screen_load(screen);
     return ESP_OK;
+}
+
+void display_service_session_clear_screen(display_service_session_handle_t session)
+{
+    if (session != NULL) {
+        session->screen = NULL;
+    }
 }
 
 esp_err_t display_service_session_load_screen(display_service_session_handle_t session,

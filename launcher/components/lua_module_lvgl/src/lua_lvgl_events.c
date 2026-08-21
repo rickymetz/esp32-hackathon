@@ -468,6 +468,9 @@ static int lua_lvgl_drain_events_for(lua_State *L, int timeout_ms)
 
             ESP_LOGE(TAG, "lvgl event callback error: %s", msg ? msg : "(nil)");
             lua_pop(L, 1);
+            /* The error may have unwound out of an LVGL binding holding the
+             * display lock. Without this the LVGL task blocks forever. */
+            lua_lvgl_force_unlock_if_held();
         }
         processed++;
     }

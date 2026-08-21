@@ -115,6 +115,8 @@ int64_t app_timer_run_due(lua_State *L)
             continue;
         }
         if (s_timers[i].next_us <= now) {
+            uint32_t gen_before = s_timers[i].gen;
+
             lua_rawgeti(L, LUA_REGISTRYINDEX, s_timers[i].ref);
             if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
                 ESP_LOGE(TAG, "timer callback error: %s", lua_tostring(L, -1));
@@ -123,8 +125,13 @@ int64_t app_timer_run_due(lua_State *L)
                  * the display lock. */
                 lua_lvgl_force_unlock_if_held();
             }
-            /* The callback may have cancelled this timer. */
-            if (s_timers[i].ref == LUA_NOREF) {
+            /* The callback may have cancelled this timer -- or cancelled it
+             * and created a new one that reused slot i (timer_add() picks
+             * the first free slot by linear scan). gen changing means slot
+             * i is now someone else's timer entirely; touching next_us or
+             * unref'ing it below would corrupt/kill that new timer instead
+             * of just skipping our own bookkeeping for the one that fired. */
+            if (s_timers[i].ref == LUA_NOREF || s_timers[i].gen != gen_before) {
                 continue;
             }
             if (s_timers[i].period_us > 0) {

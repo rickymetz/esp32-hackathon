@@ -316,6 +316,9 @@ static void lua_app_task(void *arg)
     }
 
 close:
+    /* Unconditional: a task can never be deleted below while still owning
+     * the LVGL mutex, whatever path got us here. */
+    lua_lvgl_force_unlock_if_held();
     app_timer_reset(L);
     launcher_lua_run_exit_cleanup(L);
     lua_close(L);

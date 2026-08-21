@@ -151,6 +151,11 @@ typedef struct lua_lvgl_pending_unref {
     struct lua_lvgl_pending_unref *next;
 } lua_lvgl_pending_unref_t;
 
+/* Forward declaration so the record can hold a back-pointer to the
+ * userdata that owns it, for nulling out on free -- mirrors
+ * lua_lvgl_font_record_t/lua_lvgl_font_ud_t below. */
+typedef struct lua_lvgl_obj_ud lua_lvgl_obj_ud_t;
+
 typedef struct lua_lvgl_obj_record {
     lv_obj_t *obj;
     lv_obj_t *aux_obj;
@@ -172,12 +177,13 @@ typedef struct lua_lvgl_obj_record {
     bool valid;
     bool owned;
     lua_lvgl_event_sub_t *events;
+    lua_lvgl_obj_ud_t *ud;
     struct lua_lvgl_obj_record *next;
 } lua_lvgl_obj_record_t;
 
-typedef struct {
+struct lua_lvgl_obj_ud {
     lua_lvgl_obj_record_t *record;
-} lua_lvgl_obj_ud_t;
+};
 
 typedef struct lua_lvgl_font_ud lua_lvgl_font_ud_t;
 

@@ -90,6 +90,11 @@ display_service_mode_t display_service_session_mode(display_service_session_hand
 const char *display_service_session_owner_name(display_service_session_handle_t session);
 esp_err_t display_service_session_load_screen(display_service_session_handle_t session, lv_obj_t *screen);
 esp_err_t display_service_session_load_screen_locked(display_service_session_handle_t session, lv_obj_t *screen);
+/* Callers whose cleanup_cb deletes session->screen itself (e.g.
+ * lua_lvgl_session_cleanup_cb, which deletes the LVGL runtime's root
+ * screen) must call this right after, so display_service_close() never
+ * holds a stale pointer to an already-freed lv_obj_t. */
+void display_service_session_clear_screen(display_service_session_handle_t session);
 lv_display_t *display_service_session_display(display_service_session_handle_t session);
 esp_err_t display_service_session_raw_blit(display_service_session_handle_t session,
                                            const display_service_raw_blit_t *blit);

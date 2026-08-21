@@ -120,6 +120,7 @@ lua_lvgl_obj_ud_t *lua_lvgl_push_obj_ex(lua_State *L, lv_obj_t *obj, lua_lvgl_ob
     record->type = type;
     record->valid = true;
     record->owned = owned;
+    record->ud = ud;
     record->next = s_lvgl.records;
     s_lvgl.records = record;
     ud->record = record;
@@ -135,13 +136,29 @@ lua_lvgl_obj_ud_t *lua_lvgl_push_obj(lua_State *L, lv_obj_t *obj, lua_lvgl_obj_t
 }
 void lua_lvgl_invalidate_records_locked(void)
 {
-    lua_lvgl_obj_record_t *record;
+    /* Unlink and free every record from the generation being torn down --
+     * mirrors lua_lvgl_release_fonts_locked() in lua_lvgl_font.c. Before
+     * this, records were only ever marked invalid/obj=NULL and never freed,
+     * leaking one lua_lvgl_obj_record_t (84 bytes with the heap header) per
+     * LVGL object ever created, for the life of the device. */
+    lua_lvgl_obj_record_t **cursor = &s_lvgl.records;
 
-    for (record = s_lvgl.records; record != NULL; record = record->next) {
+    while (*cursor) {
+        lua_lvgl_obj_record_t *record = *cursor;
+
         if (record->generation == s_lvgl.generation) {
             lua_lvgl_record_release_resources(record);
             record->obj = NULL;
             record->valid = false;
+            *cursor = record->next;
+            record->next = NULL;
+            if (record->ud) {
+                record->ud->record = NULL;
+                record->ud = NULL;
+            }
+            free(record);
+        } else {
+            cursor = &record->next;
         }
     }
 }
