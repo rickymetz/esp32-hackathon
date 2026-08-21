@@ -1,0 +1,74 @@
+-- Metronome -- a visual beat. Set the tempo with the stepper, Start to run;
+-- the dot flashes on each beat. (Apps have no audio output -- the mic is the
+-- only audio path -- so the beat is visual.)
+--
+-- Install: ./.venv/bin/python tools/push.py apps/metronome.lua
+
+local lvgl = require("lvgl")
+local ui = require("ui")
+local timer = require("timer")
+local button = require("button")
+
+lvgl.init({ buffer_lines = 40 })
+
+local scr = lvgl.create_screen()
+scr:set_style({ bg_color = "#101014" })
+
+ui.title(scr, "Metronome")
+
+local bpm = 100
+local running = false
+local beat_h
+
+local dot = lvgl.button(scr, {
+    align = "center", y = -90, w = 140, h = 140, radius = 70,
+    bg_color = "#2a2a33",
+})
+
+local function flash()
+    dot:set_style({ bg_color = "#2f80ed" })
+    timer.after(90, function() dot:set_style({ bg_color = "#2a2a33" }) end)
+end
+
+local function stop_beat()
+    if beat_h then beat_h:cancel(); beat_h = nil end
+end
+
+local function start_beat()
+    stop_beat()
+    beat_h = timer.every(math.floor(60000 / bpm), flash)
+end
+
+-- Label is just the number: a 3-digit "%d bpm" is wide enough to collide with
+-- the stepper's own +/- buttons, so the unit goes in a caption instead.
+local stepper
+stepper = ui.stepper(scr, { min = 40, max = 240, step = 5, value = bpm, label = "%d" },
+    function(v)
+        bpm = v
+        if running then start_beat() end   -- retempo on the fly
+    end)
+stepper.row:align("center", 0, 48)
+
+local start_btn = lvgl.button(scr, {
+    text = "Start", align = "bottom_mid", y = -24, w = 320, h = 96,
+    bg_color = "#27ae60", text_color = "#ffffff",
+})
+
+local function toggle()
+    running = not running
+    if running then
+        start_btn:set_text("Stop")
+        start_btn:set_style({ bg_color = "#c0392b" })
+        flash()
+        start_beat()
+    else
+        start_btn:set_text("Start")
+        start_btn:set_style({ bg_color = "#27ae60" })
+        stop_beat()
+    end
+end
+
+start_btn:on("clicked", toggle)
+button.on("pwr", "pressed", toggle)
+
+scr:load()
