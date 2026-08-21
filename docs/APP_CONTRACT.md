@@ -134,6 +134,7 @@ Commonly useful ones:
 | `lvgl.led(p, {color="#00ff00", brightness=180, on=true})` | |
 | `lvgl.spinner(p, {anim_ms=1000})` | |
 | `lvgl.textarea(p, {...})` · `lvgl.keyboard(p, {textarea=ta})` | |
+| `lvgl.tileview(p, {})` | Swipeable pages — see Paging, below |
 | `lvgl.table`, `lvgl.list`, `lvgl.menu`, `lvgl.msgbox`, `lvgl.tabview`, `lvgl.calendar`, `lvgl.canvas`, `lvgl.line`, `lvgl.image`, `lvgl.spinbox`, `lvgl.buttonmatrix` | Also available |
 
 ### Common options
@@ -178,7 +179,25 @@ btn:off(handle)              -- or btn:off("clicked"), or btn:off()
 ```
 
 Events: `clicked`, `pressed`, `released`, `long_pressed`, `value_changed`, `focused`,
-`defocused`, `ready`, `cancel`.
+`defocused`, `ready`, `cancel`, `gesture`.
+
+**Swipes** arrive as the `gesture` event, and it has two rules of its own:
+
+- **Register it on your screen object**, not a widget — LVGL delivers gestures to the
+  screen, so `widget:on("gesture", ...)` raises rather than silently never firing.
+- **A touch that scrolls something never produces a gesture.** Swiping a scrollable list
+  or between tileview pages is scrolling; watch the tileview's `value_changed` for page
+  changes instead. Gestures are for non-scrolling screens — games, canvases, dashboards.
+
+Inside a gesture callback, `lvgl.gesture_dir()` returns `"left"`, `"right"`, `"top"` or
+`"bottom"` (and `nil` anywhere else). Two swipes before your callback runs coalesce to
+one — the latest direction wins.
+
+```lua
+scr:on("gesture", function()
+    print("swiped " .. lvgl.gesture_dir())
+end)
+```
 
 Callbacks take **no arguments** — read state from the widget itself, e.g.
 `slider:get_value()` inside a `value_changed` handler, not a function argument. An error
@@ -259,8 +278,28 @@ app is always escapable.
 
 ### Fonts
 
-Every label defaults to LVGL's built-in 14px font. For anything where the point is one big
-number — a stopwatch, a score, a temperature — load a real TTF instead:
+**Every widget defaults to Lexend 32** — the launcher sets it as the display theme, so you
+get a readable size for free and usually don't need to touch fonts at all. Five Lexend
+faces ship baked into the firmware; ask for one with `lvgl.font`:
+
+```lua
+local big = lvgl.font(40)          -- 24, 26, 32, 40, 48; anything else raises
+label:set_style({ font = big })
+```
+
+These cannot go missing — they live in flash, not on the SD card. Sizing guidance is in
+`docs/DESIGN_GUIDE.md`: body 32, captions 26, never below 24.
+
+Icons come with them: `lvgl.symbol.*` holds the built-in glyph strings —
+`lvgl.symbol.play`, `.pause`, `.ok`, `.close`, `.left`, `.trash`, and ~55 more. Concatenate
+them into label text:
+
+```lua
+lvgl.label(scr, { text = lvgl.symbol.play .. " Start" })
+```
+
+For a hero number **larger than 48px** — a stopwatch, a score, a temperature — load a TTF
+from the card:
 
 ```lua
 local font = lvgl.font_load("apps/big.ttf", { size = 64 })
@@ -279,13 +318,43 @@ each one by hand), pass it to `lvgl.init`:
 lvgl.init({ buffer_lines = 40, font_path = "apps/big.ttf", font_size = 64 })
 ```
 
-`font_path` there resolves the same way, relative to the SD card root. No font ships with
-the launcher by default — if you skip both of these, you get the built-in 14px font.
+`font_path` there resolves the same way, relative to the SD card root. If you skip all of
+this, you get the theme default — Lexend 32 — which is the right answer for most apps.
 
 ### Layout
 
 ```lua
 list:set_flex({ flow = "column", pad_row = 10 })
+```
+
+### Paging
+
+Multi-page apps swipe horizontally between sibling pages — the watch pattern (a workout
+app is metrics ↔ controls ↔ settings). `lvgl.tileview` does this out of the box:
+
+```lua
+local tv = lvgl.tileview(scr, {})
+local page1 = tv:add_tile(1, 1, "right")   -- col, row are 1-based;
+local page2 = tv:add_tile(2, 1, "hor")     -- dir = which way you can LEAVE
+local page3 = tv:add_tile(3, 1, "left")    --   ("left"/"right"/"hor"/"ver"/"all")
+
+tv:on("value_changed", function()          -- fires on every page change
+    -- tv:get_active_tile() returns the current tile
+end)
+```
+
+Build each page's widgets with the tile as their parent. Page changes are scrolling, so
+they arrive as `value_changed` — not `gesture` (see Events).
+
+### The active screen
+
+`lvgl.active_screen()` returns a handle to whatever screen is currently loaded — useful
+when something opens its own screen and needs to restore yours afterwards:
+
+```lua
+local caller = lvgl.active_screen()
+-- ... show another screen ...
+caller:load()
 ```
 
 ---
