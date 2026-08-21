@@ -4,6 +4,7 @@
 #include "serial_push.h"
 #include "app_registry.h"
 #include "launcher_main.h"
+#include "app_button.h"
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
@@ -268,6 +269,17 @@ static void handle_shot(void)
     bsp_display_unlock();
 }
 
+/* PWR -- inject a synthetic PWR press+release through the same edge
+ * recorder the poller uses, so app button flows are drivable from the
+ * harness (the physical button obviously is not). */
+static void handle_pwr(void)
+{
+    app_button_record_edge(true);
+    vTaskDelay(pdMS_TO_TICKS(60));
+    app_button_record_edge(false);
+    printf("PWR_OK\n");
+}
+
 /* TAP <x> <y> / SWIPE <x0> <y0> <x1> <y1> [ms] -- synthetic touch through
  * launcher_input_inject(). With SHOT this closes the agent's loop: look,
  * tap, look again, no human at the panel. */
@@ -332,6 +344,8 @@ static void serial_push_task(void *arg)
             handle_tap(line);
         } else if (strncmp(line, "SWIPE ", 6) == 0) {
             handle_swipe(line);
+        } else if (strcmp(line, "PWR") == 0) {
+            handle_pwr();
         }
     }
 }

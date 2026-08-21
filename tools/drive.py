@@ -54,6 +54,8 @@ for c in chains(args):
         print("run:", cmd_and_wait(s, f"RUN {c[1]}", "RUN_OK", "RUN_ERR"))
     elif op == "stop":
         print("stop:", cmd_and_wait(s, "STOP", "STOP_OK", "STOP_ERR", 4))
+    elif op == "pwr":
+        print("pwr:", cmd_and_wait(s, "PWR", "PWR_OK", None))
     elif op == "tap":
         print("tap:", cmd_and_wait(s, f"TAP {c[1]} {c[2]}", "TAP_OK", "TAP_ERR"))
     elif op == "swipe":

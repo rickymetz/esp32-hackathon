@@ -12,6 +12,7 @@
 local lvgl = require("lvgl")
 local ui = require("ui")
 local voice = require("voice")
+local button = require("button")
 
 local M = {}
 
@@ -40,6 +41,8 @@ function M.open(opts, cb)
     scr:set_style({ bg_color = "#000000" })
 
     local function finish(result)
+        if pwr_sub then button.off(pwr_sub) end
+        voice.stop()   -- no-op unless a capture is running
         caller:load()
         scr:delete()
         if cb then cb(result) end
@@ -131,15 +134,38 @@ function M.open(opts, cb)
         bm:set_map(map)
     end
 
+    local listening = false
     local function start_voice()
+        if not voice.available() then return end
         readout:set_text("say it...")
+        listening = true
         local ok = voice.spell(function(t)
+            listening = false
             if t and t ~= "" then
                 text = text .. t
             end
             update_readout()
         end)
-        if not ok then update_readout() end
+        if not ok then
+            listening = false
+            update_readout()
+        end
+    end
+
+    -- PWR toggles the mic while the keyboard is open (Rick's call): one
+    -- press starts listening, another delivers what was heard so far --
+    -- voice.stop() ends the capture and the spell callback fires with the
+    -- accumulated text. Binary and eyes-free: exactly what the button
+    -- doctrine sanctions. Released in finish().
+    local pwr_sub
+    if voice.available() then
+        pwr_sub = button.on("pwr", "pressed", function()
+            if listening then
+                voice.stop()
+            else
+                start_voice()
+            end
+        end)
     end
 
     local current_group = nil
