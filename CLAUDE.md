@@ -51,7 +51,7 @@ board's native USB re-enumerates on its own and comes back under a *different* n
 
 ```bash
 . ~/esp/esp-idf/export.sh          # required in every new shell
-export PORT=$(ls /dev/cu.usbmodem* | head -1)
+export PORT=$(printf '%s\n' /dev/cu.usbmodem* | head -1)   # glob, not ls: ls colourises
 cd launcher
 idf.py build
 idf.py -p $PORT flash monitor
