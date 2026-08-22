@@ -8,7 +8,7 @@ local lvgl = require("lvgl")
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#101014" })
+scr:set_style({ bg_color = "#000000" })
 
 local title = lvgl.label(scr, {
     text = "Counter",
@@ -34,9 +34,10 @@ button:on("clicked", function()
 end)
 
 lvgl.label(scr, {
-    text = "edit me in apps/counter.lua",
+    text = "edit apps/counter.lua",
     align = "bottom_mid", y = -30,
-    text_color = "#6a6a78",
+    text_color = "#8a8a99",
+    font = lvgl.font(26),   -- caption size; 32px overflowed the panel
 })
 
 scr:load()

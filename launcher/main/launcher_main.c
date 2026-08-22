@@ -714,6 +714,10 @@ static void build_launcher_ui(void)
         lv_obj_set_style_pad_all(list, 12, LV_PART_MAIN);
         lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
         lv_obj_set_style_pad_row(list, 16, LV_PART_MAIN);
+        /* Fade the scrollbar when idle -- the always-on hairline reads as
+         * a rendering defect (persona review; the ui module already does
+         * this, the launcher list was the holdout). */
+        lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_ACTIVE);
 
         size_t visible = (count < MAX_VISIBLE_ROWS) ? count : MAX_VISIBLE_ROWS;
         for (size_t i = 0; i < visible; i++) {

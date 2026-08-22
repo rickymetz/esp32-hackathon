@@ -1,101 +1,84 @@
--- Stopwatch -- start/stop/reset, updating every 100ms. Written from
--- docs/APP_CONTRACT.md alone, as that document's acceptance test.
---
--- Install: ./.venv/bin/python tools/push.py apps/stopwatch.lua
+-- Stopwatch: the worked example for timers, the hero font, and the PWR
+-- button. Referenced from docs/APP_CONTRACT.md -- keep it exemplary:
+--   * hero number via lvgl.font(60) -- compiled in, cannot go missing
+--   * PWR = lap: binary, eyes-free, reversible -- exactly what the
+--     button rules allow (see the contract's Physical buttons section)
+--   * true black background, ui.title, whole-width buttons
+--   * builds the UI and returns; timer.every does the ticking
 
 local lvgl = require("lvgl")
 local timer = require("timer")
+local button = require("button")
+local ui = require("ui")
 
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#101014" })
+scr:set_style({ bg_color = "#000000" })
 
-lvgl.label(scr, {
-    text = "Stopwatch",
-    align = "top_mid", y = 24,
-    text_color = "#6a6a78",
-})
-
--- A big font makes the readout legible; no font ships with the launcher by
--- default, so font_load raises an error if this file isn't on the card.
--- pcall guards that: fall back to the built-in font instead of crashing.
-local display_font
-local font_ok, font_result = pcall(lvgl.font_load, "apps/stopwatch_big.ttf", { size = 64 })
-if font_ok then
-    display_font = font_result
-end
-
-local display = lvgl.label(scr, {
-    text = "00:00.0",
-    align = "center", y = -90,
-    text_color = "#ffffff",
-})
-if display_font then
-    display:set_style({ font = display_font })
-end
+ui.title(scr, "Stopwatch")
 
 local elapsed_ms = 0
 local running = false
-local tick_handle
 
-local function format_time(ms)
-    local ds = math.floor(ms / 100)        -- deciseconds (tenths of a second)
-    local minutes = math.floor(ds / 600)
-    local seconds = math.floor(ds / 10) % 60
-    local tenths = ds % 10
-    return string.format("%02d:%02d.%d", minutes, seconds, tenths)
+local readout = lvgl.label(scr, {
+    text = "00:00.0",
+    align = "top_mid", y = 96,
+    text_color = "#FFFFFF",
+    font = lvgl.font(60),
+})
+
+local lap_label = lvgl.label(scr, {
+    text = "PWR = lap",
+    align = "top_mid", y = 176,
+    text_color = "#8A8A99",
+})
+
+local function fmt(ms)
+    return string.format("%02d:%04.1f", ms // 60000, (ms % 60000) / 1000)
 end
 
--- Big touch targets per the contract's ~200x100 rule; stacked so both fit
--- on a 368-wide screen.
 local start_btn = lvgl.button(scr, {
     text = "Start",
-    align = "bottom_mid", y = -160,
-    w = 280, h = 110,
-    bg_color = "#2f80ed",
-    text_color = "#ffffff",
+    align = "bottom_mid", y = -136,
+    w = 344, h = 104,
+    bg_color = "#2F80ED", text_color = "#FFFFFF", radius = 12,
 })
 
 local reset_btn = lvgl.button(scr, {
     text = "Reset",
-    align = "bottom_mid", y = -30,
-    w = 280, h = 110,
-    bg_color = "#3a3a44",
-    text_color = "#ffffff",
+    align = "bottom_mid", y = -16,
+    w = 344, h = 104,
+    bg_color = "#1E1E28", text_color = "#FFFFFF", radius = 12,
 })
 
-local function stop_ticking()
-    if tick_handle then
-        tick_handle:cancel()
-        tick_handle = nil
-    end
-end
-
 start_btn:on("clicked", function()
-    if running then
-        running = false
-        start_btn:set_text("Start")
-        stop_ticking()
-    else
-        running = true
-        start_btn:set_text("Stop")
-        tick_handle = timer.every(100, function()
-            elapsed_ms = elapsed_ms + 100
-            display:set_text(format_time(elapsed_ms))
-        end)
-    end
+    running = not running
+    start_btn:set_text(running and "Stop" or "Start")
 end)
 
 reset_btn:on("clicked", function()
     running = false
-    start_btn:set_text("Start")
-    stop_ticking()
     elapsed_ms = 0
-    display:set_text(format_time(elapsed_ms))
+    start_btn:set_text("Start")
+    readout:set_text(fmt(0))
+    lap_label:set_text("PWR = lap")
+end)
+
+-- PWR records a lap: one press, immediate, reversible, works without
+-- looking. An on-screen path to the same action is the contract's rule 2;
+-- here Reset covers recovery and the lap is display-only.
+button.on("pwr", "pressed", function()
+    if running then
+        lap_label:set_text("lap  " .. fmt(elapsed_ms))
+    end
+end)
+
+timer.every(100, function()
+    if running then
+        elapsed_ms = elapsed_ms + 100
+        readout:set_text(fmt(elapsed_ms))
+    end
 end)
 
 scr:load()
-
--- Return and let the launcher pump events. No while-true loop: the timer
--- above does the periodic work instead.
