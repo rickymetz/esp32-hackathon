@@ -85,6 +85,15 @@ layer. These still need the board:
   the board.
 - **Watchdog reboots** from runaway loops / blocking C calls; timing of the
   10 s TWDT; PSRAM budgets.
+- **Timer dispatch latency, to scale.** Timers are inaccurate in the same
+  *direction* here as on the board -- a periodic timer re-arms after its
+  callback, so it always runs slow -- but not to the same *degree*. Measured
+  with a 100 bpm metronome: the simulator overshoots by ~2.7 ms per tick, the
+  board by ~24 ms. So a timing bug is roughly an order of magnitude quieter
+  here, and one that looks like harmless jitter in the sim can be plainly
+  wrong on hardware. The sim is still the right place to *find* these -- add a
+  `print(timer.now_ms())` and read the intervals off stdout -- just don't read
+  its margins as the real ones.
 - Exact **color** — the panel is RGB565 and the sim matches that, but real
   AMOLED brightness/gamma differ.
 - **Filesystem paths.** `--sdroot` resolves the app and `font_load` paths
