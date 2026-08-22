@@ -42,6 +42,10 @@ SCENES = [
                    "Memory game: repeat the flashing sequence."),
     ("breathe",    ["pwr",":","sleep","2"],
                    "Paced breathing; the circle guides the rhythm."),
+    # Type "Hi" through the on-screen keyboard: Edit, GHIJKL group, H, I, OK.
+    ("sign",       ["tap","184","380",":","tap","276","140",":","tap","276","140",
+                    ":","tap","92","228",":","tap","320","48",":","sleep","0.3"],
+                   "Type a message; it fills the glass."),
     ("tip_kbd",    ["@tip","tap","184","130",":","sleep","0.5"],
                    "The number keypad (require('keyboard'))."),
     ("ui_test",    ["sleep","0.4"],
