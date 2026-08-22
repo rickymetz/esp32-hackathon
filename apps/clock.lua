@@ -162,6 +162,11 @@ local function shifted(t, mins)
              day = day, wday = wday, month = month, year = year }
 end
 
+-- Poll faster than the RTC's 1 Hz edge and repaint only on change: a 1000 ms
+-- periodic timer re-arms after its callback, so it runs slightly slower than
+-- the clock it samples and silently drops a second now and then.
+local last_sec = -1
+
 local function tick()
     local t, err = rtc.now()
     if not t then
@@ -172,6 +177,9 @@ local function tick()
         return
     end
     hint:set_text("")
+
+    if t.sec == last_sec then return end
+    last_sec = t.sec
 
     local l = shifted(t, offset_minutes())
     time_lbl:set_text(string.format("%02d:%02d", l.hour, l.min))
@@ -254,5 +262,5 @@ ui.corner_button(scr, {
 })
 
 tick()
-timer.every(1000, tick)
+timer.every(250, tick)
 scr:load()

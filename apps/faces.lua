@@ -238,8 +238,17 @@ ui.dots(scr, tv, { count = 4 })
 -- -------------------------------------------------------------- update
 
 local COMPS = { comp_analog, comp_rings, comp_words, comp_minimal }
-local last_min, last_page = -1, -1
+local last_min, last_page, last_sec = -1, -1, -1
 
+-- Sample FASTER than the thing being sampled, and repaint only on change.
+--
+-- The obvious timer.every(1000, tick) aliases against the RTC's own 1 Hz
+-- edge: a periodic timer re-arms *after* its callback, so the real period is
+-- 1000 ms plus the I2C read and dispatch latency -- always a little over a
+-- second. Sampling a 1 Hz source slightly slower than 1 Hz means some seconds
+-- are never observed, and the second hand visibly jumps two ticks.
+-- Polling at 250 ms cannot skip a second; the change test keeps the redraw
+-- rate identical to before.
 local function tick()
     local raw = rtc.now()
     if not raw then
@@ -248,6 +257,9 @@ local function tick()
     end
     local t = ui.shift(raw, TZ_OFFSET)
     local page = tv:get_active_index() or 1
+
+    if t.sec == last_sec and page == last_page then return end
+    last_sec = t.sec
 
     if page == 1 then
         point_hand(hand_h, (t.hour % 12) * 30 + t.min * 0.5)
@@ -303,5 +315,5 @@ do
 end
 
 tick()
-timer.every(1000, tick)
+timer.every(250, tick)
 scr:load()
