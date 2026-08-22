@@ -49,6 +49,7 @@
 #include "lua_module_ui.h"
 #include "app_voice.h"
 #include "app_sensors.h"
+#include "app_audio.h"
 #include "app_wifi.h"
 #include "driver/gpio.h"
 #include "launcher_main.h"
@@ -392,6 +393,7 @@ static int lua_setup_state(lua_State *L)
     app_timer_reset(L);   /* no timers leak in from a previous app */
     app_button_reset(L);  /* nor edges recorded before this app launched */
     app_voice_reset(L);   /* nor a capture someone left running */
+    app_audio_reset(L);   /* nor a queued tone */
     app_sandbox_apply(L);
     app_sandbox_install_hook(L);
     return 0;
@@ -501,6 +503,7 @@ close:
     app_timer_reset(L);
     app_button_reset(L);
     app_voice_reset(L);
+    app_audio_reset(L);
     /* Re-read the persisted font scale: an app that called
      * lvgl.font_scale() without persisting must not restyle every later
      * app (Settings persists first, so its change survives). Also
@@ -961,6 +964,7 @@ void app_main(void)
     /* Order matters: cap_lua opens modules in registration order, and
      * ui.lua/keyboard.lua require() lvgl, timer, and voice at load --
      * so voice must register BEFORE the embedded-Lua modules. */
+    ESP_ERROR_CHECK(app_audio_register());   /* touches no hardware */
     ESP_ERROR_CHECK(app_voice_register());
     ESP_ERROR_CHECK(app_sensors_register());
     ESP_ERROR_CHECK(app_wifi_register());

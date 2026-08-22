@@ -9,6 +9,7 @@
 #include "freertos/task.h"
 #include "lauxlib.h"
 #include "lua_module_lvgl.h"
+#include "app_audio.h"
 
 #include "bsp/esp-bsp.h"
 #include "esp_codec_dev.h"
@@ -280,6 +281,13 @@ static int l_voice_listen(lua_State *L)
     if (s_state != VOICE_IDLE) {
         lua_pushnil(L);
         lua_pushliteral(L, "busy");
+        return 2;
+    }
+    /* Speaker and microphone share one I2S bus. Refuse rather than
+     * capture garbage while a tone is playing. */
+    if (app_audio_is_playing()) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "audio playing");
         return 2;
     }
 

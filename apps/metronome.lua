@@ -1,6 +1,7 @@
--- Metronome -- a visual beat. Set the tempo with the stepper, Start to run;
--- the dot flashes on each beat. (Apps have no audio output -- the mic is the
--- only audio path -- so the beat is visual.)
+-- Metronome -- an audible beat. Set the tempo with the stepper, Start to
+-- run; each beat ticks and flashes. The tick is a short high tone, which
+-- is what a metronome is actually for -- this app used to apologise in a
+-- comment for being silent.
 --
 -- Install: ./.venv/bin/python tools/push.py apps/metronome.lua
 
@@ -8,6 +9,7 @@ local lvgl = require("lvgl")
 local ui = require("ui")
 local timer = require("timer")
 local button = require("button")
+local audio = require("audio")
 
 lvgl.init({ buffer_lines = 40 })
 
@@ -26,6 +28,8 @@ local dot = lvgl.button(scr, {
 })
 
 local function flash()
+    -- 30ms is short enough to read as a click rather than a note.
+    audio.tone(1200, 30)
     dot:set_style({ bg_color = "#2f80ed" })
     timer.after(90, function() dot:set_style({ bg_color = "#2a2a33" }) end)
 end

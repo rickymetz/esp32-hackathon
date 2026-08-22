@@ -522,6 +522,55 @@ request succeeds. If your app needs the network, say so when
 `time_synced()` never becomes true rather than hanging on a request. A phone
 hotspot is the usual workaround.
 
+### Sound: `require("audio")`
+
+Synthesised tones, not sample files — a metronome tick, a countdown
+alarm and game feedback all need a beep, and a beep needs no assets on
+the card. Nothing blocks: `tone` queues and returns.
+
+```lua
+local audio = require("audio")
+
+audio.tone(880, 120)        -- Hz (0-8000), milliseconds (1-5000)
+audio.beep()                -- a short click
+audio.play{ {523,150}, {659,150}, {784,250} }   -- up to 16 notes; freq 0 is a rest
+audio.volume(70)            -- 0-100; call with no argument to read it
+audio.stop()
+```
+
+Notes are ramped in and out over 5 ms, because a square-edged start is a
+step function and a step pops audibly whatever the tone.
+
+**The speaker and the microphone share one I2S bus**, so playback and
+`voice` are mutually exclusive: `voice.listen` returns
+`nil, "audio playing"` while a tone is sounding. Keep tones short and
+they will not collide.
+
+The speaker opens on first use, never at boot — audio hardware that
+misbehaves during startup would wedge the device before the launcher
+exists, and that needs a physical button dance to recover.
+
+### More on widgets
+
+A few methods and options that the widget table above does not show:
+
+| Call | What |
+| --- | --- |
+| `obj:set_clickable(false)` | Make a widget display-only. **Use it on decorative controls in a paged view** — an interactive arc or slider swallows the horizontal drag and the page stops swiping |
+| `line:set_points{ {x=,y=}, ... }` | Move a line after creation. Points are `{x=,y=}` tables — an array pair silently yields `(0,0)`, a zero-length line that is present, invisible, and raises nothing |
+| `lvgl.line(p, { w=, h=, points= })` | Give a line an explicit size, or it shrinks to its points' bounding box and absolute coordinates collapse |
+| `lvgl.arc(p, { bg_start_angle=, bg_end_angle=, rotation= })` | Arc geometry. Angles must be **0–360**; a full dial starting at twelve o'clock is `0, 360` with `rotation = 270` |
+| `track_color` | An arc's *unlit* remainder. Without it the value and its background are the same colour, and 1% looks identical to 100% |
+| `line_color` | The arc's *value* band (and its knob), or a line's colour |
+| `obj:on("long_pressed_repeat", fn)` | Fires repeatedly while held — hold-to-repeat |
+| `tv:get_active_index()` | A tileview's current page, 1-based |
+| `lvgl.font(72)` · `lvgl.font(120)` | Larger faces. **120 is digits and `.:` only** — a full charset at that size costs 2 MB |
+
+`ui` also exposes the timezone and calendar helpers the clock apps
+share: `ui.zone()` returns city index, DST flag and offset in minutes;
+`ui.shift(t, minutes)` shifts an `rtc.now()` reading and rolls the date
+properly; `ui.DAYS` and `ui.MONTHS` are name tables.
+
 ### Layout
 
 ```lua
@@ -564,7 +613,6 @@ caller:load()
 
 Ask if your app genuinely needs one — each is launcher work that blocks everyone:
 
-- Audio playback (the microphone is taken — see the `voice` module)
 - A dedicated persistent-storage API. There's no `app.store` — if you need to remember
   something across runs, use `io.open` on a file under `/sdcard` yourself (see the trust
   model above: nothing stops you, there's just no helper for it)

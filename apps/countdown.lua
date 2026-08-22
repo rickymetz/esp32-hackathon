@@ -6,6 +6,7 @@
 
 local lvgl = require("lvgl")
 local ui = require("ui")
+local audio = require("audio")
 local timer = require("timer")
 local button = require("button")
 
@@ -57,6 +58,9 @@ local reset_btn = lvgl.button(scr, {
 })
 
 local function finish()
+    -- Three rising notes: a countdown that ends silently is a countdown
+    -- you have to watch, which defeats the point of setting one.
+    audio.play({ { 784, 180 }, { 988, 180 }, { 1319, 400 } })
     running = false
     stop_tick()
     start_btn:set_text("Start")
