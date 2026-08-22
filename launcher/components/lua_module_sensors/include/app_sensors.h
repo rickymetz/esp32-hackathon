@@ -23,6 +23,12 @@ extern "C" {
 /** Probe the three chips and register the modules. One-time, from app_main(). */
 esp_err_t app_sensors_register(void);
 
+/**
+ * @brief Set the RTC from a broken-down UTC time. Used by the NTP sync
+ * so the wall clock survives reboots without anyone typing the date.
+ */
+esp_err_t app_sensors_rtc_set_tm(int year, int mon, int mday, int hour, int min, int sec, int wday);
+
 #ifdef __cplusplus
 }
 #endif

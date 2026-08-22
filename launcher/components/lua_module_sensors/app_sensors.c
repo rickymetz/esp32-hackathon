@@ -74,6 +74,33 @@ static int push_unavailable(lua_State *L, const char *what)
 static int bcd2dec(uint8_t b) { return (b >> 4) * 10 + (b & 0x0F); }
 static uint8_t dec2bcd(int d) { return (uint8_t)(((d / 10) << 4) | (d % 10)); }
 
+/* Shared by the Lua setter and the NTP sync. Writing seconds with bit 7
+ * clear is also what clears the chip's integrity flag. */
+static esp_err_t rtc_write_time(int year, int mon, int mday,
+                                int hour, int min, int sec, int wday)
+{
+    uint8_t w[8];
+
+    if (s_rtc_dev == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    w[0] = PCF_SECONDS;
+    w[1] = dec2bcd(sec);
+    w[2] = dec2bcd(min);
+    w[3] = dec2bcd(hour);
+    w[4] = dec2bcd(mday);
+    w[5] = (uint8_t)wday;
+    w[6] = dec2bcd(mon);
+    w[7] = dec2bcd(year - 2000);
+    return i2c_master_transmit(s_rtc_dev, w, sizeof(w), I2C_TIMEOUT_MS);
+}
+
+esp_err_t app_sensors_rtc_set_tm(int year, int mon, int mday,
+                                 int hour, int min, int sec, int wday)
+{
+    return rtc_write_time(year, mon, mday, hour, min, sec, wday);
+}
+
 static int l_rtc_now(lua_State *L)
 {
     uint8_t r[7];
@@ -125,18 +152,7 @@ static int l_rtc_set(lua_State *L)
         f[i].v = v;
     }
 
-    uint8_t w[8];
-    w[0] = PCF_SECONDS;
-    w[1] = dec2bcd(f[0].v);            /* clearing bit 7 clears VL */
-    w[2] = dec2bcd(f[1].v);
-    w[3] = dec2bcd(f[2].v);
-    w[4] = dec2bcd(f[3].v);
-    w[5] = (uint8_t)f[4].v;
-    w[6] = dec2bcd(f[5].v);
-    w[7] = dec2bcd(f[6].v - 2000);
-
-    if (s_rtc_dev == NULL ||
-        i2c_master_transmit(s_rtc_dev, w, sizeof(w), I2C_TIMEOUT_MS) != ESP_OK) {
+    if (rtc_write_time(f[6].v, f[5].v, f[3].v, f[2].v, f[1].v, f[0].v, f[4].v) != ESP_OK) {
         return push_unavailable(L, "rtc not responding");
     }
     lua_pushboolean(L, 1);

@@ -49,6 +49,7 @@
 #include "lua_module_ui.h"
 #include "app_voice.h"
 #include "app_sensors.h"
+#include "app_wifi.h"
 #include "driver/gpio.h"
 #include "launcher_main.h"
 #include "serial_push.h"
@@ -962,6 +963,7 @@ void app_main(void)
      * so voice must register BEFORE the embedded-Lua modules. */
     ESP_ERROR_CHECK(app_voice_register());
     ESP_ERROR_CHECK(app_sensors_register());
+    ESP_ERROR_CHECK(app_wifi_register());
     ESP_ERROR_CHECK(lua_module_ui_register());
 
     /* BOOT (GPIO0) is the Home button. Input + pull-up matches its idle
@@ -981,6 +983,11 @@ void app_main(void)
     build_launcher_ui();
     xTaskCreate(button_poll_task, "buttons", 3072, NULL, 6, NULL);
     serial_push_start();
+
+    /* Last, and deliberately after the UI is up: a network that is slow,
+     * absent or misconfigured must never delay the launcher appearing.
+     * Non-blocking -- it returns immediately whatever the radio does. */
+    app_wifi_autostart();
 
     /* Structural proof the theme font actually took (no board display to
      * look at from here). Advisor review caught that logging

@@ -486,6 +486,42 @@ battery.charging()   -- true while charging
 battery.external()   -- true when USB power is present
 ```
 
+### Networking: `require("wifi")`
+
+Station mode only, and **nothing blocks** — connecting takes seconds, so
+`connect()` starts the attempt and returns while your app keeps running:
+
+```lua
+local wifi = require("wifi")
+
+wifi.connect()                  -- use the saved network
+wifi.connect(ssid, password)    -- use these, and save them for next boot
+wifi.status()                   -- "off" | "connecting" | "connected" | "failed"
+wifi.ip()                       -- "192.168.1.42", or nil
+wifi.time_synced()              -- true once NTP has set the clock this boot
+wifi.disconnect() / wifi.forget()
+```
+
+Poll `status()` from a `timer.every`, the same way you would poll anything
+else. `"failed"` means it gave up after five attempts — usually a wrong
+password.
+
+**The clock sets itself.** When a connection comes up the launcher syncs time
+over NTP and writes it to the RTC, so `rtc.now()` is correct after a reboot
+with nobody typing a date. This is the intended way to set the clock;
+`rtc.set` is the manual fallback.
+
+Credentials are entered **on the device** with `apps/wifi_setup.lua` and stored
+on the card. Do not ask a user to type a password into a host terminal.
+
+**Captive portals do not work.** Hotel, café and conference networks intercept
+traffic until you authenticate in a browser, and the device has no browser. The
+symptom is legible rather than mysterious: `status()` reports `"connected"` and
+`ip()` returns an address, but `time_synced()` stays false forever and no
+request succeeds. If your app needs the network, say so when
+`time_synced()` never becomes true rather than hanging on a request. A phone
+hotspot is the usual workaround.
+
 ### Layout
 
 ```lua
@@ -528,7 +564,6 @@ caller:load()
 
 Ask if your app genuinely needs one — each is launcher work that blocks everyone:
 
-- Wi-Fi / networking
 - Audio playback (the microphone is taken — see the `voice` module)
 - A dedicated persistent-storage API. There's no `app.store` — if you need to remember
   something across runs, use `io.open` on a file under `/sdcard` yourself (see the trust
