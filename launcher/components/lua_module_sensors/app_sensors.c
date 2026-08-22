@@ -185,7 +185,12 @@ static int imu_read_triplet(lua_State *L, uint8_t reg, double scale)
 static int l_imu_accel(lua_State *L) { return imu_read_triplet(L, QMI_AX_L, ACCEL_LSB_PER_G); }
 static int l_imu_gyro(lua_State *L)  { return imu_read_triplet(L, QMI_AX_L + 6, GYRO_LSB_PER_DPS); }
 
-static int l_imu_temp(lua_State *L)
+/* DIE temperature, not ambient: this is the QMI8658's own silicon,
+ * sitting on a powered board next to the S3, PSRAM and display.
+ * Measured against a 18.3C room it reads ~7.6C high and holds within
+ * 0.07C over 25s -- silicon at equilibrium, not air. Named die_temp so
+ * nobody builds a room thermometer on it. */
+static int l_imu_die_temp(lua_State *L)
 {
     uint8_t r[2];
 
@@ -199,7 +204,7 @@ static int l_imu_temp(lua_State *L)
 static const luaL_Reg imu_funcs[] = {
     {"accel", l_imu_accel},
     {"gyro", l_imu_gyro},
-    {"temp", l_imu_temp},
+    {"die_temp", l_imu_die_temp},
     {NULL, NULL},
 };
 static int luaopen_imu(lua_State *L) { luaL_newlib(L, imu_funcs); return 1; }

@@ -423,6 +423,58 @@ Rules that come from hardware testing, not taste:
 - A capture eats most of one core while running; keep them short and
   user-initiated.
 
+### Sensors: `rtc`, `imu`, `battery`
+
+Three chips on the board, each its own module. **All of them degrade
+instead of raising** — a missing or unhappy sensor returns `nil` plus a
+message, so an app still runs on a board where one is dead:
+
+```lua
+local t, err = rtc.now()
+if not t then print("no clock: " .. err) end
+```
+
+**`rtc`** — the wall clock (survives reboots; battery-backed):
+
+```lua
+local rtc = require("rtc")
+local t = rtc.now()          -- {year, month, day, hour, min, sec, wday} or nil, err
+rtc.set{ year = 2026, month = 8, day = 22, hour = 14, min = 30, sec = 0, wday = 6 }
+```
+
+A clock that has never been set returns `nil, "rtc not set"` rather than a
+plausible-looking wrong time — the chip flags its own loss of integrity, and
+`rtc.set` is what clears it. **If your app shows time, handle that nil**: on a
+fresh board it is the normal state until someone sets the clock.
+
+**`imu`** — the 6-axis motion sensor:
+
+```lua
+local imu = require("imu")
+local ax, ay, az = imu.accel()      -- g, one axis reads ~±1 at rest
+local gx, gy, gz = imu.gyro()       -- degrees/second
+local c = imu.die_temp()            -- see the warning below
+```
+
+Poll it from a `timer.every`, not a loop. At rest the acceleration vector has
+magnitude 1 g in whatever orientation the board is sitting — that is the check
+to use if you suspect your maths.
+
+`imu.die_temp()` is the **sensor's own silicon temperature, not the room**.
+Measured against an 18.3 °C room it read 7.6 °C high, because it sits on a
+powered board. It is useful for spotting thermal drift; it is not a
+thermometer.
+
+**`battery`**:
+
+```lua
+local battery = require("battery")
+battery.percent()    -- 0-100, or nil, "gauge not ready"
+battery.volts()      -- e.g. 4.14
+battery.charging()   -- true while charging
+battery.external()   -- true when USB power is present
+```
+
 ### Layout
 
 ```lua
@@ -467,7 +519,6 @@ Ask if your app genuinely needs one — each is launcher work that blocks everyo
 
 - Wi-Fi / networking
 - Audio playback (the microphone is taken — see the `voice` module)
-- IMU, RTC, and battery readings
 - A dedicated persistent-storage API. There's no `app.store` — if you need to remember
   something across runs, use `io.open` on a file under `/sdcard` yourself (see the trust
   model above: nothing stops you, there's just no helper for it)

@@ -16,7 +16,7 @@ local body = lvgl.label(scr, { text = "reading...", align = "center",
 local function report()
     local ax, ay, az = imu.accel()
     local gx, gy, gz = imu.gyro()
-    local t = imu.temp()
+    local t = imu.die_temp()
     local pct, perr = battery.percent()
     local v = battery.volts()
     local chg = battery.charging()
