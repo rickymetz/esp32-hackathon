@@ -127,7 +127,7 @@ function M.open(opts, cb)
         -- The case cell shows what you SWITCH TO, phone-style.
         map[#map + 1] = upper and "abc" or "ABC"
         if voice.available() then
-            map[#map + 1] = lvgl.symbol.audio   -- NATO voice spelling
+            map[#map + 1] = lvgl.symbol.microphone   -- NATO voice spelling
         end
         map[#map + 1] = SPACE
         map[#map + 1] = BACKSPACE
@@ -212,7 +212,7 @@ function M.open(opts, cb)
             elseif t == "abc" or t == "ABC" then
                 upper = not upper
                 show_groups()
-            elseif t == lvgl.symbol.audio then
+            elseif t == lvgl.symbol.microphone then
                 start_voice()
             else
                 for _, g in ipairs(GROUPS) do
