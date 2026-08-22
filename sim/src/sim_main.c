@@ -17,6 +17,7 @@
 #include "app_timer.h"
 #include "app_button.h"
 #include "app_voice.h"
+#include "sim_sensors.h"
 #include "app_sandbox.h"
 #include "lua_module_ui.h"
 #include "sim_display.h"
@@ -391,6 +392,7 @@ int main(int argc, char **argv)
         app_timer_register() != ESP_OK ||
         app_button_register() != ESP_OK ||
         app_voice_register() != ESP_OK ||
+        sim_sensors_register() != ESP_OK ||
         lua_module_ui_register() != ESP_OK) {
         fprintf(stderr, "module registration failed\n");
         return 1;

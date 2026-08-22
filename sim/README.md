@@ -74,7 +74,15 @@ layer. These still need the board:
   rule); the sim registers every tap exactly. A button that works in the sim
   can still be too small on hardware.
 - **Voice.** MultiNet recognition is stubbed as unavailable.
-- **IMU / RTC / battery / PMU**, real audio, Wi-Fi — none are present.
+- **Real sensor data.** `rtc`, `imu`, `battery`, `audio` and `wifi` are all
+  *registered* — apps that `require` them run and render — but they return
+  fixed stand-in values (`src/sim_sensors.c`): the host clock for `rtc`, 72%
+  for the battery, 1 g on Z for the accelerometer, silence for `audio`, and
+  a permanently-off radio. Nothing measures anything.
+- **Module failure.** On the device these modules degrade — `nil, "reason"`
+  when hardware is absent or a reading isn't ready. The stubs always succeed,
+  so the sim cannot prove your app handles the failing path. That one needs
+  the board.
 - **Watchdog reboots** from runaway loops / blocking C calls; timing of the
   10 s TWDT; PSRAM budgets.
 - Exact **color** — the panel is RGB565 and the sim matches that, but real

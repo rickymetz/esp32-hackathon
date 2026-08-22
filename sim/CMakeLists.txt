@@ -64,6 +64,7 @@ add_library(bindings STATIC
     src/sim_stubs.c
     src/sim_voice.c
     src/sim_module_ui.c
+    src/sim_sensors.c
     shim/esp_shim.c
 )
 target_include_directories(bindings PUBLIC
