@@ -52,14 +52,25 @@ end
 local next_at
 
 local function schedule()
+    local interval = 60000 / bpm
+    local now = timer.now_ms()
+
+    -- If something stalled us past a whole beat, resync instead of catching
+    -- up. Clamping a very negative delay to 1 would fire a burst of clicks
+    -- to "repay" the missed beats, which on a metronome is worse than the
+    -- gap it is trying to correct.
+    if next_at < now - interval then
+        next_at = now + interval
+    end
+
     -- next_at stays a float so the interval never rounds cumulatively, but
     -- timer.after takes an integer (luaL_checkinteger raises on a fraction).
-    local delay = math.floor(next_at - timer.now_ms())
+    local delay = math.floor(next_at - now)
     if delay < 1 then delay = 1 end        -- never schedule into the past
     beat_h = timer.after(delay, function()
         beat_h = nil
         flash()
-        next_at = next_at + (60000 / bpm)
+        next_at = next_at + interval
         schedule()
     end)
 end
