@@ -19,6 +19,8 @@ on:
       - 'launcher/main/app_timer.*'
       - 'launcher/main/app_sandbox.*'
       - 'launcher/components/lua_module_button/**'
+      - 'docs/APP_CONTRACT.md'
+      - 'tools/check_docs.py'
       - '.github/workflows/sim.yml'
   pull_request:
     paths:
@@ -31,6 +33,8 @@ on:
       - 'launcher/main/app_timer.*'
       - 'launcher/main/app_sandbox.*'
       - 'launcher/components/lua_module_button/**'
+      - 'docs/APP_CONTRACT.md'
+      - 'tools/check_docs.py'
       - '.github/workflows/sim.yml'
   workflow_dispatch:
 
@@ -39,6 +43,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Cheap and needs no build, so it runs before the 270 MB LVGL fetch.
+      - name: Docs match the code
+        run: ./tools/check_docs.py
 
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
