@@ -714,7 +714,7 @@ function M.note(scr, text, opts)
     return lvgl.label(scr, {
         text = text or "",
         align = "center", y = opts.y or 0,
-        text_color = opts.color or "#55555F",
+        text_color = opts.color or "#A0A0AE",
         font = lvgl.font(opts.size or 32),
     })
 end

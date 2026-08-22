@@ -14,7 +14,7 @@ local audio = require("audio")
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#101014" })
+scr:set_style({ bg_color = "#000000" })
 
 ui.title(scr, "Metronome")
 

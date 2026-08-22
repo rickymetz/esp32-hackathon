@@ -14,12 +14,12 @@ local button = require("button")
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#101014" })
+scr:set_style({ bg_color = "#000000" })
 
 ui.title(scr, "Reaction")
 
 local best_lbl = lvgl.label(scr, {
-    text = "best: --", align = "top_mid", y = 64, text_color = "#8a8a96",
+    text = "best: --", align = "top_mid", y = 64, text_color = "#A0A0AE",
 })
 
 local state = "idle"        -- idle | waiting | go | result
