@@ -20,6 +20,15 @@ void lua_lvgl_force_unlock_if_held(void);
 esp_err_t lua_module_lvgl_register(void);
 esp_err_t lua_module_lvgl_register_with_data_root(const char *data_root);
 
+/* Global UI font scale (default 0.8). lvgl.font(size) and the theme default
+ * resolve to the built-in face nearest `size * scale`. Set/get from C so the
+ * launcher can apply the user's persisted choice and scale the theme;
+ * lua_module_lvgl_scaled_builtin_font() returns the face to hand a theme. */
+struct _lv_font_t;
+void lua_module_lvgl_set_font_scale(float scale);
+float lua_module_lvgl_get_font_scale(void);
+const struct _lv_font_t *lua_module_lvgl_scaled_builtin_font(int base_size);
+
 #ifdef __cplusplus
 }
 #endif

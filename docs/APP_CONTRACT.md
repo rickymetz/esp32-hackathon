@@ -293,6 +293,20 @@ label:set_style({ font = big })
 These cannot go missing — they live in flash, not on the SD card. Sizing guidance is in
 `docs/DESIGN_GUIDE.md`: body 32, captions 26, never below 24.
 
+**Text scales globally.** A user-set **font scale** (default **0.8** — the whole UI runs
+at 80%) drives both `lvgl.font(size)` and the theme default, so everything sizes together.
+You still request one of the six sizes; the face returned is that size scaled, snapped to
+the nearest available face. Read or set it with `lvgl.font_scale()`:
+
+```lua
+local s = lvgl.font_scale()      -- current scale, e.g. 0.8
+lvgl.font_scale(1.0)             -- set 100% (clamped to 0.6–1.3); returns the new value
+```
+
+Apps rarely need this — the user changes it in **`apps/settings.lua`**, which saves the
+choice; the launcher restores it at boot. Setting it re-sizes `lvgl.font()` text
+immediately, but theme-default text (plain labels) picks up a new scale on the next launch.
+
 Icons come with them: `lvgl.symbol.*` holds the built-in glyph strings —
 `lvgl.symbol.play`, `.pause`, `.ok`, `.close`, `.left`, `.trash`, and ~55 more. Concatenate
 them into label text:
@@ -300,6 +314,13 @@ them into label text:
 ```lua
 lvgl.label(scr, { text = lvgl.symbol.play .. " Start" })
 ```
+
+Beyond LVGL's built-in set, an **extended icon pack** ships in the Lexend faces
+(as an icon fallback font), reachable the same way:
+`lvgl.symbol.search`, `.microphone`, `.clock`, `.calendar`, `.heart`, `.star`,
+`.sun`, `.moon`, `.thermometer`, `.stopwatch`, `.location`, `.user`, `.camera`,
+`.fire`, `.check_circle`, `.comment`, `.cloud`, `.heartbeat`. They render at any
+`lvgl.font(size)`.
 
 Hero numbers use the built-in 60: `lvgl.font(60)`. Only for something **larger
 than 60px** does a TTF from the card come into play:
@@ -344,6 +365,11 @@ cannot `require` files from the card).
 | `ui.stepper(parent, {min=, max=, step=, value=, label=}, cb)` | +/- value row with clamp and hold-to-repeat |
 | `ui.busy({text=})` | Modal spinner screen; call `h.done()` to dismiss |
 | `ui.fill({title=, min=, max=, value=, label=}, on_change, done)` | Big drag-to-set arc **on its own screen** — a drag surface and horizontal paging fight over the same gesture, so never embed one in a tileview |
+| `ui.button(parent, {text=, kind="primary"\|"secondary"\|"danger", w=, h=, align=, on_click=})` | The standard action button at the ≥200×100 tap size and launcher palette; returns the widget so `:on()`/`:set_text()` compose |
+| `ui.list(parent, {y=, h=, pad_row=})` | Scrollable vertical stack — the container `ui.row`/`ui.select` expect; parent your rows to it |
+| `ui.card(parent, {w=, h=, align=, x=, y=})` | Rounded grouped-content panel; parent content to it |
+| `ui.stat(parent, {value=, label=, size=, align=, y=})` | Big value over a small caption (readouts); returns `h` with `h.set(v)` |
+| `ui.note(scr, text, {size=, y=})` | Centred dim message for empty states and hints; returns the label |
 
 ### Text entry: `require("keyboard")`
 

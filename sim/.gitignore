@@ -1,0 +1,6 @@
+# Third-party sources fetched at setup time (see sim/README.md).
+external/
+# Build output (build/, build-asan/, ...).
+build*/
+# Rendered frames.
+*.png

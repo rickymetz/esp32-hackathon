@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Render-test every app through the simulator.
+#
+# For each app in apps/ (except the intentional fixtures below) this runs the
+# app, lets it settle, and asserts the frame is non-blank -- i.e. the app loads
+# and actually draws something. Exits non-zero if any app fails, so CI can gate
+# on it. PNGs are written under sim/build/shots/ for inspection.
+#
+# Usage: sim/test.sh [--timeout N]
+set -uo pipefail
+
+cd "$(dirname "$0")/.."          # repo root
+SIM=sim/build/sim
+SHOTS=sim/build/shots
+TIMEOUT=10
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --timeout) TIMEOUT="$2"; shift 2 ;;
+        *) echo "unknown arg: $1"; exit 2 ;;
+    esac
+done
+
+if [ ! -x "$SIM" ]; then
+    echo "sim not built -- run sim/build.sh first" >&2
+    exit 2
+fi
+mkdir -p "$SHOTS"
+
+# Intentional fixtures that are NOT shippable apps:
+#   *_error / broken / hook_bypass -- meant to fail on purpose
+#   runaway_*                      -- infinite loops (watchdog fodder)
+#   headless / trim_check          -- no UI by design (timers/print only)
+SKIP=" broken cb_error deep_error hook_bypass runaway_bare runaway_coro runaway_pcall headless trim_check "
+
+pass=0; fail=0; skip=0; failed_apps=""
+for app in apps/*.lua; do
+    name="$(basename "$app" .lua)"
+    if [[ "$SKIP" == *" $name "* ]]; then
+        printf "  SKIP  %s\n" "$name"; skip=$((skip+1)); continue
+    fi
+    out="$SHOTS/$name.png"
+    if "$SIM" --sdroot . --timeout "$TIMEOUT" \
+            run "$app" : sleep 0.4 : check "$out" >/dev/null 2>&1; then
+        printf "  ok    %s\n" "$name"; pass=$((pass+1))
+    else
+        printf "  FAIL  %s\n" "$name"; fail=$((fail+1)); failed_apps="$failed_apps $name"
+    fi
+done
+
+echo
+echo "apps: $pass ok, $fail failed, $skip skipped   (shots in $SHOTS/)"
+if [ "$fail" -ne 0 ]; then
+    echo "failed:$failed_apps" >&2
+    exit 1
+fi

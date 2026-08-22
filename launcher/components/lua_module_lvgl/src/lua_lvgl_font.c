@@ -655,6 +655,49 @@ static const struct {
     {60, &lv_font_lexend_60},   /* hero numerals, per the design guide */
 };
 
+/* --- Global UI font scale --------------------------------------------------
+ * lvgl.font(size) and the theme default resolve to the built-in face nearest
+ * `size * scale`, so the whole UI scales together. Default 0.8 (80%); the user
+ * can change it via lvgl.font_scale(), and the launcher persists their choice.
+ */
+#define FONT_SCALE_MIN 0.6f
+#define FONT_SCALE_MAX 1.3f
+static float s_font_scale = 0.8f;
+
+/* The built-in face closest to `base_size` scaled by the current factor. Since
+ * only five faces exist the result is snapped to the nearest of them. */
+static const lv_font_t *font_for_scaled_size(int base_size)
+{
+    int target = (int)((float)base_size * s_font_scale + 0.5f);
+    const lv_font_t *best = s_builtin_fonts[0].font;
+    int best_d = 100000;
+    for (size_t i = 0; i < sizeof(s_builtin_fonts) / sizeof(s_builtin_fonts[0]); i++) {
+        int d = s_builtin_fonts[i].size - target;
+        if (d < 0) d = -d;
+        if (d < best_d) { best_d = d; best = s_builtin_fonts[i].font; }
+    }
+    return best;
+}
+
+/* C accessors so the launcher/sim can scale the theme default and persist the
+ * setting. Declared in lua_module_lvgl.h. */
+void lua_module_lvgl_set_font_scale(float scale)
+{
+    if (scale < FONT_SCALE_MIN) scale = FONT_SCALE_MIN;
+    if (scale > FONT_SCALE_MAX) scale = FONT_SCALE_MAX;
+    s_font_scale = scale;
+}
+
+float lua_module_lvgl_get_font_scale(void)
+{
+    return s_font_scale;
+}
+
+const lv_font_t *lua_module_lvgl_scaled_builtin_font(int base_size)
+{
+    return font_for_scaled_size(base_size);
+}
+
 /* lvgl.font(size) -> font handle for a compiled-in face. Unlike
  * font_load() this cannot go missing with the SD card; the design guide
  * points apps here first and at TTFs only above the largest built-in. */
@@ -665,16 +708,20 @@ static int lua_lvgl_font_builtin(lua_State *L)
     lua_lvgl_font_record_t *record;
     lua_lvgl_font_ud_t *ud;
     esp_err_t err;
+    bool known = false;
 
+    /* Apps still request one of the five design sizes; the face returned is
+     * that size scaled by the global font scale (see font_for_scaled_size). */
     for (size_t i = 0; i < sizeof(s_builtin_fonts) / sizeof(s_builtin_fonts[0]); i++) {
         if (s_builtin_fonts[i].size == size) {
-            font = s_builtin_fonts[i].font;
+            known = true;
             break;
         }
     }
-    if (!font) {
+    if (!known) {
         return luaL_error(L, "lvgl.font: no built-in %d px face (available: 24, 26, 32, 40, 48, 60)", size);
     }
+    font = font_for_scaled_size(size);
 
     err = lua_lvgl_lock();
     if (err != ESP_OK) {
@@ -705,9 +752,23 @@ static int lua_lvgl_font_builtin(lua_State *L)
     return 1;
 }
 
+/* lvgl.font_scale()      -> current scale (number)
+ * lvgl.font_scale(0.9)   -> set the scale (clamped), returns the new value.
+ * Affects every subsequent lvgl.font(); existing widgets keep their font until
+ * re-styled. The launcher applies the user's persisted choice at boot. */
+static int lua_lvgl_font_scale(lua_State *L)
+{
+    if (lua_gettop(L) >= 1 && !lua_isnil(L, 1)) {
+        lua_module_lvgl_set_font_scale((float)luaL_checknumber(L, 1));
+    }
+    lua_pushnumber(L, (lua_Number)lua_module_lvgl_get_font_scale());
+    return 1;
+}
+
 const luaL_Reg lua_lvgl_font_module_funcs[] = {
     {"font_load", lua_lvgl_font_load},
     {"font", lua_lvgl_font_builtin},
+    {"font_scale", lua_lvgl_font_scale},
     {NULL, NULL},
 };
 
@@ -776,9 +837,26 @@ static int lua_lvgl_font_load_disabled(lua_State *L)
     return luaL_error(L, "LVGL tiny_ttf is disabled");
 }
 
+/* Font-scale API is a no-op when the font module is disabled, but the symbols
+ * must still exist for the launcher/theme accessors to link. */
+void  lua_module_lvgl_set_font_scale(float scale) { (void)scale; }
+float lua_module_lvgl_get_font_scale(void) { return 1.0f; }
+const lv_font_t *lua_module_lvgl_scaled_builtin_font(int base_size)
+{
+    (void)base_size;
+    return &lv_font_lexend_32;
+}
+
+static int lua_lvgl_font_scale_disabled(lua_State *L)
+{
+    lua_pushnumber(L, 1.0);
+    return 1;
+}
+
 const luaL_Reg lua_lvgl_font_module_funcs[] = {
     {"font_load", lua_lvgl_font_load_disabled},
     {"font", lua_lvgl_font_load_disabled},
+    {"font_scale", lua_lvgl_font_scale_disabled},
     {NULL, NULL},
 };
 

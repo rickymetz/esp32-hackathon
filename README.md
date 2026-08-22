@@ -79,10 +79,26 @@ Start from [`apps/`](apps/): `counter.lua` (the template — copy this),
 
 ---
 
+## Develop without the board
+
+A headless **simulator** (`sim/`) runs apps on your computer and screenshots them — it
+compiles the launcher's real Lua↔LVGL bindings against desktop LVGL, so what renders
+matches the device. The fast way to iterate on an app, and the CI gate that render-tests
+every app on each PR.
+
+```bash
+cd sim && ./setup.sh && ./build.sh
+./sim/simctl.py run apps/counter.lua : tap 184 224 : shot out.png
+```
+
+It doesn't model hardware quirks (touch imprecision, the watchdog, IMU/voice) — confirm
+those on the board. See `sim/README.md`, and `apps/README.md` for the example apps.
+
 ## Driving the device without touching it
 
-The launcher speaks a small protocol over the same USB serial used for
-flashing — enough to install, launch, drive, and *see* apps with no hands:
+When you do have the board attached, the launcher speaks a small protocol over the same
+USB serial used for flashing — enough to install, launch, drive, and *see* apps with no
+hands:
 
 ```bash
 ./.venv/bin/python tools/drive.py run myapp.lua : sleep 1 : tap 184 224 : shot out.png
@@ -129,7 +145,8 @@ know them.
 | Path | What |
 | --- | --- |
 | `launcher/` | ESP-IDF project — BSP, LVGL, Lua runtime, app loader |
-| `apps/counter.lua` | Copy this to start an app |
+| `apps/` | Lua apps, one file each; `apps/README.md` indexes them |
+| `sim/` | Headless simulator — run and screenshot apps with no board |
 | `docs/APP_CONTRACT.md` | The app API — the one doc app authors need |
 | `docs/DESIGN_GUIDE.md` | Type, targets, colour, navigation, components |
 | `tools/push.py` · `drive.py` · `screenshot.py` | Install, drive, and see the device over USB |
