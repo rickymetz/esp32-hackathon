@@ -162,16 +162,18 @@ static int16_t le16(const uint8_t *p) { return (int16_t)((uint16_t)p[0] | ((uint
  * a different range than assumed. 4096 makes |a| = 1.00 g, which is
  * checkable physics rather than a guess.
  *
- * Gyro: NOT CALIBRATED, and known wrong in at least one respect.
- * Three measurements on hardware: resting bias is 7-9 deg/s on X and
- * drifts (Z accumulated -11.7 deg sitting still); a hand 90-degree
- * turn integrated to 64; and a 90-degree tilt whose axis the
- * accelerometer confirms was Y showed up on X and Z instead, at about
- * a third of the magnitude. So the register mapping and/or scale below
- * is wrong. gyro() is therefore documented as a motion DETECTOR
- * (is it turning, roughly how fast) and not an angle source -- do not
- * integrate it into degrees until someone checks the QMI8658 datasheet
- * for the real gyro register base and full-scale encoding. */
+ * Gyro: NOT CALIBRATED. What is established on hardware is the resting
+ * bias: 7-9 deg/s on X, drifting (Z accumulated -11.7 deg while the
+ * board sat still). That alone rules out integrating this into angles.
+ *
+ * The SCALE below remains unverified rather than disproven. Attempts to
+ * check it by hand were confounded by the USB cable: it limits how far
+ * the board can turn (a "90 degree" turn measured 64) and makes any
+ * motion compound rather than about a fixed axis -- and componentwise
+ * integration is only valid for a fixed axis, so the axis mismatch
+ * those runs showed proves nothing about the sensor. A clean check
+ * needs either an untethered board or the QMI8658 datasheet's gyro
+ * register base and full-scale encoding. */
 #define ACCEL_LSB_PER_G    4096.0
 #define GYRO_LSB_PER_DPS   64.0   /* assumed; see above */
 
