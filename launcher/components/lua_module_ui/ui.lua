@@ -56,6 +56,94 @@ function M.corner_button(scr, opts)
     return { button = btn, visual = visual }
 end
 
+-- ------------------------------------------------------------ time zone
+-- One implementation, shared. faces.lua and clock.lua each had their own
+-- and they disagreed: one rolled the date across the offset and the
+-- other returned the UTC date beside a local time, so in Tokyo a face
+-- read 05:00 under yesterday's date.
+
+M.ZONES = {
+    { "Honolulu", -600 }, { "Anchorage", -540 }, { "Los Angeles", -480 },
+    { "Denver", -420 }, { "Mexico City", -360 }, { "Chicago", -360 },
+    { "New York", -300 }, { "Toronto", -300 }, { "Santiago", -240 },
+    { "Sao Paulo", -180 }, { "London", 0 }, { "Lisbon", 0 },
+    { "Berlin", 60 }, { "Paris", 60 }, { "Lagos", 60 }, { "Athens", 120 },
+    { "Cairo", 120 }, { "Johannesburg", 120 }, { "Moscow", 180 },
+    { "Nairobi", 180 }, { "Dubai", 240 }, { "Karachi", 300 },
+    { "Delhi", 330 }, { "Kathmandu", 345 }, { "Dhaka", 360 },
+    { "Bangkok", 420 }, { "Jakarta", 420 }, { "Singapore", 480 },
+    { "Beijing", 480 }, { "Hong Kong", 480 }, { "Tokyo", 540 },
+    { "Seoul", 540 }, { "Adelaide", 570 }, { "Sydney", 600 },
+    { "Auckland", 720 },
+}
+
+local TZ_PATH = "/sdcard/tz.txt"
+
+-- Returns city index, dst flag, offset in minutes. Defaults to London,
+-- so an unconfigured device reads as UTC rather than as a guess.
+function M.zone()
+    local idx, dst = 11, false
+    local f = io.open(TZ_PATH, "r")
+    if f then
+        local name = f:read("*l")
+        local d = f:read("*l")
+        f:close()
+        for i, z in ipairs(M.ZONES) do
+            if z[1] == name then idx = i break end
+        end
+        dst = (d == "1")
+    end
+    return idx, dst, M.ZONES[idx][2] + (dst and 60 or 0)
+end
+
+function M.save_zone(idx, dst)
+    local f = io.open(TZ_PATH, "w")
+    if f then
+        f:write(M.ZONES[idx][1] .. "\n" .. (dst and "1" or "0") .. "\n")
+        f:close()
+    end
+end
+
+local function leap(y) return (y % 4 == 0 and y % 100 ~= 0) or y % 400 == 0 end
+local function days_in(m, y)
+    local d = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+    if m == 2 and leap(y) then return 29 end
+    return d[m] or 30
+end
+
+-- Shift a UTC reading by minutes, rolling day, month and year properly.
+-- Offsets are in MINUTES because India, Nepal and parts of Australia are
+-- not on whole hours.
+function M.shift(t, mins)
+    local total = t.hour * 60 + t.min + mins
+    local day, wday = t.day, t.wday
+    local month, year = t.month, t.year or 2026
+
+    while total < 0 do
+        total = total + 1440
+        day, wday = day - 1, (wday + 6) % 7
+        if day < 1 then
+            month = month - 1
+            if month < 1 then month, year = 12, year - 1 end
+            day = days_in(month, year)
+        end
+    end
+    while total >= 1440 do
+        total = total - 1440
+        day, wday = day + 1, (wday + 1) % 7
+        if day > days_in(month, year) then
+            day, month = 1, month + 1
+            if month > 12 then month, year = 1, year + 1 end
+        end
+    end
+    return { hour = total // 60, min = total % 60, sec = t.sec,
+             day = day, wday = wday, month = month, year = year }
+end
+
+M.DAYS = { [0]="Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" }
+M.MONTHS = { "Jan","Feb","Mar","Apr","May","Jun",
+             "Jul","Aug","Sep","Oct","Nov","Dec" }
+
 -- ---------------------------------------------------------------- header
 -- Top-left back control (x for sheets, < for pushed screens), title,
 -- optional top-right action. The gallery pattern from every watchOS app.
@@ -190,7 +278,7 @@ function M.row(parent, opts)
     h.label = lvgl.label(h.row, {
         text = opts.text or "",
         align = "left_mid", x = 16,
-        text_color = opts.dim and "#8A8A99" or "#FFFFFF",
+        text_color = opts.dim and "#A0A0AE" or "#FFFFFF",
         w = 344 - 16 - trailing,
     })
 
@@ -225,7 +313,7 @@ function M.row(parent, opts)
         lvgl.label(h.row, {
             text = lvgl.symbol.right,
             align = "right_mid", x = -16,
-            text_color = "#8A8A99",
+            text_color = "#A0A0AE",
         })
     end
 
@@ -338,14 +426,14 @@ function M.dots(scr, tv, opts)
             align = "bottom_mid",
             x = (i - 1) * 24 - (total_w - 24) // 2,
             y = -8,
-            text_color = "#8A8A99",
+            text_color = "#A0A0AE",
         })
     end
 
     local function mark(page)
         for i = 1, count do
             h.labels[i]:set_style({
-                text_color = (i == page) and "#FFFFFF" or "#8A8A99",
+                text_color = (i == page) and "#FFFFFF" or "#A0A0AE",
             })
         end
     end
@@ -466,7 +554,7 @@ function M.busy(opts)
         lvgl.label(scr, {
             text = opts.text,
             align = "bottom_mid", y = -40,
-            text_color = "#8A8A99",
+            text_color = "#A0A0AE",
         })
     end
 
@@ -610,7 +698,7 @@ function M.stat(parent, opts)
             text = opts.label,
             align = align, x = opts.x,
             y = (opts.y or 0) + size // 2 + 20,   -- just below the value
-            text_color = "#8A8A99",
+            text_color = "#A0A0AE",
             font = lvgl.font(26),
         })
     end

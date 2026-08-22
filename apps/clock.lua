@@ -101,26 +101,26 @@ local time_lbl = lvgl.label(scr, {
 local date_lbl = lvgl.label(scr, {
     text = "",
     align = "center", y = 30,
-    text_color = "#8A8A99",
+    text_color = "#A0A0AE",
 })
 
 local zone_lbl = lvgl.label(scr, {
     text = "",
     align = "center", y = 74,
-    text_color = "#8A8A99",
+    text_color = "#A0A0AE",
     font = lvgl.font(26),
 })
 
 local bat_lbl = lvgl.label(scr, {
     text = "",
     align = "bottom_mid", y = -20,
-    text_color = "#8A8A99",
+    text_color = "#A0A0AE",
 })
 
 local hint = lvgl.label(scr, {
     text = "",
     align = "top_mid", y = 24,
-    text_color = "#8A8A99",
+    text_color = "#A0A0AE",
     font = lvgl.font(26),
 })
 

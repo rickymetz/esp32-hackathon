@@ -145,8 +145,13 @@ Use true black.
 | Body (≤ 34 px) | **7:1** (AAA) |
 | Large (≥ 36 px) or bold | **4.5:1** |
 
-White `#FFFFFF` on black is 21:1. Mid-grey `#8A8A99` on black is 7.4:1 — fine for captions,
-not for body. **Avoid grey body text**; it is the most common way a watch UI becomes
+White `#FFFFFF` on black is 21:1. **`#A0A0AE` on black is 8.1:1** — the caption token, with
+margin over the 7:1 rule.
+
+An earlier version of this guide claimed `#A0A0AE` was 7.4:1. It is **6.2:1**, recomputed
+three ways — so every app that trusted that figure was shipping captions below the very
+rule this section states. If you take a contrast number from a doc, check it: the wrong
+one propagates into everyone's work. **Avoid grey body text**; it is the most common way a watch UI becomes
 unreadable outdoors.
 
 **Never colour by itself.** Both platforms say this. Pair colour with text or shape.

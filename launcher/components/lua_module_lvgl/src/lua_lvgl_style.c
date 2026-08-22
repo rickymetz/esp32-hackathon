@@ -22,12 +22,18 @@ static void lua_lvgl_apply_color_style_field(lua_State *L, int index, lv_obj_t *
             lv_obj_set_style_border_color(obj, color, 0);
         } else if (strcmp(field, "line_color") == 0) {
             lv_obj_set_style_line_color(obj, color, 0);
-            lv_obj_set_style_arc_color(obj, color, 0);
-            /* An arc's visible band is its INDICATOR part; colouring
-             * only the main part left every arc showing the theme
-             * colour -- three identically blue rings on the watch face
-             * are what exposed this. */
+            /* INDICATOR only. Setting the main part too painted an arc's
+             * background track in the same colour as its value, so a
+             * ring at 1%% looked identical to one at 100%% -- the whole
+             * rings watch face rendered as three solid bands that
+             * encoded nothing. Use track_color for the background. */
             lv_obj_set_style_arc_color(obj, color, LV_PART_INDICATOR);
+            /* The knob is that arc's tip, so it takes the arc's colour;
+             * left on the theme accent it read as a foreign dot sitting
+             * on a white ring. */
+            lv_obj_set_style_bg_color(obj, color, LV_PART_KNOB);
+        } else if (strcmp(field, "track_color") == 0) {
+            lv_obj_set_style_arc_color(obj, color, LV_PART_MAIN);
         }
     }
     lua_pop(L, 1);
@@ -79,6 +85,7 @@ void lua_lvgl_apply_style_opts_locked(lua_State *L, int index, lv_obj_t *obj)
     lua_lvgl_apply_color_style_field(L, index, obj, "text_color");
     lua_lvgl_apply_color_style_field(L, index, obj, "border_color");
     lua_lvgl_apply_color_style_field(L, index, obj, "line_color");
+    lua_lvgl_apply_color_style_field(L, index, obj, "track_color");
     lua_lvgl_apply_style_int_field(L, index, obj, "bg_opa");
     lua_lvgl_apply_style_int_field(L, index, obj, "opa");
     lua_lvgl_apply_style_int_field(L, index, obj, "radius");

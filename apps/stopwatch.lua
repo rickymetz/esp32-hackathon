@@ -42,7 +42,7 @@ local readout = lvgl.label(scr, {
 local lap_label = lvgl.label(scr, {
     text = "Lap or PWR = split",
     align = "top_mid", y = 176,
-    text_color = "#8A8A99",
+    text_color = "#A0A0AE",
 })
 
 local function fmt(ms)

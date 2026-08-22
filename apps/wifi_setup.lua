@@ -22,7 +22,7 @@ local ssid, pass = "", ""
 local status = lvgl.label(scr, {
     text = "not connected",
     align = "top_mid", y = 92,
-    text_color = "#8A8A99",
+    text_color = "#A0A0AE",
 })
 
 local list = lvgl.container(scr, {

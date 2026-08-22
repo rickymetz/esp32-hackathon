@@ -653,6 +653,8 @@ static const struct {
     {40, &lv_font_lexend_40},
     {48, &lv_font_lexend_48},
     {60, &lv_font_lexend_60},   /* hero numerals, per the design guide */
+    {72, &lv_font_lexend_72},   /* top of the accessibility font scale */
+    {120, &lv_font_lexend_120}, /* watch-face hero: the time IS the screen */
 };
 
 /* --- Global UI font scale --------------------------------------------------
@@ -723,7 +725,7 @@ static int lua_lvgl_font_builtin(lua_State *L)
         }
     }
     if (!known) {
-        return luaL_error(L, "lvgl.font: no built-in %d px face (available: 24, 26, 32, 40, 48, 60)", size);
+        return luaL_error(L, "lvgl.font: no built-in %d px face (available: 24, 26, 32, 40, 48, 60, 72, 120)", size);
     }
     font = font_for_scaled_size(size);
 
