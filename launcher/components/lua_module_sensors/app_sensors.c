@@ -154,9 +154,20 @@ static int luaopen_rtc(lua_State *L) { luaL_newlib(L, rtc_funcs); return 1; }
 
 static int16_t le16(const uint8_t *p) { return (int16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8)); }
 
-/* Full-scale set in probe: accel +/-4g, gyro +/-512dps. */
-#define ACCEL_LSB_PER_G    8192.0
-#define GYRO_LSB_PER_DPS   64.0
+/* Scales derived from MEASUREMENT, not from a recalled datasheet.
+ *
+ * Accel: at rest the total vector must be exactly 1 g whatever the
+ * orientation. With 8192 LSB/g the board read |a| = 0.50 g lying still,
+ * so the chip is in +/-8g (4096 LSB/g) -- the CTRL2 value below selects
+ * a different range than assumed. 4096 makes |a| = 1.00 g, which is
+ * checkable physics rather than a guess.
+ *
+ * Gyro: UNVERIFIED. At rest a gyro only shows its bias, which reveals
+ * nothing about scale, so this constant is still the assumed one --
+ * confirm it by rotating the board a known 90 degrees and integrating
+ * before trusting gyro magnitudes. */
+#define ACCEL_LSB_PER_G    4096.0
+#define GYRO_LSB_PER_DPS   64.0   /* assumed; see above */
 
 static int imu_read_triplet(lua_State *L, uint8_t reg, double scale)
 {
