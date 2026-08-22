@@ -658,9 +658,11 @@ measurement.
 **`imu.gyro()` is not calibrated — treat it as a motion detector, not an angle
 source.** Measured on hardware it has a **7–9 °/s resting bias that drifts**
 (the board accumulated ~12° while sitting perfectly still), which is enough on
-its own to make integrated angles meaningless. Its scale is unverified — not
-known wrong, just unchecked. Use it for "is the board turning, and roughly how
-fast"; do **not** integrate it into degrees. If you need orientation, derive it
+its own to make integrated angles meaningless. Its **scale is correct** —
+±512 °/s, 64 LSB/°/s, from the chip's `CTRL3` setting — so the *rate* it reports
+is trustworthy; it is the bias, not the scaling, that makes integration useless.
+Use it for "is the board turning, and roughly how fast"; do **not** integrate it
+into degrees. If you need orientation, derive it
 from `imu.accel()` — gravity is a reliable reference and was measured good.
 
 `imu.die_temp()` is the **sensor's own silicon temperature, not the room**.

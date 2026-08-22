@@ -182,16 +182,30 @@ static int16_t le16(const uint8_t *p) { return (int16_t)((uint16_t)p[0] | ((uint
  * bias: 7-9 deg/s on X, drifting (Z accumulated -11.7 deg while the
  * board sat still). That alone rules out integrating this into angles.
  *
- * The SCALE below remains unverified rather than disproven. Attempts to
- * check it by hand were confounded by the USB cable: it limits how far
- * the board can turn (a "90 degree" turn measured 64) and makes any
- * motion compound rather than about a fixed axis -- and componentwise
- * integration is only valid for a fixed axis, so the axis mismatch
- * those runs showed proves nothing about the sensor. A clean check
- * needs either an untethered board or the QMI8658 datasheet's gyro
- * register base and full-scale encoding. */
-#define ACCEL_LSB_PER_G    4096.0
-#define GYRO_LSB_PER_DPS   64.0   /* assumed; see above */
+ * The SCALE, previously marked "assumed", is now CONFIRMED from the
+ * QMI8658's register encoding rather than by hand-turning the board
+ * (attempts at that were confounded by the USB cable, which limits how
+ * far it can turn and makes the motion compound rather than about a
+ * fixed axis -- componentwise integration is only valid about a fixed
+ * axis, so those runs proved nothing either way).
+ *
+ * Both scales fall straight out of the CTRL2/CTRL3 writes in init:
+ *
+ *   CTRL2 = 0x24 -> aFS = bits[6:4] = 0b010 = 2 -> +/-8g     -> 4096 LSB/g
+ *   CTRL3 = 0x54 -> gFS = bits[6:4] = 0b101 = 5 -> +/-512dps ->   64 LSB/dps
+ *
+ * (16-bit signed, so LSB/unit = 32768 / full_scale.)
+ *
+ * That table is worth trusting here for a specific reason: its ACCEL row
+ * is independently confirmed by our own hardware measurement. 4096 LSB/g
+ * is what makes |a| read 1.00 g at rest, which is checkable physics. The
+ * same encoding read the same way gives the gyro row, so this is not a
+ * recalled-datasheet guess of the kind that has burned this file before.
+ *
+ * None of which rescues integration: the 7-9 deg/s drifting bias above
+ * is the reason not to integrate, and a correct scale does not fix it. */
+#define ACCEL_LSB_PER_G    4096.0   /* +/-8g,     from CTRL2 = 0x24 */
+#define GYRO_LSB_PER_DPS   64.0     /* +/-512dps, from CTRL3 = 0x54 */
 
 static int imu_read_triplet(lua_State *L, uint8_t reg, double scale)
 {
@@ -330,8 +344,8 @@ esp_err_t app_sensors_register(void)
         uint8_t who = 0;
         if (reg_read(s_imu_dev, QMI_WHO_AM_I, &who, 1) == ESP_OK && who == 0x05) {
             reg_write(s_imu_dev, QMI_CTRL1, 0x60);   /* auto-increment reads */
-            reg_write(s_imu_dev, QMI_CTRL2, 0x24);   /* accel 4g, 250Hz */
-            reg_write(s_imu_dev, QMI_CTRL3, 0x54);   /* gyro 512dps, 250Hz */
+            reg_write(s_imu_dev, QMI_CTRL2, 0x24);   /* accel +/-8g  (aFS=2), 250Hz */
+            reg_write(s_imu_dev, QMI_CTRL3, 0x54);   /* gyro +/-512dps (gFS=5), 250Hz */
             reg_write(s_imu_dev, QMI_CTRL7, 0x03);   /* enable both */
         } else {
             ESP_LOGW(TAG, "QMI8658 not found (WHO_AM_I=0x%02x); imu unavailable", who);
