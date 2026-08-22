@@ -48,6 +48,7 @@
 #include "lv_font_lexend.h"
 #include "lua_module_ui.h"
 #include "app_voice.h"
+#include "app_sensors.h"
 #include "driver/gpio.h"
 #include "launcher_main.h"
 #include "serial_push.h"
@@ -960,6 +961,7 @@ void app_main(void)
      * ui.lua/keyboard.lua require() lvgl, timer, and voice at load --
      * so voice must register BEFORE the embedded-Lua modules. */
     ESP_ERROR_CHECK(app_voice_register());
+    ESP_ERROR_CHECK(app_sensors_register());
     ESP_ERROR_CHECK(lua_module_ui_register());
 
     /* BOOT (GPIO0) is the Home button. Input + pull-up matches its idle
