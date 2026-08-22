@@ -281,6 +281,9 @@ function M.row(parent, opts)
         text_color = opts.dim and "#A0A0AE" or "#FFFFFF",
         w = 344 - 16 - trailing,
     })
+    -- opts.size lets a dense list (a 35-city timezone picker) drop to 26 so
+    -- entries fit on one line instead of wrapping to two.
+    if opts.size then h.label:set_style({ font = lvgl.font(opts.size) }) end
 
     if opts.kind == "toggle" then
         h.switch = lvgl.switch(h.row, { checked = opts.checked and true or false })
@@ -339,6 +342,7 @@ function M.select(parent, opts, cb)
         row = M.row(parent, {
             text = text,
             kind = "check",
+            size = opts.size,
             checked = (i == h.selected),
             dim = disabled[i],
             on_click = function()
@@ -404,7 +408,7 @@ function M.picker(opts, cb)
     list:set_scroll({ dir = "ver", scrollbar = "active" })
 
     M.select(list, { options = opts.options, selected = opts.selected,
-                     disabled = opts.disabled,
+                     disabled = opts.disabled, size = opts.size,
                      on_reselect = function(i) finish(i) end },
              function(i) finish(i) end)
 
