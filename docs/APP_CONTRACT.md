@@ -293,8 +293,8 @@ label:set_style({ font = big })
 These cannot go missing — they live in flash, not on the SD card. Sizing guidance is in
 `docs/DESIGN_GUIDE.md`: body 32, captions 26, never below 24.
 
-**Text scales globally.** A user-set **font scale** (default **0.8** — the whole UI runs
-at 80%) drives both `lvgl.font(size)` and the theme default, so everything sizes together.
+**Text scales globally.** A user-set **font scale** (default **1.0**) drives both
+`lvgl.font(size)` and the theme default, so everything sizes together.
 You still request one of the six sizes; the face returned is that size scaled, snapped to
 the nearest available face. Read or set it with `lvgl.font_scale()`:
 
@@ -305,7 +305,10 @@ lvgl.font_scale(1.0)             -- set 100% (clamped to 0.6–1.3); returns the
 
 Apps rarely need this — the user changes it in **`apps/settings.lua`**, which saves the
 choice; the launcher restores it at boot. Setting it re-sizes `lvgl.font()` text
-immediately, but theme-default text (plain labels) picks up a new scale on the next launch.
+immediately; theme-default text (plain labels) and the launcher pick the new
+scale up when your app exits — the launcher re-applies the theme then. An app
+that changes the scale without persisting does not affect anyone else: the
+persisted value is restored on exit.
 
 Icons come with them: `lvgl.symbol.*` holds the built-in glyph strings —
 `lvgl.symbol.play`, `.pause`, `.ok`, `.close`, `.left`, `.trash`, and ~55 more. Concatenate

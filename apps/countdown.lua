@@ -30,7 +30,13 @@ end
 local stepper
 stepper = ui.stepper(scr, { min = 1, max = 60, step = 1, value = 5, label = "%d min" },
     function(v)
-        if not running then
+        if running then
+            -- The stepper advances its own value before this callback;
+            -- while counting down, snap it straight back so a stray +/-
+            -- can neither corrupt the readout nor bank a jump that lands
+            -- all at once after Pause (review finding).
+            stepper.set(minutes)   -- next 1s tick repaints the countdown
+        else
             minutes = v
             remaining = minutes * 60
         end

@@ -83,6 +83,8 @@ static const char *TAG = "launcher";
 #define MAX_VISIBLE_ROWS 64
 
 static lv_obj_t *s_launcher_screen;
+static lv_display_t *s_disp;   /* for re-applying the theme after app exit */
+static void apply_persisted_font_scale(lv_display_t *disp);
 
 /* ---- Synthetic touch injection (serial TAP/SWIPE; see launcher_main.h).
  * Single-writer (serial task) / single-reader (LVGL task via read_cb),
@@ -312,7 +314,7 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text_fmt(title, "%s failed", app_name);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &lv_font_lexend_40, LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, lua_module_lvgl_scaled_builtin_font(40), LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
 
     lv_obj_t *body = lv_label_create(scr);
@@ -323,7 +325,7 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
     lv_label_set_text(body, msg ? msg : "(no message)");
     lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
-    lv_obj_set_style_text_font(body, &lv_font_lexend_26, LV_PART_MAIN);
+    lv_obj_set_style_text_font(body, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
     lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, ERROR_BODY_TOP);
 
     lv_obj_t *hint = lv_label_create(scr);
@@ -497,6 +499,11 @@ close:
     app_timer_reset(L);
     app_button_reset(L);
     app_voice_reset(L);
+    /* Re-read the persisted font scale: an app that called
+     * lvgl.font_scale() without persisting must not restyle every later
+     * app (Settings persists first, so its change survives). Also
+     * re-applies the theme so the next screens build at the right scale. */
+    apply_persisted_font_scale(s_disp);
     launcher_lua_run_exit_cleanup(L);
     lua_close(L);
     {
@@ -679,7 +686,7 @@ static void build_launcher_ui(void)
     lv_obj_t *header = lv_label_create(s_launcher_screen);
     lv_label_set_text(header, "Apps");
     lv_obj_set_style_text_color(header, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(header, &lv_font_lexend_40, LV_PART_MAIN);
+    lv_obj_set_style_text_font(header, lua_module_lvgl_scaled_builtin_font(40), LV_PART_MAIN);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 24);
 
     if (count == 0) {
@@ -703,7 +710,7 @@ static void build_launcher_ui(void)
                                      : "No SD card.\nInsert one with an\n/apps directory.");
         lv_obj_set_style_text_color(empty, lv_color_hex(0x8A8A99), LV_PART_MAIN);
         lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_font(empty, &lv_font_lexend_26, LV_PART_MAIN);
+        lv_obj_set_style_text_font(empty, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
         lv_obj_center(empty);
     } else {
         lv_obj_t *list = lv_obj_create(s_launcher_screen);
@@ -743,7 +750,7 @@ static void build_launcher_ui(void)
             lv_obj_t *label = lv_label_create(row);
             lv_label_set_text(label, app.name);
             lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-            lv_obj_set_style_text_font(label, &lv_font_lexend_32, LV_PART_MAIN);
+            lv_obj_set_style_text_font(label, lua_module_lvgl_scaled_builtin_font(32), LV_PART_MAIN);
             /* Leading-aligned like every ui.row: the review flagged the
              * centered launcher rows as a second list grammar. */
             lv_obj_align(label, LV_ALIGN_LEFT_MID, 16, 0);
@@ -757,9 +764,9 @@ static void build_launcher_ui(void)
                 const lv_font_t *resolved =
                     lv_obj_get_style_text_font(label, LV_PART_MAIN);
                 ESP_LOGI(TAG, "row label font check: resolved=%p want=%p "
-                         "(lexend_32), line_height=%d",
+                         "(scaled 32), line_height=%d",
                          (const void *)resolved,
-                         (const void *)&lv_font_lexend_32,
+                         (const void *)lua_module_lvgl_scaled_builtin_font(32),
                          lv_font_get_line_height(resolved));
             }
         }
@@ -908,6 +915,7 @@ void app_main(void)
     ESP_ERROR_CHECK(release_panel_reset());
 
     lv_display_t *disp = bsp_display_start();
+    s_disp = disp;
     if (disp == NULL) {
         ESP_LOGE(TAG, "bsp_display_start() failed");
         return;
@@ -928,7 +936,7 @@ void app_main(void)
                               lv_palette_main(LV_PALETTE_RED),
                               true /* dark */,
                               /* Theme default follows the global font scale
-                               * (default 0.8); apply_persisted_font_scale()
+                               * (default 1.0); apply_persisted_font_scale()
                                * re-themes once the SD's saved value is read. */
                               lua_module_lvgl_scaled_builtin_font(32)));
     bsp_display_unlock();
@@ -983,9 +991,14 @@ void app_main(void)
     {
         lv_obj_t *probe = lv_label_create(lv_screen_active());
         const lv_font_t *resolved = lv_obj_get_style_text_font(probe, LV_PART_MAIN);
-        ESP_LOGI(TAG, "theme probe: resolved=%p lexend_32=%p line_height=%d (want 36)",
-                 (const void *)resolved, (const void *)&lv_font_lexend_32,
-                 (int)lv_font_get_line_height(resolved));
+        /* Expectation tracks the font scale (the PR review caught the
+         * probe reporting a mismatch on every healthy boot after the
+         * scale landed). */
+        const lv_font_t *want = lua_module_lvgl_scaled_builtin_font(32);
+        ESP_LOGI(TAG, "theme probe: resolved=%p want=%p line_height=%d (want %d)",
+                 (const void *)resolved, (const void *)want,
+                 (int)lv_font_get_line_height(resolved),
+                 (int)lv_font_get_line_height(want));
         lv_obj_delete(probe);
     }
     bsp_display_unlock();

@@ -11,7 +11,7 @@ mkdir -p external
 
 if [ ! -d external/lvgl ]; then
     echo "Cloning LVGL 9.5 ..."
-    git clone --depth 1 --branch release/v9.5 https://github.com/lvgl/lvgl.git external/lvgl
+    git clone --depth 1 --branch v9.5.0 https://github.com/lvgl/lvgl.git external/lvgl
 else
     echo "external/lvgl already present, skipping"
 fi

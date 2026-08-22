@@ -38,7 +38,7 @@ The icon faces are made from LVGL's bundled FontAwesome 5 with `lv_font_conv`
 ```
 
 ```bash
-for sz in 24 26 32 40 48; do
+for sz in 24 26 32 40 48 60; do
   lv_font_conv --bpp 4 --size $sz --font "$FA" -r $CODEPOINTS \
     --format lvgl --no-compress --no-prefilter --force-fast-kern-format \
     --lv-include lvgl.h -o lv_font_icons_$sz.c --lv-font-name lv_font_icons_$sz

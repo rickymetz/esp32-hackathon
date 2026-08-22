@@ -260,9 +260,13 @@ static int app_run(const char *path)
     watchdog_disarm();
     if (load_rc) {
         if (cap_lua_runtime_stop_requested(L)) {
+            /* A runaway app is a FAILURE: on hardware this freezes the
+             * device until the watchdog reboots it. Returning 0 here let
+             * CI pass exactly the apps the sim exists to catch (review
+             * finding). */
             fprintf(stderr, "RUN_ERR timeout %s (watchdog stopped a runaway app)\n", path);
             teardown_state(L);
-            return 0;
+            return -1;
         }
         const char *msg = lua_tostring(L, -1);
         fprintf(stderr, "app '%s' failed: %s\n", path, msg ? msg : "(nil)");

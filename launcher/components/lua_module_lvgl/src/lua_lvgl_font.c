@@ -657,15 +657,19 @@ static const struct {
 
 /* --- Global UI font scale --------------------------------------------------
  * lvgl.font(size) and the theme default resolve to the built-in face nearest
- * `size * scale`, so the whole UI scales together. Default 0.8 (80%); the user
+ * `size * scale`, so the whole UI scales together. Default 1.0; the user
  * can change it via lvgl.font_scale(), and the launcher persists their choice.
  */
 #define FONT_SCALE_MIN 0.6f
 #define FONT_SCALE_MAX 1.3f
-static float s_font_scale = 0.8f;
+/* Default 1.0: the contract's sizes ARE the design-guide sizes (derived
+ * from watchOS/Wear convergence); scaling is an opt-in accessibility
+ * setting, not a global re-tune. The PR's 0.8 default silently remapped
+ * every existing app (32->26, 24/26 collapsing, 60 unreachable). */
+static float s_font_scale = 1.0f;
 
 /* The built-in face closest to `base_size` scaled by the current factor. Since
- * only five faces exist the result is snapped to the nearest of them. */
+ * only six faces exist the result is snapped to the nearest of them. */
 static const lv_font_t *font_for_scaled_size(int base_size)
 {
     int target = (int)((float)base_size * s_font_scale + 0.5f);

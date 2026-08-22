@@ -12,6 +12,8 @@ on:
       - 'apps/**'
       - 'launcher/components/lua_module_lvgl/**'
       - 'launcher/components/lua_module_ui/**'
+      - 'launcher/components/display_service/**'
+      - 'launcher/components/lua_module_voice/**'
       - 'launcher/components/cap_lua/**'
       - 'launcher/components/fonts_lexend/**'
       - 'launcher/main/app_timer.*'

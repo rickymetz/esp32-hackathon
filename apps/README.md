@@ -57,4 +57,6 @@ These exist to exercise the launcher's own edges and are skipped by
 - `runaway_bare.lua`, `runaway_coro.lua`, `runaway_pcall.lua` — the watchdog
 - `headless.lua` — an app with timers but no UI
 - `input_test.lua`, `tick_test.lua`, `timer_reuse.lua`, `timer_slot.lua`,
-  `voice_test.lua`, `spell_test.lua`, `ui_test.lua` — module regression checks
+  `voice_test.lua`, `spell_test.lua`, `ui_test.lua` — module regression checks.
+  These DO run in `sim/test.sh` (they render headlessly); only the
+  error-path/watchdog fixtures above are in its SKIP list.

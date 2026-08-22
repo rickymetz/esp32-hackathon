@@ -40,6 +40,14 @@ function M.open(opts, cb)
     local scr = lvgl.create_screen()
     scr:set_style({ bg_color = "#000000" })
 
+    -- Declared BEFORE finish(): a local's scope starts after its declaring
+    -- statement, so referencing these inside a closure compiled earlier
+    -- resolves to nil globals -- the exact trap the contract documents for
+    -- timer handles, and exactly the bug the PR review caught here (the
+    -- PWR subscription was never unsubscribed).
+    local listening = false
+    local pwr_sub
+
     local function finish(result)
         if pwr_sub then button.off(pwr_sub) end
         voice.stop()   -- no-op unless a capture is running
@@ -134,7 +142,6 @@ function M.open(opts, cb)
         bm:set_map(map)
     end
 
-    local listening = false
     local function start_voice()
         if not voice.available() then return end
         readout:set_text("say it...")
@@ -157,7 +164,6 @@ function M.open(opts, cb)
     -- voice.stop() ends the capture and the spell callback fires with the
     -- accumulated text. Binary and eyes-free: exactly what the button
     -- doctrine sanctions. Released in finish().
-    local pwr_sub
     if voice.available() then
         pwr_sub = button.on("pwr", "pressed", function()
             if listening then

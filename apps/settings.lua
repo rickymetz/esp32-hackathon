@@ -1,6 +1,8 @@
 -- Settings -- device preferences. For now: font size (the global UI scale).
--- Stepping the value re-scales the whole UI; the preview shows the effect and
--- the choice is saved so it sticks across restarts.
+-- Stepping the value re-sizes the preview immediately; the rest of the UI
+-- (theme text, the launcher) picks the scale up when you leave -- the
+-- launcher re-applies the theme on every app exit. Saved to the card, so
+-- it sticks across restarts.
 --
 -- Install: ./.venv/bin/python tools/push.py apps/settings.lua
 
