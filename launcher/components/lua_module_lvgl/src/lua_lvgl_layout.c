@@ -139,19 +139,29 @@ int lua_lvgl_set_grid_cell(lua_State *L)
 int lua_lvgl_set_scroll(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
-    lv_dir_t dir;
-    lv_scrollbar_mode_t scrollbar;
-    lv_scroll_snap_t snap_x;
-    lv_scroll_snap_t snap_y;
+    lv_dir_t dir = LV_DIR_NONE;
+    lv_scrollbar_mode_t scrollbar = LV_SCROLLBAR_MODE_AUTO;
+    lv_scroll_snap_t snap_x = LV_SCROLL_SNAP_NONE;
+    lv_scroll_snap_t snap_y = LV_SCROLL_SNAP_NONE;
     esp_err_t err;
     lv_obj_t *obj;
     const char *obj_error = NULL;
 
     luaL_checktype(L, 2, LUA_TTABLE);
-    if (lua_lvgl_parse_dir(lua_lvgl_get_opt_string_field(L, 2, "dir"), &dir) != ESP_OK ||
-            lua_lvgl_parse_scrollbar(lua_lvgl_get_opt_string_field(L, 2, "scrollbar"), &scrollbar) != ESP_OK ||
-            lua_lvgl_parse_scroll_snap(lua_lvgl_get_opt_string_field(L, 2, "snap_x"), &snap_x) != ESP_OK ||
-            lua_lvgl_parse_scroll_snap(lua_lvgl_get_opt_string_field(L, 2, "snap_y"), &snap_y) != ESP_OK) {
+
+    /* Only apply the fields the caller actually passed. The old version
+     * parsed absent fields to their defaults and applied ALL of them, so
+     * set_scroll({scrollbar="off"}) on a tileview silently wiped its
+     * scroll-snap -- pages stopped snapping into place (found by Rick). */
+    bool has_dir = lua_lvgl_has_field(L, 2, "dir");
+    bool has_scrollbar = lua_lvgl_has_field(L, 2, "scrollbar");
+    bool has_snap_x = lua_lvgl_has_field(L, 2, "snap_x");
+    bool has_snap_y = lua_lvgl_has_field(L, 2, "snap_y");
+
+    if ((has_dir && lua_lvgl_parse_dir(lua_lvgl_get_opt_string_field(L, 2, "dir"), &dir) != ESP_OK) ||
+            (has_scrollbar && lua_lvgl_parse_scrollbar(lua_lvgl_get_opt_string_field(L, 2, "scrollbar"), &scrollbar) != ESP_OK) ||
+            (has_snap_x && lua_lvgl_parse_scroll_snap(lua_lvgl_get_opt_string_field(L, 2, "snap_x"), &snap_x) != ESP_OK) ||
+            (has_snap_y && lua_lvgl_parse_scroll_snap(lua_lvgl_get_opt_string_field(L, 2, "snap_y"), &snap_y) != ESP_OK)) {
         return luaL_error(L, "lvgl scroll option is invalid");
     }
 
@@ -164,10 +174,10 @@ int lua_lvgl_set_scroll(lua_State *L)
         lua_lvgl_unlock();
         return luaL_error(L, "%s", obj_error);
     }
-    lv_obj_set_scroll_dir(obj, dir);
-    lv_obj_set_scrollbar_mode(obj, scrollbar);
-    lv_obj_set_scroll_snap_x(obj, snap_x);
-    lv_obj_set_scroll_snap_y(obj, snap_y);
+    if (has_dir) lv_obj_set_scroll_dir(obj, dir);
+    if (has_scrollbar) lv_obj_set_scrollbar_mode(obj, scrollbar);
+    if (has_snap_x) lv_obj_set_scroll_snap_x(obj, snap_x);
+    if (has_snap_y) lv_obj_set_scroll_snap_y(obj, snap_y);
     lua_lvgl_unlock();
     lua_pushboolean(L, 1);
     return 1;
