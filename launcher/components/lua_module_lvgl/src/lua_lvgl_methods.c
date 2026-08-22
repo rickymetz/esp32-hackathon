@@ -35,6 +35,7 @@ static const luaL_Reg lua_lvgl_base_methods[] = {
     {"align", lua_lvgl_align},
     {"is_valid", lua_lvgl_is_valid},
     {"set_style", lua_lvgl_set_style},
+    {"set_clickable", lua_lvgl_set_clickable},
     {"set_flex", lua_lvgl_set_flex},
     {"set_grid", lua_lvgl_set_grid},
     {"set_grid_cell", lua_lvgl_set_grid_cell},
@@ -48,6 +49,11 @@ static const luaL_Reg lua_lvgl_base_methods[] = {
 
 static const luaL_Reg lua_lvgl_screen_methods[] = {
     {"load", lua_lvgl_screen_load},
+    {NULL, NULL},
+};
+
+static const luaL_Reg lua_lvgl_line_methods[] = {
+    {"set_points", lua_lvgl_line_set_points},
     {NULL, NULL},
 };
 
@@ -298,11 +304,11 @@ static const lua_lvgl_widget_descriptor_t s_widget_descriptors[] = {
     {LUA_LVGL_OBJ_SCREEN,      "lvgl.obj.screen",      lua_lvgl_screen_methods},
     {LUA_LVGL_OBJ_CONTAINER,   "lvgl.obj.container",   lua_lvgl_no_extra_methods},
     {LUA_LVGL_OBJ_LABEL,       "lvgl.obj.label",       lua_lvgl_label_methods},
+    {LUA_LVGL_OBJ_LINE,        "lvgl.obj.line",        lua_lvgl_line_methods},
     {LUA_LVGL_OBJ_BUTTON,      "lvgl.obj.button",      lua_lvgl_button_methods},
     {LUA_LVGL_OBJ_BAR,         "lvgl.obj.bar",         lua_lvgl_bar_methods},
     {LUA_LVGL_OBJ_SLIDER,      "lvgl.obj.slider",      lua_lvgl_slider_methods},
     {LUA_LVGL_OBJ_IMAGE,       "lvgl.obj.image",       lua_lvgl_no_extra_methods},
-    {LUA_LVGL_OBJ_LINE,        "lvgl.obj.line",        lua_lvgl_no_extra_methods},
     {LUA_LVGL_OBJ_ARC,         "lvgl.obj.arc",         lua_lvgl_arc_methods},
     {LUA_LVGL_OBJ_SPINNER,     "lvgl.obj.spinner",     lua_lvgl_no_extra_methods},
     {LUA_LVGL_OBJ_SCALE,       "lvgl.obj.scale",       lua_lvgl_scale_methods},

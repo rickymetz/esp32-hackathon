@@ -163,6 +163,39 @@ void lua_lvgl_invalidate_records_locked(void)
     }
 }
 
+/* obj:set_clickable(false) -- make a widget display-only.
+ *
+ * Without this a decorative control still eats touches: three arcs used
+ * as a watch face swallowed every horizontal drag, so the page would not
+ * swipe. It is the general fix for the drag-versus-paging conflict the
+ * design guide warns about, and the only way from Lua to build a widget
+ * that is seen but not touched. */
+int lua_lvgl_set_clickable(lua_State *L)
+{
+    lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
+    bool on = lua_isnoneornil(L, 2) ? true : lua_toboolean(L, 2);
+    const char *obj_error = NULL;
+    lv_obj_t *obj;
+    esp_err_t err = lua_lvgl_lock();
+
+    if (err != ESP_OK) {
+        return lua_lvgl_error_esp(L, "lock", err);
+    }
+    obj = lua_lvgl_validate_ud_locked(ud, NULL, &obj_error);
+    if (!obj) {
+        lua_lvgl_unlock();
+        return luaL_error(L, "%s", obj_error);
+    }
+    if (on) {
+        lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    } else {
+        lv_obj_remove_flag(obj, LV_OBJ_FLAG_CLICKABLE);
+    }
+    lua_lvgl_unlock();
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 int lua_lvgl_delete(lua_State *L)
 {
     lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);

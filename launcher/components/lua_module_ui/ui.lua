@@ -182,10 +182,16 @@ function M.row(parent, opts)
         bg_color = "#1E1E28", radius = 12,
     })
 
+    -- Width-limited so a long label wraps inside the row instead of
+    -- running under (or past) the trailing switch/check/chevron --
+    -- "Daylight saving" was losing its last letter to the switch, and a
+    -- long picker entry ran off the panel entirely (Rick, on device).
+    local trailing = (opts.kind == "toggle") and 92 or (opts.kind and 56 or 16)
     h.label = lvgl.label(h.row, {
         text = opts.text or "",
         align = "left_mid", x = 16,
         text_color = opts.dim and "#8A8A99" or "#FFFFFF",
+        w = 344 - 16 - trailing,
     })
 
     if opts.kind == "toggle" then

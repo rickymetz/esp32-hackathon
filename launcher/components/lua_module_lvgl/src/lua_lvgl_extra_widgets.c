@@ -15,6 +15,55 @@ static int lua_lvgl_line(lua_State *L)
     return lua_lvgl_create_widget(L, LUA_LVGL_OBJ_LINE);
 }
 
+/* line:set_points{{x,y},...} -- points were creation-only, so anything
+ * animated (a clock hand, a graph) had to delete and rebuild its line
+ * every frame, churning object records that are only reclaimed at app
+ * exit. The record owns the point array exactly as it does for a
+ * buttonmatrix map: free the old one after LVGL is pointed at the new. */
+int lua_lvgl_line_set_points(lua_State *L)
+{
+    lua_lvgl_obj_ud_t *ud = lua_lvgl_check_ud(L, 1);
+    lv_point_precise_t *points;
+    uint32_t count = 0;
+    esp_err_t err;
+    lv_obj_t *obj;
+
+    luaL_checktype(L, 2, LUA_TTABLE);
+    /* The shared parser reads a `points` field out of an options table,
+     * but the method signature is the natural line:set_points{{x,y},...}
+     * -- so wrap the argument in a throwaway table rather than making
+     * every caller write {points = {...}}. Built before the lock: it
+     * calls into Lua, which must not happen while the lock is held. */
+    lua_newtable(L);
+    lua_pushvalue(L, 2);
+    lua_setfield(L, -2, "points");
+    points = lua_lvgl_build_line_points(L, lua_gettop(L), &count);
+    lua_pop(L, 1);
+
+    err = lua_lvgl_lock();
+    if (err != ESP_OK) {
+        free(points);
+        return lua_lvgl_error_esp(L, "lock", err);
+    }
+    const char *obj_error = NULL;
+    obj = lua_lvgl_validate_ud_locked(ud, NULL, &obj_error);
+    if (!obj) {
+        lua_lvgl_unlock();
+        free(points);
+        return luaL_error(L, "%s", obj_error);
+    }
+
+    lv_point_precise_t *old = ud->record->line_points;
+    ud->record->line_points = points;
+    ud->record->line_point_count = count;
+    lv_line_set_points(obj, points, count);
+    free(old);
+
+    lua_lvgl_unlock();
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 static int lua_lvgl_arc(lua_State *L)
 {
     return lua_lvgl_create_widget(L, LUA_LVGL_OBJ_ARC);

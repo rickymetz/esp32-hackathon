@@ -23,6 +23,11 @@ static void lua_lvgl_apply_color_style_field(lua_State *L, int index, lv_obj_t *
         } else if (strcmp(field, "line_color") == 0) {
             lv_obj_set_style_line_color(obj, color, 0);
             lv_obj_set_style_arc_color(obj, color, 0);
+            /* An arc's visible band is its INDICATOR part; colouring
+             * only the main part left every arc showing the theme
+             * colour -- three identically blue rings on the watch face
+             * are what exposed this. */
+            lv_obj_set_style_arc_color(obj, color, LV_PART_INDICATOR);
         }
     }
     lua_pop(L, 1);
