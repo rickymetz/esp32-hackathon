@@ -535,4 +535,93 @@ function M.fill(opts, on_change, done)
     scr:load()
 end
 
+-- ---------------------------------------------------------------- button
+-- The primary action button every app hand-rolls, at the design's tap size
+-- (>= ~200x100) and palette. kind = "primary" | "secondary" | "danger".
+-- Returns the button widget so :on()/:set_text() compose directly.
+local BTN_BG = { primary = "#2F80ED", secondary = "#3A3A44", danger = "#C0392B" }
+function M.button(parent, opts)
+    opts = opts or {}
+    local btn = lvgl.button(parent, {
+        text = opts.text or "",
+        align = opts.align, x = opts.x, y = opts.y,
+        w = opts.w or 320, h = opts.h or 110,
+        bg_color = opts.bg_color or BTN_BG[opts.kind or "primary"] or BTN_BG.primary,
+        text_color = opts.text_color or "#FFFFFF",
+        radius = opts.radius or 16,
+    })
+    if opts.on_click then btn:on("clicked", opts.on_click) end
+    return btn
+end
+
+-- ---------------------------------------------------------------- list
+-- A scrollable vertical stack for rows/cards -- the container M.row and
+-- M.select expect. Returns the container; parent your rows to it.
+function M.list(parent, opts)
+    opts = opts or {}
+    local c = lvgl.container(parent, {
+        x = opts.x or 0, y = opts.y or 0,
+        w = opts.w or 368, h = opts.h or 448,
+        bg_opa = 0, border_width = 0, pad = opts.pad or 12,
+    })
+    c:set_flex({ flow = "column", pad_row = opts.pad_row or 12 })
+    c:set_scroll({ scrollbar = opts.scrollbar or "active" })
+    return c
+end
+
+-- ---------------------------------------------------------------- card
+-- The launcher's standard grouped-content surface: a rounded panel. Parent
+-- content to it. Returns the container.
+function M.card(parent, opts)
+    opts = opts or {}
+    return lvgl.container(parent, {
+        x = opts.x, y = opts.y, align = opts.align,
+        w = opts.w or 344, h = opts.h or 120,
+        bg_color = opts.bg_color or "#1E1E28",
+        radius = opts.radius or 16, border_width = 0,
+        pad = opts.pad or 16,
+    })
+end
+
+-- ---------------------------------------------------------------- stat
+-- A big readout: a value over a small caption -- for stopwatches, counters,
+-- temperatures. opts.size picks the value font (default 48). Returns h with
+-- h.set(value) to update the number.
+function M.stat(parent, opts)
+    opts = opts or {}
+    local size = opts.size or 48
+    local align = opts.align or "center"
+    local h = {}
+    h.value = lvgl.label(parent, {
+        text = tostring(opts.value or ""),
+        align = align, x = opts.x, y = opts.y,
+        text_color = opts.color or "#FFFFFF",
+        font = lvgl.font(size),
+    })
+    if opts.label then
+        h.caption = lvgl.label(parent, {
+            text = opts.label,
+            align = align, x = opts.x,
+            y = (opts.y or 0) + size // 2 + 20,   -- just below the value
+            text_color = "#8A8A99",
+            font = lvgl.font(26),
+        })
+    end
+    h.set = function(v) h.value:set_text(tostring(v)) end
+    return h
+end
+
+-- ---------------------------------------------------------------- note
+-- A centred, dim message for empty states and hints ("Nothing yet",
+-- "Tap + to start"). Returns the label so you can hide/replace it.
+function M.note(scr, text, opts)
+    opts = opts or {}
+    return lvgl.label(scr, {
+        text = text or "",
+        align = "center", y = opts.y or 0,
+        text_color = opts.color or "#55555F",
+        font = lvgl.font(opts.size or 32),
+    })
+end
+
 return M

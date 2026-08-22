@@ -341,6 +341,11 @@ cannot `require` files from the card).
 | `ui.stepper(parent, {min=, max=, step=, value=, label=}, cb)` | +/- value row with clamp and hold-to-repeat |
 | `ui.busy({text=})` | Modal spinner screen; call `h.done()` to dismiss |
 | `ui.fill({title=, min=, max=, value=, label=}, on_change, done)` | Big drag-to-set arc **on its own screen** — a drag surface and horizontal paging fight over the same gesture, so never embed one in a tileview |
+| `ui.button(parent, {text=, kind="primary"\|"secondary"\|"danger", w=, h=, align=, on_click=})` | The standard action button at the ≥200×100 tap size and launcher palette; returns the widget so `:on()`/`:set_text()` compose |
+| `ui.list(parent, {y=, h=, pad_row=})` | Scrollable vertical stack — the container `ui.row`/`ui.select` expect; parent your rows to it |
+| `ui.card(parent, {w=, h=, align=, x=, y=})` | Rounded grouped-content panel; parent content to it |
+| `ui.stat(parent, {value=, label=, size=, align=, y=})` | Big value over a small caption (readouts); returns `h` with `h.set(v)` |
+| `ui.note(scr, text, {size=, y=})` | Centred dim message for empty states and hints; returns the label |
 
 ### Text entry: `require("keyboard")`
 
