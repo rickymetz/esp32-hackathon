@@ -149,9 +149,20 @@ int64_t app_timer_run_due(lua_State *L)
     return soonest;
 }
 
+/* Monotonic milliseconds since boot. Exists because measuring elapsed
+ * time by counting timer ticks drifts: periodic timers re-arm from
+ * dispatch time, so every cycle stretches by pump latency (the flagship
+ * stopwatch shipped with exactly that bug). */
+static int l_timer_now_ms(lua_State *L)
+{
+    lua_pushinteger(L, (lua_Integer)(esp_timer_get_time() / 1000));
+    return 1;
+}
+
 static const luaL_Reg timer_funcs[] = {
     {"every", l_timer_every},
     {"after", l_timer_after},
+    {"now_ms", l_timer_now_ms},
     {NULL, NULL},
 };
 
