@@ -122,6 +122,15 @@ unit tests:
 ninja -C sim/build sim_tests && sim/build/sim_tests
 ```
 
+`sim/scenarios.py` goes a step past "non-blank": it drives an app through an
+interaction and asserts a specific screen region's colour (a slider actually
+recolours the swatch, a toggle actually toggles, the reaction pad actually
+turns green) — catching binding/state regressions a blank-check can't.
+
+```bash
+sim/scenarios.py
+```
+
 ## CI
 
 `.github/workflows/sim.yml` runs exactly that on every PR that touches the sim,

@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Scenario assertions for the simulator.
+
+Where test.sh only asks "did the app draw *something*", these drive an app
+through an interaction and assert a specific screen region has a specific
+colour -- catching regressions a blank-check can't: a broken slider->swatch
+binding, a dead toggle, a lost theme, a value that stops updating.
+
+Assertions are colour/brightness on fixed pixels (no OCR), with generous
+tolerances so legitimate anti-aliasing wobble doesn't trip them.
+
+    sim/scenarios.py            # exits non-zero if any scenario fails
+
+Requires the sim built (sim/build.sh).
+"""
+import os
+import struct
+import subprocess
+import sys
+import zlib
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(HERE)
+SIM = os.path.join(HERE, "build", "sim")
+
+
+def decode(path):
+    """Return (w, h, rgb_bytes) for a PNG the sim wrote."""
+    d = open(path, "rb").read()
+    i, w, h, idat = 8, 0, 0, b""
+    while i + 8 <= len(d):
+        ln = struct.unpack(">I", d[i:i + 4])[0]
+        typ = d[i + 4:i + 8]
+        data = d[i + 8:i + 8 + ln]
+        if typ == b"IHDR":
+            w, h = struct.unpack(">II", data[:8])
+        elif typ == b"IDAT":
+            idat += data
+        elif typ == b"IEND":
+            break
+        i += 12 + ln
+    raw = zlib.decompress(idat)
+    stride = 1 + w * 3
+    rgb = bytearray(w * h * 3)
+    for y in range(h):
+        rgb[y * w * 3:(y + 1) * w * 3] = raw[y * stride + 1:y * stride + 1 + w * 3]
+    return w, h, bytes(rgb)
+
+
+def px(w, rgb, x, y):
+    o = (y * w + x) * 3
+    return rgb[o], rgb[o + 1], rgb[o + 2]
+
+
+def run(cmds):
+    subprocess.run([SIM, "--sdroot", REPO] + cmds, cwd=REPO, capture_output=True)
+
+
+# --- assertions (return (ok, message)) -----------------------------------
+
+def flashlight_on(w, rgb):
+    r, g, b = px(w, rgb, 184, 224)
+    return (r > 200 and g > 200 and b > 200), f"centre not white: {r},{g},{b}"
+
+
+def flashlight_off(w, rgb):
+    r, g, b = px(w, rgb, 184, 224)
+    return (r < 40 and g < 40 and b < 40), f"centre not black: {r},{g},{b}"
+
+
+# NB: sample away from centred text/readouts -- the swatch and reaction pad
+# both draw a centred label, so probe a corner of the fill instead.
+def color_default_blue(w, rgb):
+    r, g, b = px(w, rgb, 60, 110)
+    return (b > 150 and b > r and b > g), f"swatch not blue: {r},{g},{b}"
+
+
+def color_mixed_orange(w, rgb):
+    r, g, b = px(w, rgb, 60, 110)
+    return (r > 180 and b < 90 and r > b), f"swatch not orange: {r},{g},{b}"
+
+
+def reaction_green(w, rgb):
+    r, g, b = px(w, rgb, 80, 320)
+    return (g > 120 and g > r and g > b), f"pad not green: {r},{g},{b}"
+
+
+SCENARIOS = [
+    ("flashlight-on",  ["run", "apps/flashlight.lua"], flashlight_on),
+    ("flashlight-off", ["run", "apps/flashlight.lua", ":", "tap", "184", "224"], flashlight_off),
+    ("color-default",  ["run", "apps/color.lua"], color_default_blue),
+    ("color-mixed",    ["run", "apps/color.lua",
+                        ":", "swipe", "200", "236", "320", "236", "300",
+                        ":", "swipe", "200", "364", "66", "364", "300"], color_mixed_orange),
+    ("reaction-green", ["run", "apps/reaction.lua",
+                        ":", "tap", "184", "248", ":", "sleep", "4.5"], reaction_green),
+]
+
+
+def main():
+    if not os.path.exists(SIM):
+        sys.exit("sim not built -- run sim/build.sh")
+    os.makedirs(os.path.join(HERE, "build"), exist_ok=True)
+
+    failures = 0
+    for name, cmds, check in SCENARIOS:
+        out = os.path.join(HERE, "build", f"scen_{name}.png")
+        run(cmds + [":", "shot", out])
+        try:
+            w, _, rgb = decode(out)
+            ok, msg = check(w, rgb)
+        except Exception as e:  # a crash/blank frame is a failure, not a traceback
+            ok, msg = False, f"decode error: {e}"
+        if ok:
+            print(f"  ok    {name}")
+        else:
+            print(f"  FAIL  {name}  -- {msg}")
+            failures += 1
+
+    print(f"\nscenarios: {len(SCENARIOS) - failures} ok, {failures} failed")
+    sys.exit(1 if failures else 0)
+
+
+if __name__ == "__main__":
+    main()
