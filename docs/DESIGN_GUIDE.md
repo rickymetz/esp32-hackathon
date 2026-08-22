@@ -14,7 +14,7 @@ If you are writing an app, these eight are the whole guide. Everything below the
 measurement and platform research they came from, plus launcher-maintainer detail.
 
 1. **Body text 32 px. Never below 24 px.** The default is now 32; do not shrink it.
-2. **Nothing tappable smaller than 88 × 88 px.** Prefer 104 px tall rows.
+2. **Aim for 200 × 100 tappable; never below 88 × 88.** Prefer 104 px tall rows.
 3. **True black background** (`0x000000`) — battery and legibility.
 4. **White text for anything that matters.** Grey is for captions only.
 5. **One idea per screen**, two or three controls at most.
@@ -105,8 +105,24 @@ Three independent sources, one answer:
 Our own measurement sits exactly where the guidelines predict. That is a good sign the
 mapping is real and not numerology.
 
-> ### Rule: no tappable thing smaller than 88 × 88 px.
-> Prefer **104 px** tall for list rows — Wear OS's standard `Chip` height, and comfortable here.
+> ### Rule: no tappable thing smaller than 88 × 88 px. Aim for 200 × 100.
+> 88 × 88 is the floor the platforms agree on. **200 × 100 is what we measured as
+> comfortable here**, and it is what the app contract asks for.
+
+Those are two different numbers doing two different jobs, so be clear which one applies:
+
+| Size | Verdict |
+| --- | --- |
+| ≥ 200 × 100 | Aim here. A 240 × 120 button caught every tap. |
+| 88 × 88 – 200 × 100 | Allowed when the layout forces it — two buttons side by side on a 368 px screen land near 164 × 104. Keep the height at 104+. |
+| < 88 × 88 | Never. |
+
+Be careful reading our own measurement: 240 × 120 worked and 180 × 56 dropped about half,
+but those differ in **both** dimensions, so the data cannot tell us how much was width and
+how much was height. The 56 px height is the likelier culprit — which is why the middle band
+above holds height at 104 and only compromises on width.
+
+Prefer **104 px** tall for list rows — Wear OS's standard `Chip` height, and comfortable here.
 
 Neither Apple nor Google publishes a required *gap* between targets; both only say "don't
 overlap." Use **16 px** (8 units) and rely on the size rule to do the real work.

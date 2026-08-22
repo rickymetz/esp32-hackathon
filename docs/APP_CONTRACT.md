@@ -49,8 +49,11 @@ to change it is a full-screen animation that visibly tears (raise it) on a scree
    the launcher's screen. When your app exits, the launcher deletes your screen and every
    widget on it — you do not need to clean up widgets.
 3. **Touch is not pixel-accurate.** Measured on this hardware: a 240×120 button catches
-   every tap, while a 180×56 one dropped roughly half. **Keep tappable targets ≥ ~200×100.**
-   If your buttons feel broken, this is almost certainly why.
+   every tap, while a 180×56 one dropped roughly half. **Aim for ≥ 200×100, and never go
+   below 88×88.** Between those two you are in a grey band that works but is not
+   comfortable — fine when the layout forces it (two buttons side by side on a 368 px
+   screen land near 164×104), so long as you keep the height at 104 or more. If your
+   buttons feel broken, this is almost certainly why.
 4. **Errors are visible, not fatal.** A Lua error stops your app and shows a red,
    full-screen error with a traceback, then waits for BOOT — or `STOP` over serial — before
    returning to the launcher. It does not vanish silently, and it does not reboot the
