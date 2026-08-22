@@ -373,6 +373,13 @@ end)
 Worked examples of all three: `apps/stopwatch.lua` and `apps/reaction.lua` (1),
 `apps/metronome.lua` and `apps/countdown.lua` (2), `apps/faces.lua` and `apps/clock.lua` (3).
 
+**One limit on `timer.now_ms()`:** apps run with 32-bit Lua integers, so it wraps back to
+negative after **2³¹ ms — about 24.9 days** of uptime. *Differences* survive that
+(`now_ms() - started` stays correct across a single wrap, because Lua integer arithmetic
+wraps too), which is exactly why the patterns above subtract rather than compare. Code
+that instead assumes the value only ever grows will misbehave once, at that instant. Note
+the simulator uses 64-bit Lua and never wraps, so it cannot show you this.
+
 **The gotcha that costs real debugging time:** this looks reasonable and is wrong —
 
 ```lua
