@@ -28,6 +28,69 @@ void app_sandbox_install_hook(lua_State *L)
     lua_sethook(L, interrupt_hook, LUA_MASKCOUNT, HOOK_COUNT);
 }
 
+/* coroutine.create, wrapped: lua_newthread starts with hookmask == 0, so
+ * a tight loop inside a coroutine body was invisible to the interrupt
+ * hook and fell through to a ~10s watchdog reboot of the whole board
+ * (open issue 1 from the handoff). This calls the original create (kept
+ * as an upvalue) and installs the hook on the new thread before handing
+ * it back. */
+static int sandbox_co_create(lua_State *L)
+{
+    luaL_checktype(L, 1, LUA_TFUNCTION);
+    lua_pushvalue(L, lua_upvalueindex(1));   /* original coroutine.create */
+    lua_pushvalue(L, 1);
+    lua_call(L, 1, 1);
+    lua_State *co = lua_tothread(L, -1);
+    if (co != NULL) {
+        lua_sethook(co, interrupt_hook, LUA_MASKCOUNT, HOOK_COUNT);
+    }
+    return 1;
+}
+
+/* Replace coroutine.create in place (the cached module table is the same
+ * object, so require("coroutine") sees the wrapper too), and rebuild
+ * coroutine.wrap on top of it in Lua -- the original wrap hides its
+ * thread, so there is no C-side handle to hook. */
+static void sandbox_wrap_coroutines(lua_State *L)
+{
+    static const char wrap_src[] =
+        "local create, resume, unpack = ...\n"
+        "return function(f)\n"
+        "  local co = create(f)\n"
+        "  return function(...)\n"
+        "    local r = { resume(co, ...) }\n"
+        "    if r[1] then return unpack(r, 2) end\n"
+        "    error(r[2], 0)\n"
+        "  end\n"
+        "end\n";
+
+    lua_getglobal(L, "coroutine");
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+
+    /* coroutine.create = C wrapper closing over the original */
+    lua_getfield(L, -1, "create");
+    lua_pushcclosure(L, sandbox_co_create, 1);
+    lua_setfield(L, -2, "create");
+
+    /* coroutine.wrap = Lua chunk(create_wrapper, resume, table.unpack) */
+    if (luaL_loadstring(L, wrap_src) == LUA_OK) {
+        lua_getfield(L, -2, "create");   /* the wrapper installed above */
+        lua_getfield(L, -3, "resume");
+        lua_getglobal(L, "table");
+        lua_getfield(L, -1, "unpack");
+        lua_remove(L, -2);               /* table */
+        lua_call(L, 3, 1);               /* -> wrap function */
+        lua_setfield(L, -2, "wrap");
+    } else {
+        ESP_LOGE(TAG, "coroutine.wrap shim failed to load: %s", lua_tostring(L, -1));
+        lua_pop(L, 1);
+    }
+    lua_pop(L, 1);   /* coroutine table */
+}
+
 static void nil_field(lua_State *L, const char *table, const char *field)
 {
     lua_getglobal(L, table);
@@ -72,6 +135,8 @@ void app_sandbox_apply(lua_State *L)
         lua_setfield(L, -2, "package");
     }
     lua_pop(L, 1);
+
+    sandbox_wrap_coroutines(L);
 
     ESP_LOGD(TAG, "sandbox applied");
 }

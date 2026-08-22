@@ -5,7 +5,11 @@ Lua scripts; the launcher lists them on the device and runs them. Installing som
 else's app means copying a file — no reflashing, no toolchain, no rebuild.
 
 **Writing an app? You only need [`docs/APP_CONTRACT.md`](docs/APP_CONTRACT.md).**
-Everything below is for people working on the launcher itself.
+Apps get touch, swipes and paging, a physical button, shared UI building blocks
+(`require("ui")`), text entry (`require("keyboard")`), **offline voice commands**
+(`require("voice")` — recognition on the device, no network), timers, and the
+Lexend type ramp. [`docs/DESIGN_GUIDE.md`](docs/DESIGN_GUIDE.md) says how to make
+it all look right. Everything below is for people working on the launcher itself.
 
 ---
 
@@ -52,14 +56,19 @@ Exit the monitor with `Ctrl-]`.
 
 ### 3. Install apps
 
-Copy `.lua` files to `/apps/` on the microSD card, then reboot the board. The launcher
-lists everything it finds there, using the filename as the app name.
+The fast path, over USB — no card shuffling, no reboot:
 
-That is the entire install process — no reflash, no rebuild, no toolchain. It is how you
-install someone else's app, and how they install yours.
+```bash
+./.venv/bin/python tools/push.py apps/myapp.lua     # install / update
+./.venv/bin/python tools/push.py --list             # what's on the card
+./.venv/bin/python tools/push.py --delete old.lua   # remove
+```
 
-Two apps ship in [`apps/`](apps/): `counter.lua` (the template — copy this) and
-`hello_world.lua`.
+Or copy `.lua` files to `/apps/` on the microSD card by hand. Either way the
+filename becomes the app name in the list.
+
+Start from [`apps/`](apps/): `counter.lua` (the template — copy this),
+`stopwatch.lua` (timers + the hero font + the PWR button), `hello_world.lua`.
 
 ### 4. Using it
 
@@ -84,6 +93,22 @@ cd sim && ./setup.sh && ./build.sh
 
 It doesn't model hardware quirks (touch imprecision, the watchdog, IMU/voice) — confirm
 those on the board. See `sim/README.md`, and `apps/README.md` for the example apps.
+
+## Driving the device without touching it
+
+When you do have the board attached, the launcher speaks a small protocol over the same
+USB serial used for flashing — enough to install, launch, drive, and *see* apps with no
+hands:
+
+```bash
+./.venv/bin/python tools/drive.py run myapp.lua : sleep 1 : tap 184 224 : shot out.png
+```
+
+`RUN` / `STOP` / `LIST` / `DELETE` / `TAP x y` / `SWIPE x0 y0 x1 y1 [ms]` /
+`PWR` (synthetic button press) / `SHOT` (screenshot → PNG via
+`tools/screenshot.py`). Taps inject through a real LVGL input device, so
+widgets can't tell them from a finger. This is how the UI and even the voice
+module get verified — macOS `say` through the speakers reaches the mic.
 
 ---
 
@@ -123,6 +148,8 @@ know them.
 | `apps/` | Lua apps, one file each; `apps/README.md` indexes them |
 | `sim/` | Headless simulator — run and screenshot apps with no board |
 | `docs/APP_CONTRACT.md` | The app API — the one doc app authors need |
+| `docs/DESIGN_GUIDE.md` | Type, targets, colour, navigation, components |
+| `tools/push.py` · `drive.py` · `screenshot.py` | Install, drive, and see the device over USB |
 | `CLAUDE.md` | Shared context for Claude Code sessions |
 
 ---

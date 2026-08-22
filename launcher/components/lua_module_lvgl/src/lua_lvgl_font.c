@@ -652,6 +652,7 @@ static const struct {
     {32, &lv_font_lexend_32},
     {40, &lv_font_lexend_40},
     {48, &lv_font_lexend_48},
+    {60, &lv_font_lexend_60},   /* hero numerals, per the design guide */
 };
 
 /* --- Global UI font scale --------------------------------------------------
@@ -718,7 +719,7 @@ static int lua_lvgl_font_builtin(lua_State *L)
         }
     }
     if (!known) {
-        return luaL_error(L, "lvgl.font: no built-in %d px face (available: 24, 26, 32, 40, 48)", size);
+        return luaL_error(L, "lvgl.font: no built-in %d px face (available: 24, 26, 32, 40, 48, 60)", size);
     }
     font = font_for_scaled_size(size);
 

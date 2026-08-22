@@ -21,7 +21,7 @@ local lvgl = require("lvgl")
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#101014" })
+scr:set_style({ bg_color = "#000000" })
 
 local label = lvgl.label(scr, {
     text = "Hello",
@@ -283,7 +283,7 @@ get a readable size for free and usually don't need to touch fonts at all. Five 
 faces ship baked into the firmware; ask for one with `lvgl.font`:
 
 ```lua
-local big = lvgl.font(40)          -- 24, 26, 32, 40, 48; anything else raises
+local big = lvgl.font(40)          -- 24, 26, 32, 40, 48, 60; anything else raises
 label:set_style({ font = big })
 ```
 
@@ -474,10 +474,10 @@ Ask if your app genuinely needs one — each is launcher work that blocks everyo
 | --- | --- |
 | Display | **368 × 448** portrait, ~350 nit |
 | Minimum comfortable touch target | **~200 × 100** |
-| Lua heap | Allocated from PSRAM (~8 MB free). A bare VM (no modules loaded) costs ~15.5 KB; a real app — `lvgl` loaded, a screen created — costs ~40 KB |
+| Lua heap | Allocated from PSRAM (~5 MB free — the resident voice model costs ~3 MB). A bare VM (no modules loaded) costs ~15.5 KB; a real app — `lvgl` loaded, a screen created — costs ~40 KB |
 | Lua task stack | 32 KB |
 | Concurrency | One app at a time |
-| Custom fonts | Available — `lvgl.font_load(path, {size=...})` or `lvgl.init({font_path=...})`. The TTF must exist on the SD card; none ships by default |
+| Custom fonts | Built-in Lexend at 24/26/32/40/48/60 via `lvgl.font(size)`; TTFs above that via `lvgl.font_load` (must exist on the card) |
 
 ---
 
@@ -486,12 +486,17 @@ Ask if your app genuinely needs one — each is launcher work that blocks everyo
 The full contents of `apps/counter.lua`:
 
 ```lua
+-- Counter -- the template app. Copy this file, rename it, make it yours.
+--
+-- Install: copy to /apps/ on the SD card. The launcher lists every .lua file
+-- it finds there; the filename becomes the name shown in the list.
+
 local lvgl = require("lvgl")
 
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#101014" })
+scr:set_style({ bg_color = "#000000" })
 
 local title = lvgl.label(scr, {
     text = "Counter",
@@ -501,10 +506,12 @@ local title = lvgl.label(scr, {
 
 local count = 0
 
+-- Touch on this panel is not pixel-accurate: small targets get missed.
+-- Keep tappable things at least ~200x100. This was measured, not guessed.
 local button = lvgl.button(scr, {
     text = "Tap me",
     align = "center", y = 0,
-    w = 240, h = 120,          -- big on purpose; see rule 3
+    w = 240, h = 120,
     bg_color = "#2f80ed",
     text_color = "#ffffff",
 })
@@ -514,7 +521,17 @@ button:on("clicked", function()
     title:set_text("Count: " .. count)
 end)
 
+lvgl.label(scr, {
+    text = "edit apps/counter.lua",
+    align = "bottom_mid", y = -30,
+    text_color = "#8a8a99",
+    font = lvgl.font(26),   -- caption size; 32px overflowed the panel
+})
+
 scr:load()
+
+-- Return and let the launcher pump events. Do NOT write your own
+-- `while true` loop: it will freeze the device, including the way back.
 ```
 
 For an example that combines a timer, a big custom font, and start/stop/reset buttons, see

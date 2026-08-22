@@ -100,6 +100,15 @@ static esp_err_t scan_locked(void)
         return ESP_OK;
     }
 
+    /* A failed push's rename leaves .push.tmp behind; sweep it here so
+     * the card never accumulates them (open issue 3 from the handoff). */
+    {
+        char tmp[APP_PATH_MAX];
+        if (snprintf(tmp, sizeof(tmp), "%s/.push.tmp", APPS_DIR) < (int)sizeof(tmp)) {
+            remove(tmp);   /* ENOENT is the normal case */
+        }
+    }
+
     struct dirent *ent;
     while ((ent = readdir(dir)) != NULL && s_count < APP_MAX_COUNT) {
         if (ent->d_name[0] == '.' || !has_lua_suffix(ent->d_name)) {

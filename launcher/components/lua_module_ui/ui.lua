@@ -506,7 +506,7 @@ function M.fill(opts, on_change, done)
         text = "",
         align = "center", y = 20,
         text_color = "#FFFFFF",
-        font = lvgl.font(48),
+        font = lvgl.font(60),   -- hero size: the value IS this screen
     })
 
     local fmt = opts.label or "%d"
