@@ -38,9 +38,37 @@ local function stop_beat()
     if beat_h then beat_h:cancel(); beat_h = nil end
 end
 
+-- Beats are scheduled against an absolute clock, not by timer.every.
+--
+-- A periodic timer re-arms AFTER its callback returns, so every beat would
+-- cost 60000/bpm PLUS the tone, the redraw and the pump's dispatch latency.
+-- On a metronome that is not a rounding error: at 100 bpm a 20 ms overhead
+-- makes the real tempo about 97 bpm, and the error compounds, so playing
+-- along drifts a whole beat within a minute. Nothing on screen would say so.
+--
+-- Chaining timer.after against a running next_at fixes the average exactly:
+-- a late beat does not push the one after it, because the target time was
+-- computed from the start of the run rather than from the previous callback.
+local next_at
+
+local function schedule()
+    -- next_at stays a float so the interval never rounds cumulatively, but
+    -- timer.after takes an integer (luaL_checkinteger raises on a fraction).
+    local delay = math.floor(next_at - timer.now_ms())
+    if delay < 1 then delay = 1 end        -- never schedule into the past
+    beat_h = timer.after(delay, function()
+        beat_h = nil
+        flash()
+        next_at = next_at + (60000 / bpm)
+        schedule()
+    end)
+end
+
 local function start_beat()
     stop_beat()
-    beat_h = timer.every(math.floor(60000 / bpm), flash)
+    next_at = timer.now_ms() + (60000 / bpm)
+    flash()                                 -- beat immediately on Start
+    schedule()
 end
 
 -- Label is just the number: a 3-digit "%d bpm" is wide enough to collide with
