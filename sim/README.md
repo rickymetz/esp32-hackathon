@@ -85,6 +85,11 @@ layer. These still need the board:
   the board.
 - **Watchdog reboots** from runaway loops / blocking C calls; timing of the
   10 s TWDT; PSRAM budgets.
+`sim/timing_test.py` guards the timer-accuracy bug class (see
+`sim/fixtures/timing.lua`): it paces the same duration with both the wrong
+pattern and the right one and asserts they are still distinguishable. Runs in
+CI.
+
 - **Timer dispatch latency, to scale.** Timers are inaccurate in the same
   *direction* here as on the board -- a periodic timer re-arms after its
   callback, so it always runs slow -- but not to the same *degree*. Measured
