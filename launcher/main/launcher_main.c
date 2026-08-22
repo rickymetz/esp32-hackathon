@@ -30,6 +30,7 @@
 #include "esp_err.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
+#include "esp_random.h"
 #include "esp_io_expander.h"
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
@@ -378,9 +379,31 @@ static void show_error_and_wait_for_stop(lua_State *L, const char *app_name, con
  * a future module that can fail to open -- has no error jump buffer to
  * unwind through, and Lua's default panic function calls abort(), taking
  * the whole board down with it. */
+/* Lua seeds math.random from time(NULL) plus a stack address. Neither is
+ * random here: nothing sets the system clock from the RTC, so without Wi-Fi
+ * time(NULL) is just seconds-since-boot, and an embedded stack has no ASLR.
+ * Two launches at the same uptime therefore deal identical "random" numbers.
+ * esp_random() is the hardware RNG, so reseed from it. */
+static void seed_random(lua_State *L)
+{
+    if (lua_getglobal(L, "math") != LUA_TTABLE) {
+        lua_pop(L, 1);
+        return;
+    }
+    if (lua_getfield(L, -1, "randomseed") != LUA_TFUNCTION) {
+        lua_pop(L, 2);
+        return;
+    }
+    lua_pushinteger(L, (lua_Integer)esp_random());
+    lua_pushinteger(L, (lua_Integer)esp_random());
+    lua_call(L, 2, 0);   /* inside the pcall around lua_setup_state */
+    lua_pop(L, 1);       /* math */
+}
+
 static int lua_setup_state(lua_State *L)
 {
     luaL_openlibs(L);
+    seed_random(L);
 
     esp_err_t err = launcher_lua_open_modules(L);
     if (err != ESP_OK) {
