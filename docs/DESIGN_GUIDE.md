@@ -193,7 +193,15 @@ for one of these before mixing your own, so six developers' apps look like one d
 | `#2F80ED` | Accent — the primary action |
 | `#B3261E` | Destructive, and only ever behind `ui.confirm` |
 
-**Never colour by itself.** Both platforms say this. Pair colour with text or shape.
+**The 7:1 rule is a *text* rule.** Icons and glyphs are non-text under WCAG 1.4.11 and
+need **3:1**, not 7:1 — so the accent `#2F80ED` checkmark in a `ui.select` row (5.43:1) is
+correct as it stands, and does not want "fixing" to white. Audited every `text_color` in
+`apps/` and the `ui` module against this: that glyph is the only thing below 7:1, and it
+is the only one that should be.
+
+**Never colour by itself.** Both platforms say this. Pair colour with text or shape. The
+checkmark above obeys this too — what marks a row selected is the mark being *there*, not
+its hue.
 
 **Avoid full-screen colour on long-lived screens** — Apple calls this out specifically for
 apps that stay up (a workout, a clock). Burn-in and battery.
