@@ -902,7 +902,7 @@ tools/drive.py run myapp.lua : sleep 1 : tap 184 224 : sleep 0.5 : shot out.png
 Watch the console live:
 
 ```bash
-idf.py -p /dev/cu.usbmodem101 monitor      # Ctrl-] to exit
+idf.py -p $(ls /dev/cu.usbmodem* | head -1) monitor    # Ctrl-] to exit
 ```
 
 or capture a window of it without holding the port open: `tools/read_serial.py <seconds>`.
