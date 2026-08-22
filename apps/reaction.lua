@@ -1,8 +1,12 @@
 -- Reaction -- tap Start, wait for green, then tap as fast as you can. Shows
 -- your time and tracks the best. Tapping before green is "too soon".
 --
--- Timing note: apps have no high-resolution wall clock (os.clock is CPU
--- time), so elapsed time is accumulated by a 10ms timer -- fine for a game.
+-- Timing note: the reaction time comes from timer.now_ms() timestamps, which
+-- is monotonic milliseconds since boot. An earlier version accumulated it in a
+-- 10 ms timer (elapsed = elapsed + 10), and that is wrong in the one way this
+-- app cannot afford: a periodic timer re-arms AFTER its callback, so a "10 ms"
+-- tick really costs 10 ms plus dispatch. Counting ticks therefore reports far
+-- LESS time than actually passed -- a reaction game that flatters you.
 --
 -- Install: ./.venv/bin/python tools/push.py apps/reaction.lua
 
@@ -24,8 +28,8 @@ local best_lbl = lvgl.label(scr, {
 
 local state = "idle"        -- idle | waiting | go | result
 local best
-local elapsed = 0
-local wait_h, count_h
+local go_at                 -- timer.now_ms() when the pad turned green
+local wait_h
 
 local pad = lvgl.button(scr, {
     text = "Start", align = "center", y = 24, w = 320, h = 250,
@@ -40,7 +44,6 @@ end
 
 local function stop_timers()
     if wait_h then wait_h:cancel(); wait_h = nil end
-    if count_h then count_h:cancel(); count_h = nil end
 end
 
 local function start_round()
@@ -50,8 +53,7 @@ local function start_round()
         wait_h = nil
         state = "go"
         set("TAP!", "#27ae60")
-        elapsed = 0
-        count_h = timer.every(10, function() elapsed = elapsed + 10 end)
+        go_at = timer.now_ms()
     end)
 end
 
@@ -64,6 +66,7 @@ local function activate()
         state = "result"
         set("Too soon!\nTap to retry", "#c0392b")
     elseif state == "go" then
+        local elapsed = timer.now_ms() - go_at
         stop_timers()
         state = "result"
         if not best or elapsed < best then

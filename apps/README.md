@@ -22,13 +22,13 @@ contract — start from the one closest to what you're building.
 
 | App | Shows |
 | --- | --- |
-| `counter.lua` | The minimal shape: a screen, a label, a button, a click handler |
+| `counter.lua` | The minimal shape, on `ui` helpers — the file to copy |
 | `stopwatch.lua` | `timer.now_ms()` timestamps (never tick-counting), `lvgl.font(60)`, PWR-as-lap |
 | `tally.lua` | The PWR-as-accelerator pattern + a confirm-gated (destructive) reset |
 | `dice.lua` | `math.random`, and `ui.corner_button`'s `{ button, visual }` return shape |
-| `countdown.lua` | A `ui.stepper` as both setter and live readout; a toast at zero |
+| `countdown.lua` | A `ui.stepper` as both setter and live readout; deadline-based timing; a toast at zero |
 | `tip.lua` | `require("keyboard")` number entry; steppers; a scrollable result row |
-| `reaction.lua` | Randomised `timer.after`, and measuring elapsed time with a 10 ms timer |
+| `reaction.lua` | Randomised `timer.after`, and measuring elapsed time with `timer.now_ms()` |
 | `flashlight.lua` | A full-screen tap target under a slider; recoloring the screen |
 | `metronome.lua` | A repeating beat with retempo-on-the-fly; a flash via `timer.after` |
 | `color.lua` | Live-updating sliders and a contrast-aware hex readout |
