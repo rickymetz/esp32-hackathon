@@ -34,6 +34,11 @@ scr:load()
 
 That is a complete, working app.
 
+`buffer_lines` sizes LVGL's render buffer, in screen rows. **Copy the 40 and move on** —
+it is a memory-versus-redraw-smoothness trade, 40 suits every app here, and the only reason
+to change it is a full-screen animation that visibly tears (raise it) on a screen that is
+368 px wide.
+
 ### The rules that matter
 
 1. **Build your UI, then return.** Do **not** write a `while true` loop or call
@@ -65,6 +70,48 @@ That is a complete, working app.
 
 ---
 
+## Your first app, start to finish
+
+```bash
+# 1. Once per clone -- the tools need pyserial.
+python3 -m venv .venv && ./.venv/bin/pip install -r tools/requirements.txt
+
+# 2. Start from the template.
+cp apps/counter.lua apps/myapp.lua
+
+# 3. Install it over USB (no card shuffling, no reboot).
+./.venv/bin/python tools/push.py apps/myapp.lua
+
+# 4. Launch it -- either tap Refresh then the row on the device, or:
+./.venv/bin/python tools/drive.py run myapp.lua
+```
+
+Edit, re-run steps 3 and 4, repeat. That is the whole loop.
+
+## Develop without the board
+
+There is one board and several of us. You do **not** need it to write an app: a headless
+**simulator** compiles the launcher's real Lua↔LVGL bindings against desktop LVGL, so what
+it renders is what the device renders.
+
+```bash
+# once:
+(cd sim && ./setup.sh && ./build.sh)
+
+# then, from the repo root:
+sim/simctl.py run apps/myapp.lua : tap 184 224 : shot out.png
+```
+
+You get a PNG of your app and can tap, swipe, and screenshot it in a chain. Every module
+is available: `rtc` follows your computer's clock, and `battery`, `imu`, `audio` and `wifi`
+return fixed, plausible values so a layout renders.
+
+What the simulator **cannot** show you is anything about the hardware itself: touch
+imprecision, the watchdog, real sensor readings — and, importantly, **failure**. On the
+device these modules degrade, returning `nil, "reason"`; in the simulator they always
+succeed, so it cannot prove you handled that. Confirm on the board. Details in
+`sim/README.md`.
+
 ## Installing your app
 
 The fast path, no SD card shuffling:
@@ -90,11 +137,34 @@ finds. **The filename becomes the name in the list**: `weather_clock.lua` shows 
 
 Apps run on **Lua 5.5** — not 5.1, not LuaJIT. If your muscle memory is from either of
 those, two things are likely to surprise you: `/` always returns a float even for two
-integers (use `//` for integer division), and `math.random`'s range and seeding rules are
-different. Don't assume; test the arithmetic you care about.
+integers (use `//` for integer division), and `math.random` is **seeded for you** from the
+chip's hardware RNG at every app launch — you do not need `math.randomseed()`, and you get
+a different sequence every run.
+`math.random(n)` returns 1..n inclusive, `math.random(a, b)` returns a..b inclusive, and
+`math.random()` returns a float in [0,1).
 
 Available standard library: `string`, `math`, `table`, `os`, `io`, `utf8`, `coroutine`.
-`require` also works — you need it for `require("lvgl")` and `require("timer")`.
+
+`require` gives you the launcher's modules. **This is the complete roster** — there are no
+others, and you cannot `require` a `.lua` file of your own (see the trust model below):
+
+| Module | What it is |
+| --- | --- |
+| `lvgl` | Widgets, screens, styles, fonts, symbols. Every app needs it. |
+| `timer` | `every` / `after` / `now_ms`. 16 slots. |
+| `ui` | Shared primitives — header, row, select, picker, confirm, toast, … |
+| `button` | The PWR button |
+| `keyboard` | Text entry |
+| `voice` | Offline speech — gate on `voice.available()` |
+| `audio` | Tones and beeps |
+| `rtc` | Wall-clock date and time |
+| `imu` | Accelerometer, gyroscope, die temperature |
+| `battery` | Charge percentage and charging state |
+| `wifi` | Station-mode networking and NTP |
+
+`rtc`, `imu`, `battery`, `wifi` and `voice` **degrade rather than raise**: when the
+hardware or the data isn't there they return `nil, "reason"`. Always check the first
+return.
 
 **There is no sandbox.** An app has the full standard library and can read or write
 anything reachable through it, including the SD card's other apps and anything else stored
@@ -164,9 +234,17 @@ obj:set_flex({ ... })  obj:set_grid({ ... })  obj:set_scroll({ ... })
 obj:delete()           obj:clean()
 ```
 
-Value-holding widgets (`slider`, `bar`, `arc`, `spinbox`) also have `obj:get_value()` —
-this is how you read state from inside a `value_changed` callback, since callbacks take no
-arguments (see Events, below).
+**Text-holding widgets** (`label`, `button`, `checkbox`, `textarea`, …) have
+`obj:set_text(s)`. This is the workhorse — it is how a timer callback updates a readout:
+
+```lua
+readout:set_text(string.format("%02d:%02d", h, m))
+```
+
+**Value-holding widgets** (`slider`, `bar`, `arc`, `spinbox`) have `obj:get_value()`,
+`obj:set_value(n)` and `obj:set_range(min, max)`. `get_value()` is how you read state from
+inside a `value_changed` callback, since callbacks take no arguments (see Events, below);
+`set_value()` is how a timer or a button drives a bar or a gauge.
 
 ### Events
 
@@ -221,7 +299,9 @@ h:cancel()
 ```
 
 `timer.every(ms, fn)` repeats every `ms` milliseconds; `timer.after(ms, fn)` fires once.
-Both return a handle with `:cancel()`. `timer.now_ms()` returns monotonic
+Both return a handle with `:cancel()`. **You get 16 timer slots**; a 17th raises
+`too many timers (max 16)`. Cancelled timers free their slot, and some `ui` helpers borrow
+one while they're on screen (`ui.toast`). `timer.now_ms()` returns monotonic
 milliseconds since boot — **measure elapsed time with timestamps, never by
 counting ticks**: periodic timers re-arm after their callback runs, so every
 cycle stretches by dispatch latency and a tick-counting clock drifts slow. Every timer an app creates is cancelled
@@ -282,20 +362,33 @@ app is always escapable.
 ### Fonts
 
 **Every widget defaults to Lexend 32** — the launcher sets it as the display theme, so you
-get a readable size for free and usually don't need to touch fonts at all. Six Lexend
+get a readable size for free and usually don't need to touch fonts at all. **Eight** Lexend
 faces ship baked into the firmware; ask for one with `lvgl.font`:
 
 ```lua
-local big = lvgl.font(40)          -- 24, 26, 32, 40, 48, 60; anything else raises
+local big = lvgl.font(40)
 label:set_style({ font = big })
 ```
+
+| Size | Use |
+| --- | --- |
+| 24 | The floor. Never go below it. |
+| 26 | Captions |
+| 32 | Body — the theme default |
+| 40, 48 | Headings |
+| 60 | Hero numbers (stopwatch, score, temperature) |
+| 72 | Top of the accessibility scale |
+| 120 | Watch-face hero — **digits and `.:` only**, no letters |
+
+Any other size raises. This is the whole list: nothing above 120 exists as a built-in, and
+nothing between these sizes does either.
 
 These cannot go missing — they live in flash, not on the SD card. Sizing guidance is in
 `docs/DESIGN_GUIDE.md`: body 32, captions 26, never below 24.
 
 **Text scales globally.** A user-set **font scale** (default **1.0**) drives both
 `lvgl.font(size)` and the theme default, so everything sizes together.
-You still request one of the six sizes; the face returned is that size scaled, snapped to
+You still request one of the eight sizes; the face returned is that size scaled, snapped to
 the nearest available face. Read or set it with `lvgl.font_scale()`:
 
 ```lua
@@ -310,23 +403,29 @@ scale up when your app exits — the launcher re-applies the theme then. An app
 that changes the scale without persisting does not affect anyone else: the
 persisted value is restored on exit.
 
-Icons come with them: `lvgl.symbol.*` holds the built-in glyph strings —
-`lvgl.symbol.play`, `.pause`, `.ok`, `.close`, `.left`, `.trash`, and ~55 more. Concatenate
-them into label text:
+Icons come with them: `lvgl.symbol.*` holds the glyph strings. Concatenate them into label
+text:
 
 ```lua
 lvgl.label(scr, { text = lvgl.symbol.play .. " Start" })
 ```
 
-Beyond LVGL's built-in set, an **extended icon pack** ships in the Lexend faces
-(as an icon fallback font), reachable the same way:
-`lvgl.symbol.search`, `.microphone`, `.clock`, `.calendar`, `.heart`, `.star`,
-`.sun`, `.moon`, `.thermometer`, `.stopwatch`, `.location`, `.user`, `.camera`,
-`.fire`, `.check_circle`, `.comment`, `.cloud`, `.heartbeat`. They render at any
-`lvgl.font(size)`.
+They render at any `lvgl.font(size)`. **The complete set — 79 names, there are no
+others:**
 
-Hero numbers use the built-in 60: `lvgl.font(60)`. Only for something **larger
-than 60px** does a TTF from the card come into play:
+| Media | `.play` `.pause` `.stop` `.next` `.prev` `.shuffle` `.loop` `.volume_mid` `.volume_max` `.mute` `.audio` `.video` |
+| Navigation | `.left` `.right` `.up` `.down` `.home` `.close` `.ok` `.plus` `.minus` `.refresh` `.list` `.bars` |
+| Editing | `.edit` `.cut` `.copy` `.paste` `.save` `.trash` `.backspace` `.new_line` `.keyboard` `.search` |
+| Status | `.battery_full` `.battery_3` `.battery_2` `.battery_1` `.battery_empty` `.charge` `.wifi` `.bluetooth` `.usb` `.gps` `.power` `.warning` `.bell` |
+| Files | `.file` `.directory` `.download` `.upload` `.drive` `.sd_card` `.image` |
+| Extended pack | `.clock` `.calendar` `.stopwatch` `.heart` `.heartbeat` `.star` `.sun` `.moon` `.thermometer` `.location` `.user` `.camera` `.fire` `.check_circle` `.comment` `.cloud` `.microphone` |
+| Other | `.bullet` `.settings` `.tint` `.eject` `.eye_open` `.eye_close` `.call` `.envelope` |
+
+Anything not on this list is `nil`, which concatenates to an error rather than a glyph.
+
+Hero numbers use the built-in 60: `lvgl.font(60)`, or `lvgl.font(120)` for a watch face
+where the time *is* the screen. A TTF from the card is only for a **typeface** we don't
+compile in — not for size, which the built-ins already cover:
 
 ```lua
 local font = lvgl.font_load("apps/big.ttf", { size = 64 })
@@ -373,6 +472,26 @@ cannot `require` files from the card).
 | `ui.card(parent, {w=, h=, align=, x=, y=})` | Rounded grouped-content panel; parent content to it |
 | `ui.stat(parent, {value=, label=, size=, align=, y=})` | Big value over a small caption (readouts); returns `h` with `h.set(v)` |
 | `ui.note(scr, text, {size=, y=})` | Centred dim message for empty states and hints; returns the label |
+
+
+**What each one hands back.** Most helpers return a handle you keep, so you can update the
+thing later — this is how you change a row's label or read a stepper's value.
+
+| Helper | Returns |
+| --- | --- |
+| `ui.corner_button` | `{ button, visual }` — `button` is the invisible ≥88 px tap target, `visual` the smaller glyph you see. Style `visual`; bind on `button`. |
+| `ui.header` | `{ back, title, action }` — each present only if you asked for it |
+| `ui.row` | `{ row, label, switch?, check?, get(), set_checked(on) }` |
+| `ui.select` | `{ rows, selected, get(), set(i) }` |
+| `ui.stepper` | `{ row, label, get(), set(v) }` |
+| `ui.stat` | `{ value, caption?, set(v) }` |
+| `ui.dots` | `{ labels }` |
+| `ui.busy` | `{ done() }` — **you must call `done()`**, nothing else dismisses it |
+| `ui.toast` | The pill widget; it removes itself |
+| `ui.title` · `ui.note` | The label |
+| `ui.button` | The button |
+| `ui.list` · `ui.card` | The container — add children to it |
+| `ui.confirm` · `ui.picker` · `ui.fill` | Nothing; they own a screen and call your callback |
 
 ### Text entry: `require("keyboard")`
 
@@ -628,7 +747,8 @@ Ask if your app genuinely needs one — each is launcher work that blocks everyo
 | Lua heap | Allocated from PSRAM (~5 MB free — the resident voice model costs ~3 MB). A bare VM (no modules loaded) costs ~15.5 KB; a real app — `lvgl` loaded, a screen created — costs ~40 KB |
 | Lua task stack | 32 KB |
 | Concurrency | One app at a time |
-| Custom fonts | Built-in Lexend at 24/26/32/40/48/60 via `lvgl.font(size)`; TTFs above that via `lvgl.font_load` (must exist on the card) |
+| Timers | **16** concurrent slots per app; a 17th raises |
+| Fonts | Built-in Lexend at 24/26/32/40/48/60/72/120 via `lvgl.font(size)` (120 = digits and `.:` only). `lvgl.font_load` is for a different *typeface*, and the TTF must exist on the card |
 
 ---
 
@@ -675,7 +795,7 @@ end)
 lvgl.label(scr, {
     text = "edit apps/counter.lua",
     align = "bottom_mid", y = -30,
-    text_color = "#8a8a99",
+    text_color = "#A0A0AE",
     font = lvgl.font(26),   -- caption size; 32px overflowed the panel
 })
 

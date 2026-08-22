@@ -23,7 +23,7 @@ contract — start from the one closest to what you're building.
 | App | Shows |
 | --- | --- |
 | `counter.lua` | The minimal shape: a screen, a label, a button, a click handler |
-| `stopwatch.lua` | `timer.every`, a big custom font (with a `pcall` fallback), start/stop/reset |
+| `stopwatch.lua` | `timer.now_ms()` timestamps (never tick-counting), `lvgl.font(60)`, PWR-as-lap |
 | `tally.lua` | The PWR-as-accelerator pattern + a confirm-gated (destructive) reset |
 | `dice.lua` | `math.random`, and `ui.corner_button`'s `{ button, visual }` return shape |
 | `countdown.lua` | A `ui.stepper` as both setter and live readout; a toast at zero |

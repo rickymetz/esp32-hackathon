@@ -56,7 +56,13 @@ Exit the monitor with `Ctrl-]`.
 
 ### 3. Install apps
 
-The fast path, over USB — no card shuffling, no reboot:
+The tools need `pyserial`. Once, per clone:
+
+```bash
+python3 -m venv .venv && ./.venv/bin/pip install -r tools/requirements.txt
+```
+
+Then the fast path, over USB — no card shuffling, no reboot:
 
 ```bash
 ./.venv/bin/python tools/push.py apps/myapp.lua     # install / update
@@ -87,7 +93,8 @@ matches the device. The fast way to iterate on an app, and the CI gate that rend
 every app on each PR.
 
 ```bash
-cd sim && ./setup.sh && ./build.sh
+# from the repo root:
+(cd sim && ./setup.sh && ./build.sh)
 ./sim/simctl.py run apps/counter.lua : tap 184 224 : shot out.png
 ```
 
