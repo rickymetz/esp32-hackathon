@@ -162,10 +162,16 @@ static int16_t le16(const uint8_t *p) { return (int16_t)((uint16_t)p[0] | ((uint
  * a different range than assumed. 4096 makes |a| = 1.00 g, which is
  * checkable physics rather than a guess.
  *
- * Gyro: UNVERIFIED. At rest a gyro only shows its bias, which reveals
- * nothing about scale, so this constant is still the assumed one --
- * confirm it by rotating the board a known 90 degrees and integrating
- * before trusting gyro magnitudes. */
+ * Gyro: NOT CALIBRATED, and known wrong in at least one respect.
+ * Three measurements on hardware: resting bias is 7-9 deg/s on X and
+ * drifts (Z accumulated -11.7 deg sitting still); a hand 90-degree
+ * turn integrated to 64; and a 90-degree tilt whose axis the
+ * accelerometer confirms was Y showed up on X and Z instead, at about
+ * a third of the magnitude. So the register mapping and/or scale below
+ * is wrong. gyro() is therefore documented as a motion DETECTOR
+ * (is it turning, roughly how fast) and not an angle source -- do not
+ * integrate it into degrees until someone checks the QMI8658 datasheet
+ * for the real gyro register base and full-scale encoding. */
 #define ACCEL_LSB_PER_G    4096.0
 #define GYRO_LSB_PER_DPS   64.0   /* assumed; see above */
 

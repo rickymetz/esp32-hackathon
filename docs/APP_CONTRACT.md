@@ -452,13 +452,23 @@ fresh board it is the normal state until someone sets the clock.
 ```lua
 local imu = require("imu")
 local ax, ay, az = imu.accel()      -- g, one axis reads ~±1 at rest
-local gx, gy, gz = imu.gyro()       -- degrees/second
+local gx, gy, gz = imu.gyro()       -- UNCALIBRATED, see below
 local c = imu.die_temp()            -- see the warning below
 ```
 
 Poll it from a `timer.every`, not a loop. At rest the acceleration vector has
 magnitude 1 g in whatever orientation the board is sitting — that is the check
-to use if you suspect your maths.
+to use if you suspect your maths. The accelerometer is good to roughly ±10%
+(its axes disagree with each other by about that much), which is plenty for
+tilt, orientation, shake and step detection, and not enough for precise
+measurement.
+
+**`imu.gyro()` is not calibrated — treat it as a motion detector, not an angle
+source.** Measured on hardware it has a 7–9 °/s resting bias that drifts, and a
+tilt the accelerometer confirms was about one axis showed up on two others at
+a third of the expected size. Use it for "is the board turning, and roughly how
+fast"; do **not** integrate it into degrees. If you need orientation, derive it
+from `imu.accel()` — gravity is a reliable reference.
 
 `imu.die_temp()` is the **sensor's own silicon temperature, not the room**.
 Measured against an 18.3 °C room it read 7.6 °C high, because it sits on a
