@@ -293,9 +293,18 @@ local function tick()
 end
 
 -- Remember the chosen face, the way a watch does.
+--
+-- Debounced: the save is cancelled and re-armed on every page change, so
+-- swiping through three faces to reach the fourth writes the card once
+-- rather than four times. Without the cancel each swipe also held a timer
+-- slot of the app's 16 until it fired.
+local save_h
+
 tv:on("value_changed", function()
     last_page = -1
-    timer.after(400, function()
+    if save_h then save_h:cancel() end
+    save_h = timer.after(400, function()
+        save_h = nil
         local p = tv:get_active_index()
         if p then
             local f = io.open(FACE_PATH, "w")
