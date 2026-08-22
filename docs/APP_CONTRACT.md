@@ -304,11 +304,74 @@ h:cancel()
 `timer.every(ms, fn)` repeats every `ms` milliseconds; `timer.after(ms, fn)` fires once.
 Both return a handle with `:cancel()`. **You get 16 timer slots**; a 17th raises
 `too many timers (max 16)`. Cancelled timers free their slot, and some `ui` helpers borrow
-one while they're on screen (`ui.toast`). `timer.now_ms()` returns monotonic
-milliseconds since boot — **measure elapsed time with timestamps, never by
-counting ticks**: periodic timers re-arm after their callback runs, so every
-cycle stretches by dispatch latency and a tick-counting clock drifts slow. Every timer an app creates is cancelled
+one while they're on screen (`ui.toast`). Every timer an app creates is cancelled
 automatically when the app exits — you never need to track them down yourself.
+
+#### `timer.every` is not accurate. Plan for that.
+
+**A periodic timer re-arms *after* your callback returns.** So `timer.every(1000, …)`
+does not fire every 1000 ms — it fires every 1000 ms *plus* however long your callback
+took *plus* the pump's dispatch latency. That overhead was measured on this board at
+roughly **24 ms per tick**, and it never averages out: it accumulates in one direction,
+always slow.
+
+This is the single most common bug in the apps written so far — five of the shipped
+examples had it. It is invisible on screen, which is what makes it dangerous: the app
+looks right and the numbers are wrong.
+
+`timer.now_ms()` returns monotonic milliseconds since boot, and it is the fix for all
+three shapes of the problem:
+
+**1. Measuring how long something took** — take two stamps and subtract. Never accumulate.
+
+```lua
+-- WRONG: reports less time than actually passed
+local ms = 0
+timer.every(10, function() ms = ms + 10 end)
+
+-- RIGHT
+local started = timer.now_ms()
+-- ...later...
+local ms = timer.now_ms() - started
+```
+
+**2. Something that must happen on a beat** (a metronome, a countdown, an animation) —
+chain `timer.after` against an absolute target, so a late tick cannot push the next one:
+
+```lua
+local next_at = timer.now_ms() + interval
+
+local function schedule()
+    local delay = math.floor(next_at - timer.now_ms())
+    if delay < 1 then delay = 1 end          -- never schedule into the past
+    timer.after(delay, function()
+        beat()
+        next_at = next_at + interval          -- absolute, so error cannot compound
+        schedule()
+    end)
+end
+```
+
+Keep `next_at` a float if `interval` is fractional, but floor what you hand to
+`timer.after` — it takes an integer and raises on a fraction.
+
+**3. Watching something that changes on its own** (the RTC's seconds, a sensor) — do
+**not** match its rate; sample *faster* and repaint only on change. A 1000 ms timer
+sampling a 1 Hz clock is slightly slower than the clock, so it misses whole seconds and
+your display visibly jumps two at a time:
+
+```lua
+local last
+timer.every(250, function()
+    local t = rtc.now()
+    if not t or t.sec == last then return end
+    last = t.sec
+    -- repaint here; still only four times per second in the worst case
+end)
+```
+
+Worked examples of all three: `apps/stopwatch.lua` and `apps/reaction.lua` (1),
+`apps/metronome.lua` and `apps/countdown.lua` (2), `apps/faces.lua` and `apps/clock.lua` (3).
 
 **The gotcha that costs real debugging time:** this looks reasonable and is wrong —
 
