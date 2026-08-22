@@ -36,7 +36,7 @@ end)
 lvgl.label(scr, {
     text = "app two",
     align = "bottom_mid", y = -30,
-    text_color = "#6a6a78",
+    text_color = "#8a8a99",
 })
 
 scr:load()

@@ -221,7 +221,10 @@ h:cancel()
 ```
 
 `timer.every(ms, fn)` repeats every `ms` milliseconds; `timer.after(ms, fn)` fires once.
-Both return a handle with `:cancel()`. Every timer an app creates is cancelled
+Both return a handle with `:cancel()`. `timer.now_ms()` returns monotonic
+milliseconds since boot — **measure elapsed time with timestamps, never by
+counting ticks**: periodic timers re-arm after their callback runs, so every
+cycle stretches by dispatch latency and a tick-counting clock drifts slow. Every timer an app creates is cancelled
 automatically when the app exits — you never need to track them down yourself.
 
 **The gotcha that costs real debugging time:** this looks reasonable and is wrong —
@@ -279,7 +282,7 @@ app is always escapable.
 ### Fonts
 
 **Every widget defaults to Lexend 32** — the launcher sets it as the display theme, so you
-get a readable size for free and usually don't need to touch fonts at all. Five Lexend
+get a readable size for free and usually don't need to touch fonts at all. Six Lexend
 faces ship baked into the firmware; ask for one with `lvgl.font`:
 
 ```lua
@@ -319,8 +322,8 @@ Beyond LVGL's built-in set, an **extended icon pack** ships in the Lexend faces
 `.fire`, `.check_circle`, `.comment`, `.cloud`, `.heartbeat`. They render at any
 `lvgl.font(size)`.
 
-For a hero number **larger than 48px** — a stopwatch, a score, a temperature — load a TTF
-from the card:
+Hero numbers use the built-in 60: `lvgl.font(60)`. Only for something **larger
+than 60px** does a TTF from the card come into play:
 
 ```lua
 local font = lvgl.font_load("apps/big.ttf", { size = 64 })
@@ -534,8 +537,9 @@ scr:load()
 -- `while true` loop: it will freeze the device, including the way back.
 ```
 
-For an example that combines a timer, a big custom font, and start/stop/reset buttons, see
-`apps/stopwatch.lua`.
+For an example that combines wall-clock timing (`timer.now_ms`), the hero font,
+and the PWR button used correctly, see `apps/stopwatch.lua`. (`font_load` has no
+shipped example — the built-in sizes cover every app so far.)
 
 ---
 
