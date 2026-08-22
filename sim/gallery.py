@@ -48,6 +48,8 @@ SCENES = [
                    "Type a message; it fills the glass."),
     ("tip_kbd",    ["@tip","tap","184","130",":","sleep","0.5"],
                    "The number keypad (require('keyboard'))."),
+    ("settings",   ["sleep","0.3"],
+                   "Set the UI font scale, with a live preview."),
     ("ui_test",    ["sleep","0.4"],
                    "Shared ui helpers: rows, toggle, page dots."),
 ]

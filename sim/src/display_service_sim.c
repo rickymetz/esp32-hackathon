@@ -16,6 +16,7 @@
 #include "sim_display.h"
 #include "sim_input.h"
 #include "lv_font_lexend.h"
+#include "lua_module_lvgl.h"
 
 #include <stdbool.h>
 
@@ -43,12 +44,14 @@ void sim_display_service_boot(void)
 
     /* The launcher applies Lexend 32 as the display theme so every widget --
      * launcher and app alike -- gets it for free (launcher_main.c app_main). */
+    /* Theme default follows the global font scale, so plain labels (no explicit
+     * font) scale with everything else. */
     lv_display_set_theme(s_display,
         lv_theme_default_init(s_display,
                               lv_palette_main(LV_PALETTE_BLUE),
                               lv_palette_main(LV_PALETTE_RED),
                               true /* dark */,
-                              &lv_font_lexend_32));
+                              lua_module_lvgl_scaled_builtin_font(32)));
     s_booted = true;
 }
 

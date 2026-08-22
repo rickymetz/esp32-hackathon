@@ -862,6 +862,30 @@ static void button_poll_task(void *arg)
     }
 }
 
+/* Restore the user's saved UI font scale (apps/settings.lua writes it) and
+ * re-apply the theme so plain-label text picks it up. Called after the SD is
+ * mounted (app_registry_scan) and before the launcher UI is built. Missing or
+ * unreadable config leaves the default 0.8 in place. */
+static void apply_persisted_font_scale(lv_display_t *disp)
+{
+    FILE *f = fopen(BSP_SD_MOUNT_POINT "/font_scale.txt", "r");
+    if (f) {
+        float scale = 0.0f;
+        if (fscanf(f, "%f", &scale) == 1 && scale > 0.0f) {
+            lua_module_lvgl_set_font_scale(scale);
+        }
+        fclose(f);
+    }
+    bsp_display_lock(0);
+    lv_display_set_theme(disp,
+        lv_theme_default_init(disp,
+                              lv_palette_main(LV_PALETTE_BLUE),
+                              lv_palette_main(LV_PALETTE_RED),
+                              true /* dark */,
+                              lua_module_lvgl_scaled_builtin_font(32)));
+    bsp_display_unlock();
+}
+
 void app_main(void)
 {
     printf("\n=== ESP32-S3-Touch-AMOLED-1.8 Launcher ===\n");
@@ -899,7 +923,10 @@ void app_main(void)
                               lv_palette_main(LV_PALETTE_BLUE),
                               lv_palette_main(LV_PALETTE_RED),
                               true /* dark */,
-                              &lv_font_lexend_32));
+                              /* Theme default follows the global font scale
+                               * (default 0.8); apply_persisted_font_scale()
+                               * re-themes once the SD's saved value is read. */
+                              lua_module_lvgl_scaled_builtin_font(32)));
     bsp_display_unlock();
 
     /* Synthetic touch indev for serial TAP/SWIPE -- same event pipeline
@@ -936,6 +963,7 @@ void app_main(void)
     }
 
     app_registry_scan();
+    apply_persisted_font_scale(disp);   /* after SD mount, before UI build */
     build_launcher_ui();
     xTaskCreate(button_poll_task, "buttons", 3072, NULL, 6, NULL);
     serial_push_start();

@@ -35,6 +35,7 @@ contract — start from the one closest to what you're building.
 | `simon.lua` | A game state machine with chained timers on a 2&times;2 grid |
 | `breathe.lua` | A paced size animation driven by a 50&nbsp;ms timer |
 | `sign.lua` | `require("keyboard")` text entry; auto-sizing centred display |
+| `settings.lua` | The user-controllable font scale, with a live preview |
 | `hello_world.lua` | A gentle tour of widgets |
 
 Two gotchas these examples were written to avoid — both bite silently:
