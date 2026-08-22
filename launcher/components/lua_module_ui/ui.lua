@@ -394,6 +394,7 @@ function M.stepper(parent, opts, cb)
     h.row = lvgl.container(parent, {
         w = 344, h = ROW_H,
         bg_color = "#1E1E28", bg_opa = 255, border_width = 0, radius = 12,
+        pad = 0,   -- let the +/- slabs and their hit areas reach the row edges
     })
 
     h.label = lvgl.label(h.row, {
@@ -419,7 +420,7 @@ function M.stepper(parent, opts, cb)
     local function side_button(glyph, side, on_fire)
         lvgl.button(h.row, {
             text = glyph,
-            align = side .. "_mid", x = (side == "left") and 12 or -12,
+            align = side .. "_mid", x = 0,   -- flush to the row's outer edge
             w = 72, h = 64,
             bg_color = "#24303C", text_color = "#FFFFFF", radius = 16,
         })
