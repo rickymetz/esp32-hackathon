@@ -6233,6 +6233,10 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
 
 
 
+/* Icon fallback: FontAwesome glyphs live in a separate face so the Lexend
+ * bitmaps above stay byte-identical; missing glyphs resolve here. */
+extern const lv_font_t lv_font_icons_32;
+
 /*-----------------
  *  PUBLIC FONT
  *----------------*/
@@ -6256,7 +6260,7 @@ lv_font_t lv_font_lexend_32 = {
 #endif
     .dsc = &font_dsc,          /*The custom font data. Will be accessed by `get_glyph_bitmap/dsc` */
 #if LV_VERSION_CHECK(8, 2, 0) || LVGL_VERSION_MAJOR >= 9
-    .fallback = NULL,
+    .fallback = &lv_font_icons_32,
 #endif
     .user_data = NULL,
 };

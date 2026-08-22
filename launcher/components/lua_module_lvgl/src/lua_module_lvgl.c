@@ -109,6 +109,27 @@ int luaopen_lvgl(lua_State *L)
     LUA_LVGL_SYMBOL("backspace", LV_SYMBOL_BACKSPACE);
     LUA_LVGL_SYMBOL("sd_card", LV_SYMBOL_SD_CARD);
     LUA_LVGL_SYMBOL("new_line", LV_SYMBOL_NEW_LINE);
+    /* Extended icons: FontAwesome glyphs beyond LVGL's built-in LV_SYMBOL set,
+     * carried by the Lexend faces' icon fallback font (components/fonts_lexend).
+     * Raw UTF-8 codepoints since there are no LV_SYMBOL_ macros for these. */
+    LUA_LVGL_SYMBOL("search", "\xEF\x80\x82");        /* U+F002 */
+    LUA_LVGL_SYMBOL("microphone", "\xEF\x84\xB0");    /* U+F130 */
+    LUA_LVGL_SYMBOL("clock", "\xEF\x80\x97");         /* U+F017 */
+    LUA_LVGL_SYMBOL("calendar", "\xEF\x81\xB3");      /* U+F073 */
+    LUA_LVGL_SYMBOL("heart", "\xEF\x80\x84");         /* U+F004 */
+    LUA_LVGL_SYMBOL("star", "\xEF\x80\x85");          /* U+F005 */
+    LUA_LVGL_SYMBOL("sun", "\xEF\x86\x85");           /* U+F185 */
+    LUA_LVGL_SYMBOL("moon", "\xEF\x86\x86");          /* U+F186 */
+    LUA_LVGL_SYMBOL("thermometer", "\xEF\x8B\x89");   /* U+F2C9 */
+    LUA_LVGL_SYMBOL("stopwatch", "\xEF\x8B\xB2");     /* U+F2F2 */
+    LUA_LVGL_SYMBOL("location", "\xEF\x8F\x85");      /* U+F3C5 */
+    LUA_LVGL_SYMBOL("user", "\xEF\x80\x87");          /* U+F007 */
+    LUA_LVGL_SYMBOL("camera", "\xEF\x80\xB0");        /* U+F030 */
+    LUA_LVGL_SYMBOL("fire", "\xEF\x81\xAD");          /* U+F06D */
+    LUA_LVGL_SYMBOL("check_circle", "\xEF\x81\x98");  /* U+F058 */
+    LUA_LVGL_SYMBOL("comment", "\xEF\x81\xB5");       /* U+F075 */
+    LUA_LVGL_SYMBOL("cloud", "\xEF\x83\x82");         /* U+F0C2 */
+    LUA_LVGL_SYMBOL("heartbeat", "\xEF\x88\x9E");     /* U+F21E */
 #undef LUA_LVGL_SYMBOL
     lua_setfield(L, -2, "symbol");
 

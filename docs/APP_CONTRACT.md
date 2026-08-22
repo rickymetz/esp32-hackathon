@@ -298,6 +298,13 @@ them into label text:
 lvgl.label(scr, { text = lvgl.symbol.play .. " Start" })
 ```
 
+Beyond LVGL's built-in set, an **extended icon pack** ships in the Lexend faces
+(as an icon fallback font), reachable the same way:
+`lvgl.symbol.search`, `.microphone`, `.clock`, `.calendar`, `.heart`, `.star`,
+`.sun`, `.moon`, `.thermometer`, `.stopwatch`, `.location`, `.user`, `.camera`,
+`.fire`, `.check_circle`, `.comment`, `.cloud`, `.heartbeat`. They render at any
+`lvgl.font(size)`.
+
 For a hero number **larger than 48px** — a stopwatch, a score, a temperature — load a TTF
 from the card:
 
