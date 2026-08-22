@@ -215,8 +215,8 @@ Short enough to remember; these belong in `docs/APP_CONTRACT.md`:
    (`lvgl.tileview` + `ui.dots`) — allowed precisely because Home is a hardware
    button, so no edge is reserved. Never mix a drag control into a paged view.
 7. **Trim long text**; do not scroll it sideways.
-8. **Hero numbers 48 px+** via `lvgl.font(48)`; above that, `lvgl.font_load()`
-   with a `pcall` fallback.
+8. **Hero numbers 60 px** via `lvgl.font(60)` — compiled in, cannot go
+   missing. Above that, `lvgl.font_load()` with a `pcall` fallback.
 
 ---
 

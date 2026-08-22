@@ -283,7 +283,7 @@ get a readable size for free and usually don't need to touch fonts at all. Five 
 faces ship baked into the firmware; ask for one with `lvgl.font`:
 
 ```lua
-local big = lvgl.font(40)          -- 24, 26, 32, 40, 48; anything else raises
+local big = lvgl.font(40)          -- 24, 26, 32, 40, 48, 60; anything else raises
 label:set_style({ font = big })
 ```
 
@@ -448,10 +448,10 @@ Ask if your app genuinely needs one — each is launcher work that blocks everyo
 | --- | --- |
 | Display | **368 × 448** portrait, ~350 nit |
 | Minimum comfortable touch target | **~200 × 100** |
-| Lua heap | Allocated from PSRAM (~8 MB free). A bare VM (no modules loaded) costs ~15.5 KB; a real app — `lvgl` loaded, a screen created — costs ~40 KB |
+| Lua heap | Allocated from PSRAM (~5 MB free — the resident voice model costs ~3 MB). A bare VM (no modules loaded) costs ~15.5 KB; a real app — `lvgl` loaded, a screen created — costs ~40 KB |
 | Lua task stack | 32 KB |
 | Concurrency | One app at a time |
-| Custom fonts | Available — `lvgl.font_load(path, {size=...})` or `lvgl.init({font_path=...})`. The TTF must exist on the SD card; none ships by default |
+| Custom fonts | Built-in Lexend at 24/26/32/40/48/60 via `lvgl.font(size)`; TTFs above that via `lvgl.font_load` (must exist on the card) |
 
 ---
 

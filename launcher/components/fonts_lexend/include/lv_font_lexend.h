@@ -22,6 +22,7 @@ extern const lv_font_t lv_font_lexend_26;
 extern const lv_font_t lv_font_lexend_32;
 extern const lv_font_t lv_font_lexend_40;
 extern const lv_font_t lv_font_lexend_48;
+extern const lv_font_t lv_font_lexend_60;
 
 #ifdef __cplusplus
 }
