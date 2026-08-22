@@ -66,8 +66,21 @@ decodes SHOT to a PNG (~1.6 s per frame):
 
 Taps inject through a real LVGL indev — widgets cannot tell them from a
 finger — and queue with an enforced release gap, so back-to-back taps are safe.
-Even the microphone is testable hands-free: macOS `say` through the speakers
-reaches the board's mic (this is how the voice module was verified).
+
+**Both audio directions close without a human.** macOS `say` through the
+speakers reaches the board's microphone (this is how `voice` was verified),
+and `tools/hear.py` records the Mac microphone and runs a Goertzel filter to
+confirm the board's speaker is actually sounding:
+
+```bash
+./.venv/bin/python tools/hear.py 880      # ratio ~1 = silent, tens+ = a real tone
+```
+
+Verified this way: commanding 880 Hz measured 12.4x at 880 and 0.45x at 1568;
+commanding 1568 Hz measured 216x at 1568 and 0.45x at 880 — the detected
+frequency tracks the commanded one, so it is the board and not the room.
+`hear.py` needs microphone permission for the terminal, and without it ffmpeg
+hangs rather than failing. It records the room, so keep captures short.
 
 `sdkconfig.defaults` is not optional. `CONFIG_SPIRAM_MODE_OCT=y` in particular is **not**
 the IDF default, and without it the 8 MB PSRAM silently fails to initialise with no error.
