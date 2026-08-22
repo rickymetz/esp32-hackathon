@@ -765,6 +765,103 @@ share: `ui.zone()` returns city index, DST flag and offset in minutes;
 `ui.shift(t, minutes)` shifts an `rtc.now()` reading and rolls the date
 properly; `ui.DAYS` and `ui.MONTHS` are name tables.
 
+### The data widgets, and how to fill them
+
+The widget table lists these as "also available", which was not enough: you could
+*create* a chart or a table and then had no documented way to put anything in it. Each
+one's methods, in full.
+
+**`lvgl.chart`** — series are handles you keep, not indexes:
+
+```lua
+local c = lvgl.chart(scr, { type = "line", point_count = 10, min = 0, max = 100 })
+local s = c:add_series("#2F80ED")        -- optional 2nd arg: "primary_y" | "secondary_y"
+c:set_series_values(s, { 10, 40, 25, 90 })
+c:set_next_value(s, 55)                  -- push one point, scrolling the series
+c:set_type("line")                       -- "line" | "bar" | "scatter"
+c:set_point_count(20)  ·  c:set_range(0, 100, "primary_y")  ·  c:refresh()
+```
+
+**`lvgl.table`** — 1-based row and column:
+
+```lua
+t:set_cell(1, 1, "Mon")      t:get_cell(1, 1)   -- -> string
+```
+
+**`lvgl.list`** — both return the created child, so you can `:on("clicked", …)` it:
+
+```lua
+list:add_text("Section")                 -- a plain header row
+local row = list:add_button(lvgl.symbol.file, "Open")   -- (icon, text); icon may be nil
+```
+
+**`lvgl.tabview`** — `add_tab` returns the tab's content container; parent your widgets to it:
+
+```lua
+local page = tv:add_tab("Stats")
+tv:set_active(1)  ·  tv:get_active()  ·  tv:get_tab_count()  ·  tv:set_tab_text(1, "New")
+```
+
+**`lvgl.msgbox`** — each `add_*` returns the created child:
+
+```lua
+m:add_title("Delete?")  ·  m:add_text("This cannot be undone.")
+m:add_footer_button("Cancel")  ·  m:add_close_button()  ·  m:close()
+```
+
+**`lvgl.spinbox`** — beyond the shared value methods:
+
+```lua
+sb:set_step(10)  ·  sb:get_step()  ·  sb:increment()  ·  sb:decrement()
+sb:step_next()   ·  sb:step_prev()          -- move the edited digit
+```
+
+**`lvgl.led`**:
+
+```lua
+led:set_color("#00FF00")  ·  led:set_brightness(0..255)  ·  led:get_brightness()
+led:on()  ·  led:off()  ·  led:toggle()
+```
+
+**`lvgl.buttonmatrix`** — `set_map` takes a flat list of strings; `"\n"` starts a new row:
+
+```lua
+bm:set_map({ "1", "2", "3", "\n", "4", "5", "6" })
+bm:set_selected(i)  ·  bm:get_selected()  ·  bm:get_button_text(i)  ·  bm:set_one_checked(true)
+```
+
+**`lvgl.calendar`**:
+
+```lua
+cal:set_today(2026, 8, 22)  ·  cal:set_shown(2026, 8)
+cal:set_highlighted({ {2026, 8, 22}, {2026, 8, 25} })   -- POSITIONAL {year, month, day}
+cal:get_pressed_date()
+```
+
+Note the inconsistency, because it will bite: calendar dates are **positional arrays**
+`{year, month, day}`, while `lvgl.line` points are **keyed tables** `{x=, y=}`. Passing the
+wrong shape to `set_highlighted` raises; passing the wrong shape to `set_points` silently
+draws nothing.
+
+**`lvgl.canvas`** — pixel-level drawing:
+
+```lua
+cv:fill_bg("#000000", 255)   ·  cv:set_px(x, y, "#FF0000", 255)   ·  cv:get_px(x, y)
+cv:set_rgb565_data(binary_string)
+```
+
+**`lvgl.window`** — `get_content()` is the parent for your widgets:
+
+```lua
+w:add_title("Log")  ·  w:add_button(lvgl.symbol.close, 40)
+w:get_header()  ·  w:get_content()
+```
+
+`lvgl.menu` also has a full method set (`page`, `cont`, `section`, `separator`, `set_page`,
+`set_sidebar_page`, `set_mode_header`, `set_root_back_button`, `clear_history`). It is
+built for a sidebar-and-pages layout that does not suit a 368 px screen — prefer
+`ui.picker` or a `tileview`.
+
 ### Layout
 
 ```lua
