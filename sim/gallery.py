@@ -153,6 +153,10 @@ def run_scene(app, tail):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        # Without this, --help was taken as the output filename and the
+        # gallery was written to a file literally called "--help".
+        sys.exit(__doc__)
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "build", "gallery.html")
     if not os.path.exists(SIM):
         sys.exit("sim not built -- run sim/build.sh")
