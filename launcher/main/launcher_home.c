@@ -344,9 +344,10 @@ static void grid_dots_free(lv_event_t *e)
     free(lv_event_get_user_data(e));
 }
 
-/* One app icon: a rounded-square avatar (the app's initial on a colour hashed
- * from its name) that IS the launch button -- no card well, no name label, so
- * the grid reads as an app launcher, not a list with pictures. */
+/* One app icon: a circular avatar (the app's initial on a colour hashed from
+ * its name) that IS the launch button -- no card well, no name label, so the
+ * grid reads as an app launcher, not a list with pictures. Its circle matches
+ * the custom image tiles, so both icon paths read as one family. */
 static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
                      int cx, int cy, int size,
                      lv_event_cb_t on_click, lv_event_cb_t on_delete)
@@ -354,7 +355,7 @@ static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
     lv_obj_t *icon = lv_button_create(page);
     lv_obj_set_size(icon, size, size);
     lv_obj_set_pos(icon, cx - size / 2, cy - size / 2);
-    lv_obj_set_style_radius(icon, size / 4, LV_PART_MAIN);   /* squircle-ish */
+    lv_obj_set_style_radius(icon, LV_RADIUS_CIRCLE, LV_PART_MAIN);  /* circle, to match the image tiles */
     lv_obj_set_style_pad_all(icon, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(icon, 0, LV_PART_MAIN);
     wire_launch(icon, app->basename, on_click, on_delete);
