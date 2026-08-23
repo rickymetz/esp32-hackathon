@@ -17,7 +17,10 @@ GitHub diffs, so a golden update is reviewable by eye.
     sim/golden.py            # compare every frame to its golden; non-zero on drift
     sim/golden.py --update [name...]   # regenerate all goldens, or just the named ones
 
-Only settled, deterministic frames are covered -- apps driven by math.random or
+Coverage is each app's initial settled frame plus a set of driven ones -- a
+post-tap value, the launcher error screen, an open keyboard, a tileview second
+page, and sensor-injected degraded states (unset clock, low battery, tilted
+level). Only deterministic frames qualify: apps driven by math.random or
 mid-animation (dice, simon, reaction, breathe, metronome) are left to
 scenarios.py. Requires the sim built (sim/build.sh).
 """
@@ -62,6 +65,22 @@ FRAMES = [
     ("tip",          ["run", "apps/tip.lua", ":", "sleep", "0.4"]),
     ("level",        ["run", "apps/level.lua", ":", "sleep", "0.4"]),
     ("tone",         ["run", "apps/tone.lua", ":", "sleep", "0.4"]),
+
+    # --- Interaction / injected states (beyond the initial settled frame) ---
+    # A post-tap value, the launcher error screen, an open keyboard, a tileview
+    # second page, and the sensor-injected degraded clock/level states -- the
+    # dynamic surfaces a first-frame snapshot can't reach.
+    ("counter_tapped", ["run", "apps/counter.lua",
+                        ":", "tap", "184", "224", ":", "tap", "184", "224",
+                        ":", "tap", "184", "224", ":", "sleep", "0.2"]),
+    ("error_screen", ["run", "apps/broken.lua", ":", "sleep", "0.3"]),
+    ("keyboard",     ["run", "apps/sign.lua", ":", "tap", "184", "380", ":", "sleep", "0.3"]),
+    ("faces_rings",  ["run", "apps/faces.lua",
+                        ":", "swipe", "300", "224", "60", "224", "300", ":", "sleep", "0.4"]),
+    ("clock_unset",  ["rtc", "unset", ":", "run", "apps/clock.lua", ":", "sleep", "0.4"]),
+    ("clock_lowbat", ["battery", "8", "0", "0", ":", "run", "apps/clock.lua", ":", "sleep", "0.4"]),
+    ("level_tilted", ["run", "apps/level.lua",
+                        ":", "accel", "0.5", "0", "0.866", ":", "sleep", "0.3"]),
 ]
 
 
