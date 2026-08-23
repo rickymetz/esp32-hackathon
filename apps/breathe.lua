@@ -11,7 +11,7 @@ local button = require("button")
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#0b0d12" })
+scr:set_style({ bg_color = "#000000" })
 
 -- The paced cycle: grow in, hold, shrink out, hold. Max diameter is kept so
 -- the fully-inflated circle clears the Start button below it.
@@ -75,7 +75,7 @@ end
 
 local start_btn = lvgl.button(scr, {
     text = "Start", align = "bottom_mid", y = -24, w = 300, h = 100,
-    bg_color = "#27ae60", text_color = "#ffffff",
+    bg_color = "#2F80ED", text_color = "#ffffff", radius = 16,
 })
 
 local function toggle()
@@ -84,12 +84,12 @@ local function toggle()
         phase_i, phase_start = 1, timer.now_ms()
         caption:set_text(PHASES[1].name)
         start_btn:set_text("Stop")
-        start_btn:set_style({ bg_color = "#c0392b" })
+        start_btn:set_style({ bg_color = "#1E1E28" })   -- on-palette; red is confirm-only
         anim_h = timer.every(50, tick)
     else
         if anim_h then anim_h:cancel(); anim_h = nil end
         start_btn:set_text("Start")
-        start_btn:set_style({ bg_color = "#27ae60" })
+        start_btn:set_style({ bg_color = "#2F80ED" })
         reset_visual()
     end
 end

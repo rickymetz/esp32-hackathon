@@ -10,7 +10,7 @@ local timer = require("timer")
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#0d0d10" })
+scr:set_style({ bg_color = "#000000" })
 
 local status = lvgl.label(scr, {
     text = "Tap to start", align = "top_mid", y = 40, text_color = "#ffffff",

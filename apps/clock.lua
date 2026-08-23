@@ -82,8 +82,10 @@ local function tick()
 
     local l = ui.shift(t, offset_minutes())
     time_lbl:set_text(string.format("%02d:%02d", l.hour, l.min))
-    date_lbl:set_text(string.format("%s %d %s   :%02d",
-        DAYS[l.wday] or "?", l.day, MONTHS[l.month] or "?", l.sec))
+    -- Just the date under the time: a floating ":07" of seconds read as a stray
+    -- fragment. (Sampling still keys on t.sec to catch the minute rollover.)
+    date_lbl:set_text(string.format("%s %d %s",
+        DAYS[l.wday] or "?", l.day, MONTHS[l.month] or "?"))
     zone_lbl:set_text(ZONES[zone_index][1] .. (dst and "  DST" or ""))
 
     local pct = battery.percent()

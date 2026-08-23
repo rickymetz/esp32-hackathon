@@ -1,7 +1,9 @@
 -- keyboard: text entry sized for this digitizer. A QWERTY is unusable here
 -- (~30px keys against a touch panel that drops half of 180x56 targets), so
--- letters go through two-stage group selection -- every key at least
--- 184x90 -- and digits through a roller, which needs no tap precision.
+-- letters go through two-stage group selection -- the letter grid is 3x3 for
+-- roomy ~113x120px keys -- and digits through a phone dialer, which needs no
+-- tap precision. The 4-row group/dialer views run ~84px tall (just under the
+-- 88 floor, the tightest margin in the library) at ~120px wide.
 --
 -- keyboard.open({ title=, mode="text"|"number", initial= }, function(text)
 --     -- text == nil means cancelled
@@ -18,7 +20,7 @@ local M = {}
 
 local HEADER_H = 88
 local BODY_Y = HEADER_H + 8            -- header sits 8px in from the glass
-local BODY_H = 448 - BODY_Y            -- 352: both stages are 4 rows x 88
+local BODY_H = 448 - BODY_Y            -- 352: 4-row views ~84px keys, letters 3-row ~113px
 
 local GROUPS = {
     { label = "ABCDEF", chars = { "A", "B", "C", "D", "E", "F" } },
@@ -129,14 +131,17 @@ function M.open(opts, cb)
             map[#map + 1] = cased(GROUPS[i + 1].label)
             map[#map + 1] = "\n"
         end
+        -- Row 3 carries the last group + digits, plus the voice key when
+        -- available -- so the bottom utility row stays 3 cells and its
+        -- space/backspace keep ~120px width (a 4-cell row drops them to ~87).
         map[#map + 1] = cased(GROUPS[5].label)
         map[#map + 1] = "123"
-        map[#map + 1] = "\n"
-        -- The case cell shows what you SWITCH TO, phone-style.
-        map[#map + 1] = upper and "abc" or "ABC"
         if voice.available() then
             map[#map + 1] = lvgl.symbol.microphone   -- NATO voice spelling
         end
+        map[#map + 1] = "\n"
+        -- The case cell shows what you SWITCH TO, phone-style.
+        map[#map + 1] = upper and "abc" or "ABC"
         map[#map + 1] = SPACE
         map[#map + 1] = BACKSPACE
         bm:set_map(map)
@@ -186,7 +191,11 @@ function M.open(opts, cb)
         -- a mistype is most likely at the moment of picking a letter,
         -- and it is pinned bottom-RIGHT in every view (review: it swapped
         -- corners between views, and muscle memory hit ABC instead).
-        bm:set_map({ c[1], c[2], "\n", c[3], c[4], "\n", c[5], c[6], "\n",
+        -- 3x3: six letters over a < / space / backspace row -- three rows of
+        -- big ~113x120px keys, the roomiest view since it's where the typing
+        -- actually happens.
+        bm:set_map({ c[1], c[2], c[3], "\n",
+                     c[4], c[5], c[6], "\n",
                      lvgl.symbol.left, SPACE, BACKSPACE })
     end
 
@@ -194,8 +203,7 @@ function M.open(opts, cb)
         view = "digits"
         -- Phone-dialer pad: one tap per digit. The roller this replaced
         -- needed a precise drag plus an add tap and was, in Rick's words,
-        -- very challenging. Keys are 122x88 -- same class as the letter
-        -- keys that verified fine on device.
+        -- very challenging. Keys are ~120px wide x ~84px tall.
         bm:set_map({ "1", "2", "3", "\n",
                      "4", "5", "6", "\n",
                      "7", "8", "9", "\n",
