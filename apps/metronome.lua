@@ -14,7 +14,7 @@ local audio = require("audio")
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#101014" })
+scr:set_style({ bg_color = "#000000" })
 
 ui.title(scr, "Metronome")
 
@@ -38,9 +38,48 @@ local function stop_beat()
     if beat_h then beat_h:cancel(); beat_h = nil end
 end
 
+-- Beats are scheduled against an absolute clock, not by timer.every.
+--
+-- A periodic timer re-arms AFTER its callback returns, so every beat would
+-- cost 60000/bpm PLUS the tone, the redraw and the pump's dispatch latency.
+-- On a metronome that is not a rounding error: at 100 bpm a 20 ms overhead
+-- makes the real tempo about 97 bpm, and the error compounds, so playing
+-- along drifts a whole beat within a minute. Nothing on screen would say so.
+--
+-- Chaining timer.after against a running next_at fixes the average exactly:
+-- a late beat does not push the one after it, because the target time was
+-- computed from the start of the run rather than from the previous callback.
+local next_at
+
+local function schedule()
+    local interval = 60000 / bpm
+    local now = timer.now_ms()
+
+    -- If something stalled us past a whole beat, resync instead of catching
+    -- up. Clamping a very negative delay to 1 would fire a burst of clicks
+    -- to "repay" the missed beats, which on a metronome is worse than the
+    -- gap it is trying to correct.
+    if next_at < now - interval then
+        next_at = now + interval
+    end
+
+    -- next_at stays a float so the interval never rounds cumulatively, but
+    -- timer.after takes an integer (luaL_checkinteger raises on a fraction).
+    local delay = math.floor(next_at - now)
+    if delay < 1 then delay = 1 end        -- never schedule into the past
+    beat_h = timer.after(delay, function()
+        beat_h = nil
+        flash()
+        next_at = next_at + interval
+        schedule()
+    end)
+end
+
 local function start_beat()
     stop_beat()
-    beat_h = timer.every(math.floor(60000 / bpm), flash)
+    next_at = timer.now_ms() + (60000 / bpm)
+    flash()                                 -- beat immediately on Start
+    schedule()
 end
 
 -- Label is just the number: a 3-digit "%d bpm" is wide enough to collide with

@@ -1,44 +1,34 @@
 -- Counter -- the template app. Copy this file, rename it, make it yours.
 --
--- Install: copy to /apps/ on the SD card. The launcher lists every .lua file
--- it finds there; the filename becomes the name shown in the list.
+-- Install: ./.venv/bin/python tools/push.py apps/counter.lua
+-- Or copy it to /apps/ on the SD card. The launcher lists every .lua file it
+-- finds there; the filename becomes the name shown in the list.
 
 local lvgl = require("lvgl")
+local ui = require("ui")
 
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
 scr:set_style({ bg_color = "#000000" })
 
-local title = lvgl.label(scr, {
-    text = "Counter",
-    align = "top_mid", y = 30,
-    text_color = "#ffffff",
-})
+local title = ui.title(scr, "Counter")
 
 local count = 0
 
--- Touch on this panel is not pixel-accurate: small targets get missed.
--- Keep tappable things at least ~200x100. This was measured, not guessed.
-local button = lvgl.button(scr, {
+-- ui.button already carries the right tap size and the launcher palette.
+-- Reach for a ui helper before hand-rolling a widget: touch on this panel is
+-- not pixel-accurate, and small targets get missed. Measured, not guessed.
+ui.button(scr, {
     text = "Tap me",
     align = "center", y = 0,
-    w = 240, h = 120,
-    bg_color = "#2f80ed",
-    text_color = "#ffffff",
+    on_click = function()
+        count = count + 1
+        title:set_text("Count: " .. count)
+    end,
 })
 
-button:on("clicked", function()
-    count = count + 1
-    title:set_text("Count: " .. count)
-end)
-
-lvgl.label(scr, {
-    text = "edit apps/counter.lua",
-    align = "bottom_mid", y = -30,
-    text_color = "#8a8a99",
-    font = lvgl.font(26),   -- caption size; 32px overflowed the panel
-})
+ui.note(scr, "edit apps/counter.lua", { y = 150, size = 26 })
 
 scr:load()
 

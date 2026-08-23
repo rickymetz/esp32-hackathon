@@ -5,6 +5,7 @@
 #include "app_registry.h"
 #include "launcher_main.h"
 #include "app_button.h"
+#include "esp_heap_caps.h"
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
@@ -269,6 +270,18 @@ static void handle_shot(void)
     bsp_display_unlock();
 }
 
+/* MEM -- report free heap without disturbing the running app, so a
+ * long soak can watch for slow leaks. Largest-contiguous matters as
+ * much as the total: fragmentation fails allocations while plenty is
+ * nominally free. */
+static void handle_mem(void)
+{
+    printf("MEM %u %u %u\n",
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+}
+
 /* PWR -- inject a synthetic PWR press+release through the same edge
  * recorder the poller uses, so app button flows are drivable from the
  * harness (the physical button obviously is not). */
@@ -346,6 +359,8 @@ static void serial_push_task(void *arg)
             handle_swipe(line);
         } else if (strcmp(line, "PWR") == 0) {
             handle_pwr();
+        } else if (strcmp(line, "MEM") == 0) {
+            handle_mem();
         }
     }
 }

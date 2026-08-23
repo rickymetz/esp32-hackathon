@@ -19,6 +19,8 @@ on:
       - 'launcher/main/app_timer.*'
       - 'launcher/main/app_sandbox.*'
       - 'launcher/components/lua_module_button/**'
+      - 'docs/APP_CONTRACT.md'
+      - 'tools/check_docs.py'
       - '.github/workflows/sim.yml'
   pull_request:
     paths:
@@ -33,6 +35,8 @@ on:
       - 'launcher/main/app_timer.*'
       - 'launcher/main/app_sandbox.*'
       - 'launcher/components/lua_module_button/**'
+      - 'docs/APP_CONTRACT.md'
+      - 'tools/check_docs.py'
       - '.github/workflows/sim.yml'
   workflow_dispatch:
 
@@ -41,6 +45,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # Cheap and needs no build, so it runs before the 270 MB LVGL fetch.
+      - name: Docs match the code
+        run: ./tools/check_docs.py
 
       - name: Install build tools
         run: sudo apt-get update && sudo apt-get install -y cmake ninja-build
@@ -73,6 +81,15 @@ jobs:
 
       - name: Golden-frame regression
         run: ./sim/golden.py
+
+      - name: Timer accuracy regression
+        run: ./sim/timing_test.py
+
+      - name: Documented widget API still matches the bindings
+        run: ./sim/widget_api_test.py
+
+      - name: Fuzz apps with random input
+        run: ./sim/fuzz.py --rounds 4 --steps 12 --jobs 4
 
       - name: Upload rendered frames
         if: always()

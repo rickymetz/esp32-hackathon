@@ -107,14 +107,34 @@ layer. These still need the board:
   rule); the sim registers every tap exactly. A button that works in the sim
   can still be too small on hardware.
 - **Voice.** MultiNet recognition is stubbed as unavailable.
-- **Sensors / audio / Wi-Fi are faked, not real.** `rtc`/`imu`/`battery`,
-  `audio`, and `wifi` serve deterministic readings so clock faces, dashboards
-  and networked apps render and drive board-free — but the clock is fixed, the
-  board reads dead-flat and still, tones are silent, and the "network" always
-  connects. Confirm real sensor values, sound, and a live connection on the
-  board.
+- **Real sensor data.** `rtc`/`imu`/`battery`, `audio` and `wifi` are faked
+  (`src/sim_sensors.c`, `src/sim_audio.c`, `src/sim_wifi.c`): a fixed clock
+  (14:30 Sat 22 Aug), a dead-flat IMU, 76% battery, silent audio, and a
+  network that always connects. Deterministic so apps render and goldens hold,
+  but nothing measures anything — confirm real readings, sound, and a live
+  connection on the board. Their *defaults* can be overridden per run with the
+  fake-sensor injection verbs (above), which is how the degraded paths get
+  tested; the fully live behaviour still needs hardware.
+- **Module failure — partly.** The injection verbs reach some degraded paths
+  the device shows (`rtc unset` → `"rtc not set"`, `battery -1` → "gauge not
+  ready", `wifi fail` → `"failed"`). Others — a NAKing I2C sensor, a mid-read
+  hardware fault — the stubs can't reproduce; those still need the board.
 - **Watchdog reboots** from runaway loops / blocking C calls; timing of the
   10 s TWDT; PSRAM budgets.
+`sim/timing_test.py` guards the timer-accuracy bug class (see
+`sim/fixtures/timing.lua`): it paces the same duration with both the wrong
+pattern and the right one and asserts they are still distinguishable. Runs in
+CI.
+
+- **Timer dispatch latency, to scale.** Timers are inaccurate in the same
+  *direction* here as on the board -- a periodic timer re-arms after its
+  callback, so it always runs slow -- but not to the same *degree*. Measured
+  with a 100 bpm metronome: the simulator overshoots by ~2.7 ms per tick, the
+  board by ~24 ms. So a timing bug is roughly an order of magnitude quieter
+  here, and one that looks like harmless jitter in the sim can be plainly
+  wrong on hardware. The sim is still the right place to *find* these -- add a
+  `print(timer.now_ms())` and read the intervals off stdout -- just don't read
+  its margins as the real ones.
 - Exact **color** — the panel is RGB565 and the sim matches that, but real
   AMOLED brightness/gamma differ.
 - **Filesystem paths.** `--sdroot` resolves the app and `font_load` paths

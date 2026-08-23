@@ -84,7 +84,7 @@ local page_label = lvgl.label(p2, {
 lvgl.label(p2, {
     text = "swipe between pages;\nthis label tracks value_changed",
     align = "bottom_mid", y = -24,
-    text_color = "#8a8a99",
+    text_color = "#A0A0AE",
 })
 
 tv:on("value_changed", function()
@@ -107,7 +107,7 @@ open_btn:on("clicked", function()
     local caller = lvgl.active_screen()
 
     local gs = lvgl.create_screen()
-    gs:set_style({ bg_color = "#101014" })
+    gs:set_style({ bg_color = "#000000" })
 
     local dir_label = lvgl.label(gs, {
         text = "swipe any direction",

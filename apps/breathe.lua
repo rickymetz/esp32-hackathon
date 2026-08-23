@@ -34,7 +34,8 @@ caption:set_style({ font = lvgl.font(26) })
 
 local running = false
 local anim_h
-local phase_i, phase_elapsed = 1, 0
+local phase_i = 1
+local phase_start                -- timer.now_ms() when this phase began
 
 local function set_size(d)
     circle:set_size(d, d)
@@ -47,16 +48,28 @@ local function reset_visual()
     caption:set_text(running and PHASES[phase_i].name or "Ready")
 end
 
+-- Phase position comes from the clock, not from counting ticks.
+--
+-- phase_elapsed = phase_elapsed + 50 on a 50 ms timer looks equivalent and is
+-- not: a periodic timer re-arms AFTER its callback, so each "50 ms" tick costs
+-- 50 ms plus dispatch, and at this period the overhead is a large fraction of
+-- the interval. The pacing would run slow by that fraction -- and the whole
+-- point of a breathing app is that "inhale for four seconds" lasts four
+-- seconds. Advancing phase_start by exactly p.dur keeps the cycle honest even
+-- when an individual tick lands late.
 local function tick()
     local p = PHASES[phase_i]
-    phase_elapsed = phase_elapsed + 50
-    if phase_elapsed >= p.dur then
-        phase_elapsed = 0
+    local elapsed = timer.now_ms() - phase_start
+
+    while elapsed >= p.dur do          -- while, not if: a long stall may span phases
+        phase_start = phase_start + p.dur
+        elapsed = elapsed - p.dur
         phase_i = phase_i % #PHASES + 1
         p = PHASES[phase_i]
         caption:set_text(p.name)
     end
-    local t = phase_elapsed / p.dur
+
+    local t = elapsed / p.dur
     set_size(math.floor(p.from + (p.to - p.from) * t))
 end
 
@@ -68,7 +81,7 @@ local start_btn = lvgl.button(scr, {
 local function toggle()
     running = not running
     if running then
-        phase_i, phase_elapsed = 1, 0
+        phase_i, phase_start = 1, timer.now_ms()
         caption:set_text(PHASES[1].name)
         start_btn:set_text("Stop")
         start_btn:set_style({ bg_color = "#c0392b" })

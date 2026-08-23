@@ -56,6 +56,16 @@ SCENES = [
                    "Tone generator; slider sets the pitch."),
     ("ui_test",    ["sleep","0.4"],
                    "Shared ui helpers: rows, toggle, page dots."),
+    # The watch faces and the clock read the RTC, so they could not be
+    # rendered at all until the simulator gained hardware stand-ins.
+    ("faces",      ["sleep","1.2"],
+                   "Analog face: hands, minute track, complications."),
+    ("faces_rings",["@faces","swipe","300","224","60","224","260",":","sleep","1.2"],
+                   "Rings face: hours, minutes, seconds as arcs."),
+    ("clock",      ["sleep","1.2"],
+                   "Digital clock with a city-picked timezone."),
+    ("hello_world",["sleep","0.3"],
+                   "A tour of the widget set."),
 ]
 
 
@@ -147,6 +157,10 @@ def run_scene(app, tail):
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        # Without this, --help was taken as the output filename and the
+        # gallery was written to a file literally called "--help".
+        sys.exit(__doc__)
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "build", "gallery.html")
     if not os.path.exists(SIM):
         sys.exit("sim not built -- run sim/build.sh")

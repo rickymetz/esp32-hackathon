@@ -34,6 +34,11 @@ scr:load()
 
 That is a complete, working app.
 
+`buffer_lines` sizes LVGL's render buffer, in screen rows. **Copy the 40 and move on** —
+it is a memory-versus-redraw-smoothness trade, 40 suits every app here, and the only reason
+to change it is a full-screen animation that visibly tears (raise it) on a screen that is
+368 px wide.
+
 ### The rules that matter
 
 1. **Build your UI, then return.** Do **not** write a `while true` loop or call
@@ -44,8 +49,11 @@ That is a complete, working app.
    the launcher's screen. When your app exits, the launcher deletes your screen and every
    widget on it — you do not need to clean up widgets.
 3. **Touch is not pixel-accurate.** Measured on this hardware: a 240×120 button catches
-   every tap, while a 180×56 one dropped roughly half. **Keep tappable targets ≥ ~200×100.**
-   If your buttons feel broken, this is almost certainly why.
+   every tap, while a 180×56 one dropped roughly half. **Aim for ≥ 200×100, and never go
+   below 88×88.** Between those two you are in a grey band that works but is not
+   comfortable — fine when the layout forces it (two buttons side by side on a 368 px
+   screen land near 164×104), so long as you keep the height at 104 or more. If your
+   buttons feel broken, this is almost certainly why.
 4. **Errors are visible, not fatal.** A Lua error stops your app and shows a red,
    full-screen error with a traceback, then waits for BOOT — or `STOP` over serial — before
    returning to the launcher. It does not vanish silently, and it does not reboot the
@@ -64,6 +72,48 @@ That is a complete, working app.
    anything periodic.
 
 ---
+
+## Your first app, start to finish
+
+```bash
+# 1. Once per clone -- the tools need pyserial.
+python3 -m venv .venv && ./.venv/bin/pip install -r tools/requirements.txt
+
+# 2. Start from the template.
+cp apps/counter.lua apps/myapp.lua
+
+# 3. Install it over USB (no card shuffling, no reboot).
+./.venv/bin/python tools/push.py apps/myapp.lua
+
+# 4. Launch it -- either tap Refresh then the row on the device, or:
+./.venv/bin/python tools/drive.py run myapp.lua
+```
+
+Edit, re-run steps 3 and 4, repeat. That is the whole loop.
+
+## Develop without the board
+
+There is one board and several of us. You do **not** need it to write an app: a headless
+**simulator** compiles the launcher's real Lua↔LVGL bindings against desktop LVGL, so what
+it renders is what the device renders.
+
+```bash
+# once:
+(cd sim && ./setup.sh && ./build.sh)
+
+# then, from the repo root:
+sim/simctl.py run apps/myapp.lua : tap 184 224 : shot out.png
+```
+
+You get a PNG of your app and can tap, swipe, and screenshot it in a chain. Every module
+is available: `rtc` follows your computer's clock, and `battery`, `imu`, `audio` and `wifi`
+return fixed, plausible values so a layout renders.
+
+What the simulator **cannot** show you is anything about the hardware itself: touch
+imprecision, the watchdog, real sensor readings — and, importantly, **failure**. On the
+device these modules degrade, returning `nil, "reason"`; in the simulator they always
+succeed, so it cannot prove you handled that. Confirm on the board. Details in
+`sim/README.md`.
 
 ## Installing your app
 
@@ -90,11 +140,34 @@ finds. **The filename becomes the name in the list**: `weather_clock.lua` shows 
 
 Apps run on **Lua 5.5** — not 5.1, not LuaJIT. If your muscle memory is from either of
 those, two things are likely to surprise you: `/` always returns a float even for two
-integers (use `//` for integer division), and `math.random`'s range and seeding rules are
-different. Don't assume; test the arithmetic you care about.
+integers (use `//` for integer division), and `math.random` is **seeded for you** from the
+chip's hardware RNG at every app launch — you do not need `math.randomseed()`, and you get
+a different sequence every run.
+`math.random(n)` returns 1..n inclusive, `math.random(a, b)` returns a..b inclusive, and
+`math.random()` returns a float in [0,1).
 
 Available standard library: `string`, `math`, `table`, `os`, `io`, `utf8`, `coroutine`.
-`require` also works — you need it for `require("lvgl")` and `require("timer")`.
+
+`require` gives you the launcher's modules. **This is the complete roster** — there are no
+others, and you cannot `require` a `.lua` file of your own (see the trust model below):
+
+| Module | What it is |
+| --- | --- |
+| `lvgl` | Widgets, screens, styles, fonts, symbols. Every app needs it. |
+| `timer` | `every` / `after` / `now_ms`. 16 slots. |
+| `ui` | Shared primitives — header, row, select, picker, confirm, toast, … |
+| `button` | The PWR button |
+| `keyboard` | Text entry |
+| `voice` | Offline speech — gate on `voice.available()` |
+| `audio` | Tones and beeps |
+| `rtc` | Wall-clock date and time |
+| `imu` | Accelerometer, gyroscope, die temperature |
+| `battery` | Charge percentage and charging state |
+| `wifi` | Station-mode networking and NTP |
+
+`rtc`, `imu`, `battery`, `wifi` and `voice` **degrade rather than raise**: when the
+hardware or the data isn't there they return `nil, "reason"`. Always check the first
+return.
 
 **There is no sandbox.** An app has the full standard library and can read or write
 anything reachable through it, including the SD card's other apps and anything else stored
@@ -164,9 +237,17 @@ obj:set_flex({ ... })  obj:set_grid({ ... })  obj:set_scroll({ ... })
 obj:delete()           obj:clean()
 ```
 
-Value-holding widgets (`slider`, `bar`, `arc`, `spinbox`) also have `obj:get_value()` —
-this is how you read state from inside a `value_changed` callback, since callbacks take no
-arguments (see Events, below).
+**Text-holding widgets** (`label`, `button`, `checkbox`, `textarea`, …) have
+`obj:set_text(s)`. This is the workhorse — it is how a timer callback updates a readout:
+
+```lua
+readout:set_text(string.format("%02d:%02d", h, m))
+```
+
+**Value-holding widgets** (`slider`, `bar`, `arc`, `spinbox`) have `obj:get_value()`,
+`obj:set_value(n)` and `obj:set_range(min, max)`. `get_value()` is how you read state from
+inside a `value_changed` callback, since callbacks take no arguments (see Events, below);
+`set_value()` is how a timer or a button drives a bar or a gauge.
 
 ### Events
 
@@ -221,11 +302,83 @@ h:cancel()
 ```
 
 `timer.every(ms, fn)` repeats every `ms` milliseconds; `timer.after(ms, fn)` fires once.
-Both return a handle with `:cancel()`. `timer.now_ms()` returns monotonic
-milliseconds since boot — **measure elapsed time with timestamps, never by
-counting ticks**: periodic timers re-arm after their callback runs, so every
-cycle stretches by dispatch latency and a tick-counting clock drifts slow. Every timer an app creates is cancelled
+Both return a handle with `:cancel()`. **You get 16 timer slots**; a 17th raises
+`too many timers (max 16)`. Cancelled timers free their slot, and some `ui` helpers borrow
+one while they're on screen (`ui.toast`). Every timer an app creates is cancelled
 automatically when the app exits — you never need to track them down yourself.
+
+#### `timer.every` is not accurate. Plan for that.
+
+**A periodic timer re-arms *after* your callback returns.** So `timer.every(1000, …)`
+does not fire every 1000 ms — it fires every 1000 ms *plus* however long your callback
+took *plus* the pump's dispatch latency. That overhead was measured on this board at
+roughly **24 ms per tick**, and it never averages out: it accumulates in one direction,
+always slow.
+
+This is the single most common bug in the apps written so far — five of the shipped
+examples had it. It is invisible on screen, which is what makes it dangerous: the app
+looks right and the numbers are wrong.
+
+`timer.now_ms()` returns monotonic milliseconds since boot, and it is the fix for all
+three shapes of the problem:
+
+**1. Measuring how long something took** — take two stamps and subtract. Never accumulate.
+
+```lua
+-- WRONG: reports less time than actually passed
+local ms = 0
+timer.every(10, function() ms = ms + 10 end)
+
+-- RIGHT
+local started = timer.now_ms()
+-- ...later...
+local ms = timer.now_ms() - started
+```
+
+**2. Something that must happen on a beat** (a metronome, a countdown, an animation) —
+chain `timer.after` against an absolute target, so a late tick cannot push the next one:
+
+```lua
+local next_at = timer.now_ms() + interval
+
+local function schedule()
+    local delay = math.floor(next_at - timer.now_ms())
+    if delay < 1 then delay = 1 end          -- never schedule into the past
+    timer.after(delay, function()
+        beat()
+        next_at = next_at + interval          -- absolute, so error cannot compound
+        schedule()
+    end)
+end
+```
+
+Keep `next_at` a float if `interval` is fractional, but floor what you hand to
+`timer.after` — it takes an integer and raises on a fraction.
+
+**3. Watching something that changes on its own** (the RTC's seconds, a sensor) — do
+**not** match its rate; sample *faster* and repaint only on change. A 1000 ms timer
+sampling a 1 Hz clock is slightly slower than the clock, so it misses whole seconds and
+your display visibly jumps two at a time:
+
+```lua
+local last
+timer.every(250, function()
+    local t = rtc.now()
+    if not t or t.sec == last then return end
+    last = t.sec
+    -- repaint here; still only four times per second in the worst case
+end)
+```
+
+Worked examples of all three: `apps/stopwatch.lua` and `apps/reaction.lua` (1),
+`apps/metronome.lua` and `apps/countdown.lua` (2), `apps/faces.lua` and `apps/clock.lua` (3).
+
+**One limit on `timer.now_ms()`:** apps run with 32-bit Lua integers, so it wraps back to
+negative after **2³¹ ms — about 24.9 days** of uptime. *Differences* survive that
+(`now_ms() - started` stays correct across a single wrap, because Lua integer arithmetic
+wraps too), which is exactly why the patterns above subtract rather than compare. Code
+that instead assumes the value only ever grows will misbehave once, at that instant. Note
+the simulator uses 64-bit Lua and never wraps, so it cannot show you this.
 
 **The gotcha that costs real debugging time:** this looks reasonable and is wrong —
 
@@ -282,20 +435,33 @@ app is always escapable.
 ### Fonts
 
 **Every widget defaults to Lexend 32** — the launcher sets it as the display theme, so you
-get a readable size for free and usually don't need to touch fonts at all. Six Lexend
+get a readable size for free and usually don't need to touch fonts at all. **Eight** Lexend
 faces ship baked into the firmware; ask for one with `lvgl.font`:
 
 ```lua
-local big = lvgl.font(40)          -- 24, 26, 32, 40, 48, 60; anything else raises
+local big = lvgl.font(40)
 label:set_style({ font = big })
 ```
+
+| Size | Use |
+| --- | --- |
+| 24 | The floor. Never go below it. |
+| 26 | Captions |
+| 32 | Body — the theme default |
+| 40, 48 | Headings |
+| 60 | Hero numbers (stopwatch, score, temperature) |
+| 72 | Top of the accessibility scale |
+| 120 | Watch-face hero — **digits and `.:` only**, no letters |
+
+Any other size raises. This is the whole list: nothing above 120 exists as a built-in, and
+nothing between these sizes does either.
 
 These cannot go missing — they live in flash, not on the SD card. Sizing guidance is in
 `docs/DESIGN_GUIDE.md`: body 32, captions 26, never below 24.
 
 **Text scales globally.** A user-set **font scale** (default **1.0**) drives both
 `lvgl.font(size)` and the theme default, so everything sizes together.
-You still request one of the six sizes; the face returned is that size scaled, snapped to
+You still request one of the eight sizes; the face returned is that size scaled, snapped to
 the nearest available face. Read or set it with `lvgl.font_scale()`:
 
 ```lua
@@ -310,23 +476,29 @@ scale up when your app exits — the launcher re-applies the theme then. An app
 that changes the scale without persisting does not affect anyone else: the
 persisted value is restored on exit.
 
-Icons come with them: `lvgl.symbol.*` holds the built-in glyph strings —
-`lvgl.symbol.play`, `.pause`, `.ok`, `.close`, `.left`, `.trash`, and ~55 more. Concatenate
-them into label text:
+Icons come with them: `lvgl.symbol.*` holds the glyph strings. Concatenate them into label
+text:
 
 ```lua
 lvgl.label(scr, { text = lvgl.symbol.play .. " Start" })
 ```
 
-Beyond LVGL's built-in set, an **extended icon pack** ships in the Lexend faces
-(as an icon fallback font), reachable the same way:
-`lvgl.symbol.search`, `.microphone`, `.clock`, `.calendar`, `.heart`, `.star`,
-`.sun`, `.moon`, `.thermometer`, `.stopwatch`, `.location`, `.user`, `.camera`,
-`.fire`, `.check_circle`, `.comment`, `.cloud`, `.heartbeat`. They render at any
-`lvgl.font(size)`.
+They render at any `lvgl.font(size)`. **The complete set — 79 names, there are no
+others:**
 
-Hero numbers use the built-in 60: `lvgl.font(60)`. Only for something **larger
-than 60px** does a TTF from the card come into play:
+| Media | `.play` `.pause` `.stop` `.next` `.prev` `.shuffle` `.loop` `.volume_mid` `.volume_max` `.mute` `.audio` `.video` |
+| Navigation | `.left` `.right` `.up` `.down` `.home` `.close` `.ok` `.plus` `.minus` `.refresh` `.list` `.bars` |
+| Editing | `.edit` `.cut` `.copy` `.paste` `.save` `.trash` `.backspace` `.new_line` `.keyboard` `.search` |
+| Status | `.battery_full` `.battery_3` `.battery_2` `.battery_1` `.battery_empty` `.charge` `.wifi` `.bluetooth` `.usb` `.gps` `.power` `.warning` `.bell` |
+| Files | `.file` `.directory` `.download` `.upload` `.drive` `.sd_card` `.image` |
+| Extended pack | `.clock` `.calendar` `.stopwatch` `.heart` `.heartbeat` `.star` `.sun` `.moon` `.thermometer` `.location` `.user` `.camera` `.fire` `.check_circle` `.comment` `.cloud` `.microphone` |
+| Other | `.bullet` `.settings` `.tint` `.eject` `.eye_open` `.eye_close` `.call` `.envelope` |
+
+Anything not on this list is `nil`, which concatenates to an error rather than a glyph.
+
+Hero numbers use the built-in 60: `lvgl.font(60)`, or `lvgl.font(120)` for a watch face
+where the time *is* the screen. A TTF from the card is only for a **typeface** we don't
+compile in — not for size, which the built-ins already cover:
 
 ```lua
 local font = lvgl.font_load("apps/big.ttf", { size = 64 })
@@ -373,6 +545,26 @@ cannot `require` files from the card).
 | `ui.card(parent, {w=, h=, align=, x=, y=})` | Rounded grouped-content panel; parent content to it |
 | `ui.stat(parent, {value=, label=, size=, align=, y=})` | Big value over a small caption (readouts); returns `h` with `h.set(v)` |
 | `ui.note(scr, text, {size=, y=})` | Centred dim message for empty states and hints; returns the label |
+
+
+**What each one hands back.** Most helpers return a handle you keep, so you can update the
+thing later — this is how you change a row's label or read a stepper's value.
+
+| Helper | Returns |
+| --- | --- |
+| `ui.corner_button` | `{ button, visual }` — `button` is the invisible ≥88 px tap target, `visual` the smaller glyph you see. Style `visual`; bind on `button`. |
+| `ui.header` | `{ back, title, action }` — each present only if you asked for it |
+| `ui.row` | `{ row, label, switch?, check?, get(), set_checked(on) }` |
+| `ui.select` | `{ rows, selected, get(), set(i) }` |
+| `ui.stepper` | `{ row, label, get(), set(v) }` |
+| `ui.stat` | `{ value, caption?, set(v) }` |
+| `ui.dots` | `{ labels }` |
+| `ui.busy` | `{ done() }` — **you must call `done()`**, nothing else dismisses it |
+| `ui.toast` | The pill widget; it removes itself |
+| `ui.title` · `ui.note` | The label |
+| `ui.button` | The button |
+| `ui.list` · `ui.card` | The container — add children to it |
+| `ui.confirm` · `ui.picker` · `ui.fill` | Nothing; they own a screen and call your callback |
 
 ### Text entry: `require("keyboard")`
 
@@ -466,9 +658,11 @@ measurement.
 **`imu.gyro()` is not calibrated — treat it as a motion detector, not an angle
 source.** Measured on hardware it has a **7–9 °/s resting bias that drifts**
 (the board accumulated ~12° while sitting perfectly still), which is enough on
-its own to make integrated angles meaningless. Its scale is unverified — not
-known wrong, just unchecked. Use it for "is the board turning, and roughly how
-fast"; do **not** integrate it into degrees. If you need orientation, derive it
+its own to make integrated angles meaningless. Its **scale is correct** —
+±512 °/s, 64 LSB/°/s, from the chip's `CTRL3` setting — so the *rate* it reports
+is trustworthy; it is the bias, not the scaling, that makes integration useless.
+Use it for "is the board turning, and roughly how fast"; do **not** integrate it
+into degrees. If you need orientation, derive it
 from `imu.accel()` — gravity is a reliable reference and was measured good.
 
 `imu.die_temp()` is the **sensor's own silicon temperature, not the room**.
@@ -571,11 +765,152 @@ share: `ui.zone()` returns city index, DST flag and offset in minutes;
 `ui.shift(t, minutes)` shifts an `rtc.now()` reading and rolls the date
 properly; `ui.DAYS` and `ui.MONTHS` are name tables.
 
-### Layout
+### The data widgets, and how to fill them
+
+The widget table lists these as "also available", which was not enough: you could
+*create* a chart or a table and then had no documented way to put anything in it. Each
+one's methods, in full.
+
+**`lvgl.chart`** — series are handles you keep, not indexes:
 
 ```lua
-list:set_flex({ flow = "column", pad_row = 10 })
+local c = lvgl.chart(scr, { type = "line", point_count = 10, min = 0, max = 100 })
+local s = c:add_series("#2F80ED")        -- optional 2nd arg: "primary_y" | "secondary_y"
+c:set_series_values(s, { 10, 40, 25, 90 })
+c:set_next_value(s, 55)                  -- push one point, scrolling the series
+c:set_type("line")                       -- "line" | "bar" | "scatter"
+c:set_point_count(20)  ·  c:set_range(0, 100, "primary_y")  ·  c:refresh()
 ```
+
+**`lvgl.table`** — 1-based row and column:
+
+```lua
+t:set_cell(1, 1, "Mon")      t:get_cell(1, 1)   -- -> string
+```
+
+**`lvgl.list`** — both return the created child, so you can `:on("clicked", …)` it:
+
+```lua
+list:add_text("Section")                 -- a plain header row
+local row = list:add_button(lvgl.symbol.file, "Open")   -- (icon, text); icon may be nil
+```
+
+**`lvgl.tabview`** — `add_tab` returns the tab's content container; parent your widgets to it:
+
+```lua
+local page = tv:add_tab("Stats")
+tv:set_active(1)  ·  tv:get_active()  ·  tv:get_tab_count()  ·  tv:set_tab_text(1, "New")
+```
+
+**`lvgl.msgbox`** — each `add_*` returns the created child:
+
+```lua
+m:add_title("Delete?")  ·  m:add_text("This cannot be undone.")
+m:add_footer_button("Cancel")  ·  m:add_close_button()  ·  m:close()
+```
+
+**`lvgl.spinbox`** — beyond the shared value methods:
+
+```lua
+sb:set_step(10)  ·  sb:get_step()  ·  sb:increment()  ·  sb:decrement()
+sb:step_next()   ·  sb:step_prev()          -- move the edited digit
+```
+
+**`lvgl.led`**:
+
+```lua
+led:set_color("#00FF00")  ·  led:set_brightness(0..255)  ·  led:get_brightness()
+led:on()  ·  led:off()  ·  led:toggle()
+```
+
+**`lvgl.buttonmatrix`** — `set_map` takes a flat list of strings; `"\n"` starts a new row:
+
+```lua
+bm:set_map({ "1", "2", "3", "\n", "4", "5", "6" })
+bm:set_selected(i)  ·  bm:get_selected()  ·  bm:get_button_text(i)  ·  bm:set_one_checked(true)
+```
+
+**`lvgl.calendar`**:
+
+```lua
+cal:set_today(2026, 8, 22)  ·  cal:set_shown(2026, 8)
+cal:set_highlighted({ {2026, 8, 22}, {2026, 8, 25} })   -- POSITIONAL {year, month, day}
+cal:get_pressed_date()
+```
+
+Note the inconsistency, because it will bite: calendar dates are **positional arrays**
+`{year, month, day}`, while `lvgl.line` points are **keyed tables** `{x=, y=}`. Passing the
+wrong shape to `set_highlighted` raises; passing the wrong shape to `set_points` silently
+draws nothing.
+
+**`lvgl.canvas`** — pixel-level drawing:
+
+```lua
+cv:fill_bg("#000000", 255)   ·  cv:set_px(x, y, "#FF0000", 255)   ·  cv:get_px(x, y)
+cv:set_rgb565_data(binary_string)
+```
+
+**`lvgl.window`** — `get_content()` is the parent for your widgets:
+
+```lua
+w:add_title("Log")  ·  w:add_button(lvgl.symbol.close, 40)
+w:get_header()  ·  w:get_content()
+```
+
+`lvgl.menu` also has a full method set (`page`, `cont`, `section`, `separator`, `set_page`,
+`set_sidebar_page`, `set_mode_header`, `set_root_back_button`, `clear_history`). It is
+built for a sidebar-and-pages layout that does not suit a 368 px screen — prefer
+`ui.picker` or a `tileview`.
+
+### Layout
+
+Three layout calls, on any object. **Both flex and grid are available** — grid is the
+better tool whenever things must line up in columns, which flex only fakes.
+
+**Flex** — a row or a column:
+
+```lua
+list:set_flex({
+    flow = "column",     -- row · column · row_wrap · column_wrap
+                         --   row_reverse · row_wrap_reverse
+    main = "start",      -- along the flow:   start · end · center
+    cross = "center",    -- across the flow:    space_evenly · space_around
+    track = "start",     --   between wrapped tracks:  space_between
+    pad_row = 16,        -- gap between rows
+    pad_column = 8,      -- gap between columns
+})
+```
+
+**Grid** — tracks are sizes in pixels, `"content"` (fit the child), or `"fr"` (share the
+leftover space). Place each child yourself; `col`/`row` are **1-based**:
+
+```lua
+panel:set_grid({
+    cols = { "fr", "fr" },        -- two equal columns
+    rows = { 104, 104, "content" },
+    col_align = "stretch",        -- start · end · center · stretch
+    row_align = "start",          --   space_evenly · space_around · space_between
+    pad_row = 16, pad_column = 12,
+})
+
+label:set_grid_cell({ col = 1, row = 1 })
+wide:set_grid_cell({ col = 1, row = 3, col_span = 2 })   -- spans both columns
+```
+
+**Scroll** — only the fields you pass are applied, so you can change one without
+disturbing the others:
+
+```lua
+list:set_scroll({
+    dir = "ver",            -- hor · ver · all · none
+    scrollbar = "auto",     -- off · on · auto · active
+    snap_y = "center",      -- none · start · end · center
+})
+```
+
+That last point matters: an earlier version applied *every* field including the ones you
+omitted, so `set_scroll({ scrollbar = "off" })` on a tileview silently wiped its
+scroll-snap and pages stopped snapping into place.
 
 ### Paging
 
@@ -624,11 +959,12 @@ Ask if your app genuinely needs one — each is launcher work that blocks everyo
 | Limit | Value |
 | --- | --- |
 | Display | **368 × 448** portrait, ~350 nit |
-| Minimum comfortable touch target | **~200 × 100** |
+| Touch target | Aim **200 × 100**; hard floor **88 × 88** |
 | Lua heap | Allocated from PSRAM (~5 MB free — the resident voice model costs ~3 MB). A bare VM (no modules loaded) costs ~15.5 KB; a real app — `lvgl` loaded, a screen created — costs ~40 KB |
 | Lua task stack | 32 KB |
 | Concurrency | One app at a time |
-| Custom fonts | Built-in Lexend at 24/26/32/40/48/60 via `lvgl.font(size)`; TTFs above that via `lvgl.font_load` (must exist on the card) |
+| Timers | **16** concurrent slots per app; a 17th raises |
+| Fonts | Built-in Lexend at 24/26/32/40/48/60/72/120 via `lvgl.font(size)` (120 = digits and `.:` only). `lvgl.font_load` is for a different *typeface*, and the TTF must exist on the card |
 
 ---
 
@@ -639,45 +975,35 @@ The full contents of `apps/counter.lua`:
 ```lua
 -- Counter -- the template app. Copy this file, rename it, make it yours.
 --
--- Install: copy to /apps/ on the SD card. The launcher lists every .lua file
--- it finds there; the filename becomes the name shown in the list.
+-- Install: ./.venv/bin/python tools/push.py apps/counter.lua
+-- Or copy it to /apps/ on the SD card. The launcher lists every .lua file it
+-- finds there; the filename becomes the name shown in the list.
 
 local lvgl = require("lvgl")
+local ui = require("ui")
 
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
 scr:set_style({ bg_color = "#000000" })
 
-local title = lvgl.label(scr, {
-    text = "Counter",
-    align = "top_mid", y = 30,
-    text_color = "#ffffff",
-})
+local title = ui.title(scr, "Counter")
 
 local count = 0
 
--- Touch on this panel is not pixel-accurate: small targets get missed.
--- Keep tappable things at least ~200x100. This was measured, not guessed.
-local button = lvgl.button(scr, {
+-- ui.button already carries the right tap size and the launcher palette.
+-- Reach for a ui helper before hand-rolling a widget: touch on this panel is
+-- not pixel-accurate, and small targets get missed. Measured, not guessed.
+ui.button(scr, {
     text = "Tap me",
     align = "center", y = 0,
-    w = 240, h = 120,
-    bg_color = "#2f80ed",
-    text_color = "#ffffff",
+    on_click = function()
+        count = count + 1
+        title:set_text("Count: " .. count)
+    end,
 })
 
-button:on("clicked", function()
-    count = count + 1
-    title:set_text("Count: " .. count)
-end)
-
-lvgl.label(scr, {
-    text = "edit apps/counter.lua",
-    align = "bottom_mid", y = -30,
-    text_color = "#8a8a99",
-    font = lvgl.font(26),   -- caption size; 32px overflowed the panel
-})
+ui.note(scr, "edit apps/counter.lua", { y = 150, size = 26 })
 
 scr:load()
 
@@ -726,7 +1052,7 @@ tools/drive.py run myapp.lua : sleep 1 : tap 184 224 : sleep 0.5 : shot out.png
 Watch the console live:
 
 ```bash
-idf.py -p /dev/cu.usbmodem101 monitor      # Ctrl-] to exit
+idf.py -p $(printf '%s\n' /dev/cu.usbmodem* | head -1) monitor   # Ctrl-] to exit
 ```
 
 or capture a window of it without holding the port open: `tools/read_serial.py <seconds>`.

@@ -10,7 +10,7 @@ local button = require("button")
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#101014" })
+scr:set_style({ bg_color = "#000000" })
 
 ui.title(scr, "Dice")
 
@@ -19,10 +19,10 @@ local num_dice = 1
 local total = lvgl.label(scr, {
     text = "-", align = "center", y = -70, text_color = "#ffffff",
 })
-total:set_style({ font = lvgl.font(48) })
+total:set_style({ font = lvgl.font(60) })
 
 local detail = lvgl.label(scr, {
-    text = "tap Roll", align = "center", y = 0, text_color = "#8a8a96",
+    text = "tap Roll", align = "center", y = 0, text_color = "#A0A0AE",
 })
 
 local function roll()

@@ -42,13 +42,19 @@ TCA9554 `0x20`, ES8311 `0x18`.
 
 ## Build and flash
 
-ESP-IDF **v5.5.5** at `~/esp/esp-idf`. Board is on **`/dev/cu.usbmodem101`**.
+ESP-IDF **v5.5.5** at `~/esp/esp-idf`.
+
+**Do not hardcode the serial port.** It is usually `/dev/cu.usbmodem101`, but this
+board's native USB re-enumerates on its own and comes back under a *different* name
+(`/dev/cu.usbmodem1101` was seen mid-session). Every tool in `tools/` globs
+`/dev/cu.usbmodem*` for this reason; only `idf.py` needs to be told, so resolve it:
 
 ```bash
 . ~/esp/esp-idf/export.sh          # required in every new shell
+export PORT=$(printf '%s\n' /dev/cu.usbmodem* | head -1)   # glob, not ls: ls colourises
 cd launcher
 idf.py build
-idf.py -p /dev/cu.usbmodem101 flash monitor
+idf.py -p $PORT flash monitor
 ```
 
 `cmake` and `ninja` come from Homebrew, not from `install.sh`.
@@ -108,7 +114,7 @@ These cost an hour each if you don't know them. Most were hit for real in this r
 - **The monitor holds the port.** Flashing fails while `monitor`/`screen` is attached.
 - **A crash takes USB with it.** This board uses the S3's *native* USB, not a UART bridge,
   so a hung app makes flashing fail with `No serial data received` even though
-  `/dev/cu.usbmodem101` still exists and enumerates. **No software reset recovers it** —
+  the port still exists and enumerates. **No software reset recovers it** —
   `--before usb-reset`, `no-reset-no-sync`, and `watchdog-reset` all fail. Recovery is
   physical: hold PWR ≥6 s to power off → hold BOOT → press PWR → release BOOT. It does
   **not** auto-exit download mode after flashing; power-cycle again or it boots to silence.

@@ -20,7 +20,7 @@ local timer = require("timer")
 
 lvgl.init({ buffer_lines = 40 })
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#101014" })
+scr:set_style({ bg_color = "#000000" })
 
 local label = lvgl.label(scr, {
     text = "timer_slot: waiting", align = "center", text_color = "#ffffff",

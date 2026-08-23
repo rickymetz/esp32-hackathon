@@ -8,6 +8,26 @@ theirs. Where they are silent, that is said plainly rather than filled with inve
 
 ---
 
+## Rules for app authors — start here
+
+If you are writing an app, these eight are the whole guide. Everything below them is the
+measurement and platform research they came from, plus launcher-maintainer detail.
+
+1. **Body text 32 px. Never below 24 px.** The default is now 32; do not shrink it.
+2. **Aim for 200 × 100 tappable; never below 88 × 88.** Prefer 104 px tall rows.
+3. **True black background** (`0x000000`) — battery and legibility.
+4. **White text for anything that matters.** Grey is for captions only.
+5. **One idea per screen**, two or three controls at most.
+6. **Scroll vertically; page horizontally.** Sibling pages swipe left/right
+   (`lvgl.tileview` + `ui.dots`) — allowed precisely because Home is a hardware
+   button, so no edge is reserved. Never mix a drag control into a paged view.
+7. **Trim long text**; do not scroll it sideways.
+8. **Hero numbers 60 px** via `lvgl.font(60)` — compiled in, cannot go
+   missing. A watch face whose whole point is the time can use `lvgl.font(120)`
+   (digits and `.:` only).
+
+---
+
 ## The single most useful fact
 
 **This panel is pixel-for-pixel an Apple Watch 44mm.**
@@ -55,15 +75,17 @@ published body token is 11 sp. Both land at 22–24 px here.
 
 The theme default is **Lexend Medium 32** — a face designed to reduce visual
 stress and improve reading performance, compiled into the firmware at
-24/26/32/40/48 with LVGL's icon glyphs baked into every size. Ask for a size
-with `lvgl.font(40)`; it cannot go missing with the SD card. (Honest caveat:
+**24/26/32/40/48/60/72/120** with LVGL's icon glyphs baked into every size. Ask
+for a size with `lvgl.font(40)`; it cannot go missing with the SD card. (120 is
+the watch-face hero face and carries digits and `.:` only.) (Honest caveat:
 Lexend's measured reading gains are strongest in its *wider* variants, which a
 368 px screen cannot spare — we inherit the design intent, not the measured
 effect.)
 
-**Above 48 px, LVGL's built-ins run out.** For a large clock or a hero numeral, use
-`lvgl.font_load()` with a TTF on the card — and wrap it in `pcall` with a built-in
-fallback, the way `apps/stopwatch.lua` does.
+**The built-ins go to 120 px**, so a hero numeral never needs a file: `lvgl.font(60)`
+for a hero number, `lvgl.font(120)` for a watch face where the time *is* the screen.
+`lvgl.font_load()` with a TTF on the card is only for a typeface we don't compile in —
+and it raises if the file is missing, so it always needs a `pcall`.
 
 Flash cost is not a concern: the app partition is 4 MB with ~76% free.
 
@@ -83,18 +105,27 @@ Three independent sources, one answer:
 Our own measurement sits exactly where the guidelines predict. That is a good sign the
 mapping is real and not numerology.
 
-> ### Rule: no tappable thing smaller than 88 × 88 px.
-> Prefer **104 px** tall for list rows — Wear OS's standard `Chip` height, and comfortable here.
+> ### Rule: no tappable thing smaller than 88 × 88 px. Aim for 200 × 100.
+> 88 × 88 is the floor the platforms agree on. **200 × 100 is what we measured as
+> comfortable here**, and it is what the app contract asks for.
+
+Those are two different numbers doing two different jobs, so be clear which one applies:
+
+| Size | Verdict |
+| --- | --- |
+| ≥ 200 × 100 | Aim here. A 240 × 120 button caught every tap. |
+| 88 × 88 – 200 × 100 | Allowed when the layout forces it — two buttons side by side on a 368 px screen land near 164 × 104. Keep the height at 104+. |
+| < 88 × 88 | Never. |
+
+Be careful reading our own measurement: 240 × 120 worked and 180 × 56 dropped about half,
+but those differ in **both** dimensions, so the data cannot tell us how much was width and
+how much was height. The 56 px height is the likelier culprit — which is why the middle band
+above holds height at 104 and only compromises on width.
+
+Prefer **104 px** tall for list rows — Wear OS's standard `Chip` height, and comfortable here.
 
 Neither Apple nor Google publishes a required *gap* between targets; both only say "don't
 overlap." Use **16 px** (8 units) and rely on the size rule to do the real work.
-
-### A second bug this exposes
-
-`ROW_HEIGHT` in the launcher is **72 px** — below Apple's 88 and below even Wear OS's
-relaxed 80. The rows in the photo are undersized, not just their text.
-
----
 
 ## Layout and spacing
 
@@ -135,8 +166,6 @@ rounded glass.
 - On OLED, a black pixel is an *off* pixel. On a battery device this is real power.
 - Samsung adds that dark backgrounds keep content readable in direct sunlight.
 
-Our launcher currently uses `0x0B0B0F`, which is nearly black but still lights every pixel.
-Use true black.
 
 **Contrast** — Apple cites WCAG AA, Google claims AAA. Design to the stricter one:
 
@@ -148,13 +177,31 @@ Use true black.
 White `#FFFFFF` on black is 21:1. **`#A0A0AE` on black is 8.1:1** — the caption token, with
 margin over the 7:1 rule.
 
-An earlier version of this guide claimed `#A0A0AE` was 7.4:1. It is **6.2:1**, recomputed
-three ways — so every app that trusted that figure was shipping captions below the very
-rule this section states. If you take a contrast number from a doc, check it: the wrong
-one propagates into everyone's work. **Avoid grey body text**; it is the most common way a watch UI becomes
-unreadable outdoors.
+`#8A8A99` is **6.2:1** — below the rule, and a tempting-looking grey. Don't invent one;
+use the token. **Avoid grey body text** regardless; it is the most common way a watch UI
+becomes unreadable outdoors.
 
-**Never colour by itself.** Both platforms say this. Pair colour with text or shape.
+**The palette.** These are the tokens the `ui` module and the launcher already use. Reach
+for one of these before mixing your own, so six developers' apps look like one device:
+
+| Token | Role |
+| --- | --- |
+| `#000000` | Background. Always. |
+| `#FFFFFF` | Anything that matters |
+| `#A0A0AE` | Captions and secondary text (8.1:1) |
+| `#1E1E28` | Secondary button / raised surface |
+| `#2F80ED` | Accent — the primary action |
+| `#B3261E` | Destructive, and only ever behind `ui.confirm` |
+
+**The 7:1 rule is a *text* rule.** Icons and glyphs are non-text under WCAG 1.4.11 and
+need **3:1**, not 7:1 — so the accent `#2F80ED` checkmark in a `ui.select` row (5.43:1) is
+correct as it stands, and does not want "fixing" to white. Audited every `text_color` in
+`apps/` and the `ui` module against this: that glyph is the only thing below 7:1, and it
+is the only one that should be.
+
+**Never colour by itself.** Both platforms say this. Pair colour with text or shape. The
+checkmark above obeys this too — what marks a row selected is the mark being *there*, not
+its hue.
 
 **Avoid full-screen colour on long-lived screens** — Apple calls this out specifically for
 apps that stay up (a workout, a clock). Burn-in and battery.
@@ -170,9 +217,10 @@ it needs to be two apps.
 **At most 2–3 controls on screen.** Apple: no more than three icon buttons, or two text
 buttons, in a row. Prefer one full-width button.
 
-**Scroll vertically. Never paginate horizontally.** Wear OS reserves the left-edge swipe
-for back/dismiss — and our app contract already reserves it too, so this is convention, not
-something we invented.
+**Scroll vertically within a page; page horizontally between siblings.** Wear OS has to
+reserve the left-edge swipe for back/dismiss, so it forbids horizontal paging. We don't:
+Home is a hardware button, so no edge is reserved and `lvgl.tileview` + `ui.dots` is the
+sanctioned pattern for sibling pages. See rule 6.
 
 **Truncate with an ellipsis. Do not use marquee.** Google explicitly discourages
 auto-scrolling text: it ignores reduce-motion preferences and hides content behind an
@@ -180,48 +228,6 @@ animation. Fit the label or trim it.
 
 **Rows visible at once** — neither vendor prescribes a count. With 104 px rows and 16 px
 gaps on a 448 px screen, expect **3–4 visible**, which is the right density for glancing.
-
----
-
-## What to change in the launcher
-
-Concrete, in priority order:
-
-| # | Change | From | To |
-| --- | --- | --- | --- |
-| 1 | Default font | Montserrat 14 | **32 px** (now Lexend, via the theme) |
-| 2 | `ROW_HEIGHT` | 72 px | **104 px** |
-| 3 | Row label | 14 px | **32 px** |
-| 4 | Header "Apps" | 14 px | **40 px** |
-| 5 | Background | `0x0B0B0F` | **`0x000000`** |
-| 6 | Error screen body | 14 px | **26 px**, title **40 px** |
-| 7 | Row gap | 10 px | **16 px** |
-
-Items 1–3 are what make your photo legible. The rest is polish.
-
-**Status: applied and confirmed.** Implemented in `993c3ae` and verified on the device by
-eye — text is readable at wrist distance. The structural evidence was the row label's
-resolved font pointer matching the 32 px face (now `&lv_font_lexend_32`, `line_height=36`),
-against 16 for Montserrat 14. Cost: +136 KB flash (partition still 73% free) and **zero** internal
-DRAM, since built-in fonts are flash-resident.
-
----
-
-## Rules for app authors
-
-Short enough to remember; these belong in `docs/APP_CONTRACT.md`:
-
-1. **Body text 32 px. Never below 24 px.** The default is now 32; do not shrink it.
-2. **Nothing tappable smaller than 88 × 88 px.** Prefer 104 px tall rows.
-3. **True black background** (`0x000000`) — battery and legibility.
-4. **White text for anything that matters.** Grey is for captions only.
-5. **One idea per screen**, two or three controls at most.
-6. **Scroll vertically; page horizontally.** Sibling pages swipe left/right
-   (`lvgl.tileview` + `ui.dots`) — allowed precisely because Home is a hardware
-   button, so no edge is reserved. Never mix a drag control into a paged view.
-7. **Trim long text**; do not scroll it sideways.
-8. **Hero numbers 60 px** via `lvgl.font(60)` — compiled in, cannot go
-   missing. Above that, `lvgl.font_load()` with a `pcall` fallback.
 
 ---
 
