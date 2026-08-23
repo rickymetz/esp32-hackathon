@@ -12,6 +12,7 @@
 
 #include "lua_module_lvgl.h"   /* lua_module_lvgl_scaled_builtin_font */
 #include "lv_font_lexend.h"    /* lv_font_lexend_26 */
+#include "launcher_icons.h"    /* launcher_app_image -- custom icon bitmaps */
 
 #include <stdlib.h>
 #include <string.h>
@@ -95,8 +96,8 @@ const char *launcher_home_default_icon(const char *basename)
         { "counter",    "plus" },
         { "tally",      "list" },
         { "tone",       "audio" },
-        { "metronome",  "audio" },
-        { "flashlight", "sun" },
+        { "metronome",  "metronome" },
+        { "flashlight", "flashlight" },
         { "reaction",   "fire" },
         { "color",      "tint" },
         { "settings",   "settings" },
@@ -105,9 +106,11 @@ const char *launcher_home_default_icon(const char *basename)
         { "sign",       "keyboard" },
         { "breathe",    "heart" },
         { "tip",        "dollar" },
-        { "camera",     "image" },
         { "voice",      "microphone" },
-        /* dice, level, simon, hello: no clean pictograph -> letter avatar */
+        { "dice",       "dice" },
+        { "level",      "level" },
+        { "simon",      "simon" },
+        /* hello_world and any unmapped app fall through to the letter avatar */
     };
     for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
         if (name_has(basename, map[i].sub)) return map[i].icon;
@@ -297,6 +300,18 @@ static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
     lv_obj_set_style_pad_all(icon, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(icon, 0, LV_PART_MAIN);
     wire_launch(icon, app->basename, on_click, on_delete);
+
+    /* Icon fallback chain: a custom bitmap the app ships, else a FontAwesome
+     * glyph, else the app's initial as a letter avatar. */
+    const lv_image_dsc_t *img = launcher_app_image(app->icon);
+    if (img) {
+        lv_obj_t *im = lv_image_create(icon);
+        lv_image_set_src(im, img);
+        lv_obj_set_style_image_recolor(im, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        lv_obj_set_style_image_recolor_opa(im, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_center(im);
+        return;
+    }
 
     lv_obj_t *ilabel = lv_label_create(icon);
     const char *glyph = glyph_for(app->icon);
