@@ -52,6 +52,20 @@ def px(w, rgb, x, y):
     return rgb[o], rgb[o + 1], rgb[o + 2]
 
 
+def bright_count(w, rgb, x0, y0, x1, y1, thresh=170):
+    """Count pixels in a box whose channels are all >= thresh -- a
+    text-agnostic 'something bright rendered here' probe, for asserting a
+    readout drew (e.g. the clock's big digits) without pinning a stroke pixel."""
+    n = 0
+    for y in range(y0, y1):
+        base = y * w * 3
+        for x in range(x0, x1):
+            o = base + x * 3
+            if rgb[o] >= thresh and rgb[o + 1] >= thresh and rgb[o + 2] >= thresh:
+                n += 1
+    return n
+
+
 def run(cmds):
     subprocess.run([SIM, "--sdroot", REPO] + cmds, cwd=REPO, capture_output=True)
 
@@ -85,6 +99,15 @@ def reaction_green(w, rgb):
     return (g > 120 and g > r and g > b), f"pad not green: {r},{g},{b}"
 
 
+# The rtc stub feeds a fixed 14:30; clock.lua renders it as big white digits.
+# If the stub regressed to nil ("rtc not set"), the app degrades to a small
+# message and the big-digit band goes nearly dark -- so a bright-pixel floor
+# in that band proves the clock got a real time.
+def clock_shows_time(w, rgb):
+    n = bright_count(w, rgb, 110, 155, 260, 225)
+    return n > 300, f"time band too dark ({n} bright px) -- rtc not feeding clock"
+
+
 SCENARIOS = [
     ("flashlight-on",  ["run", "apps/flashlight.lua"], flashlight_on),
     ("flashlight-off", ["run", "apps/flashlight.lua", ":", "tap", "184", "224"], flashlight_off),
@@ -94,6 +117,7 @@ SCENARIOS = [
                         ":", "swipe", "200", "364", "66", "364", "300"], color_mixed_orange),
     ("reaction-green", ["run", "apps/reaction.lua",
                         ":", "tap", "184", "248", ":", "sleep", "4.5"], reaction_green),
+    ("clock-shows-time", ["run", "apps/clock.lua", ":", "sleep", "0.3"], clock_shows_time),
 ]
 
 

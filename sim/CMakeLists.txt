@@ -63,6 +63,9 @@ add_library(bindings STATIC
     src/display_service_sim.c
     src/sim_stubs.c
     src/sim_voice.c
+    src/sim_audio.c
+    src/sim_wifi.c
+    src/sim_sensors.c
     src/sim_module_ui.c
     shim/esp_shim.c
 )
@@ -75,6 +78,9 @@ target_include_directories(bindings PUBLIC
     ${LAUNCHER}/components/fonts_lexend/include
     ${LAUNCHER}/components/lua_module_button/include
     ${LAUNCHER}/components/lua_module_voice/include
+    ${LAUNCHER}/components/lua_module_audio/include
+    ${LAUNCHER}/components/lua_module_wifi/include
+    ${LAUNCHER}/components/lua_module_sensors/include
     ${LAUNCHER}/components/lua_module_ui/include
 )
 target_compile_definitions(bindings PUBLIC

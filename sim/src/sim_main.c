@@ -17,8 +17,16 @@
 #include "app_timer.h"
 #include "app_button.h"
 #include "app_voice.h"
+#include "app_audio.h"
+#include "app_wifi.h"
+#include "app_sensors.h"
 #include "app_sandbox.h"
 #include "lua_module_ui.h"
+
+/* Sim-only reset hooks (the device wifi/sensors modules are event/register
+ * driven and have no such entry point; the stubs add one for determinism). */
+void sim_wifi_reset(void);
+void sim_sensors_reset(void);
 #include "sim_display.h"
 #include "sim_input.h"
 #include "lv_font_lexend.h"
@@ -99,6 +107,9 @@ static int setup_state(lua_State *L)
     app_timer_reset(L);
     app_button_reset(L);
     app_voice_reset(L);
+    app_audio_reset(L);
+    sim_wifi_reset();
+    sim_sensors_reset();
     app_sandbox_apply(L);
     app_sandbox_install_hook(L);
     return 0;
@@ -223,6 +234,9 @@ static void teardown_state(lua_State *L)
     app_timer_reset(L);
     app_button_reset(L);
     app_voice_reset(L);
+    app_audio_reset(L);
+    sim_wifi_reset();
+    sim_sensors_reset();
     launcher_lua_run_exit_cleanup(L);
     lua_close(L);
 }
@@ -391,6 +405,9 @@ int main(int argc, char **argv)
         app_timer_register() != ESP_OK ||
         app_button_register() != ESP_OK ||
         app_voice_register() != ESP_OK ||
+        app_audio_register() != ESP_OK ||
+        app_wifi_register() != ESP_OK ||
+        app_sensors_register() != ESP_OK ||
         lua_module_ui_register() != ESP_OK) {
         fprintf(stderr, "module registration failed\n");
         return 1;

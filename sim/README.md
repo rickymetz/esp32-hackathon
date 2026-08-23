@@ -56,6 +56,9 @@ serial `TAP`/`SWIPE`). The sim slots into those same seams:
 | `ui` / `keyboard` | embedded blobs | loaded from the component's `.lua` files |
 | `timer`, `button`, sandbox | as-is | **compiled as-is** (only need `esp_timer_get_time`) |
 | `voice` (MultiNet) | mic + models | stub: `available()==false`, `cb(nil)` on use |
+| `rtc` / `imu` / `battery` | PCF85063A · QMI8658 · AXP2101 over I2C | stub: fixed clock (14:30 Sat 22 Aug, settable), board-flat accel `(0,0,1)g`, 76% battery |
+| `audio` | ES8311 over I2S | stub: same arg validation, playback no-ops, `available()==true` |
+| `wifi` | esp_wifi + SNTP | stub: `connect()`→`connecting`→`connected` over 3 status polls, then a fake IP + NTP-set clock |
 | display / touch | `display_service` + panel + `esp_lcd_touch` | `display_service_sim.c` + framebuffer + synthetic indev |
 | ESP-IDF / FreeRTOS | real | ~150-line `shim/` (esp_err/log/timer/heap, mutex, delay) |
 | `SHOT` | serial-encoded frame | `sim_display_capture_png()` → PNG |
@@ -74,7 +77,12 @@ layer. These still need the board:
   rule); the sim registers every tap exactly. A button that works in the sim
   can still be too small on hardware.
 - **Voice.** MultiNet recognition is stubbed as unavailable.
-- **IMU / RTC / battery / PMU**, real audio, Wi-Fi — none are present.
+- **Sensors / audio / Wi-Fi are faked, not real.** `rtc`/`imu`/`battery`,
+  `audio`, and `wifi` serve deterministic readings so clock faces, dashboards
+  and networked apps render and drive board-free — but the clock is fixed, the
+  board reads dead-flat and still, tones are silent, and the "network" always
+  connects. Confirm real sensor values, sound, and a live connection on the
+  board.
 - **Watchdog reboots** from runaway loops / blocking C calls; timing of the
   10 s TWDT; PSRAM budgets.
 - Exact **color** — the panel is RGB565 and the sim matches that, but real
@@ -100,6 +108,7 @@ sim/
     display_service_sim.c       # host display_service (display + indev + theme)
     sim_input.c                 # synthetic touch (ported from launcher)
     sim_voice.c sim_module_ui.c # voice stub, ui/keyboard loader
+    sim_audio.c sim_wifi.c sim_sensors.c  # audio / wifi / rtc+imu+battery stubs
     sim_display.c png_write.c sim_tick.c
     main_slice{1,2,3}.c         # staged smoke tests (see git history)
   external/                     # LVGL + Lua sources (gitignored; setup.sh)
