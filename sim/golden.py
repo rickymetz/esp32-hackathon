@@ -87,6 +87,10 @@ FRAMES = [
     # the one the sim couldn't reach until it was factored out of launcher_main.
     ("home",         ["home"]),
     ("home_empty",   ["home", "0"]),
+    ("home_grid",    ["home", "grid", ":", "sleep", "0.3"]),
+    ("home_grid_p2", ["home", "grid",
+                        ":", "swipe", "300", "224", "60", "224", "250",
+                        ":", "sleep", "0.6"]),
 ]
 
 

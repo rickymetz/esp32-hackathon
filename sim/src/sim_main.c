@@ -184,6 +184,24 @@ static void pump_until_idle(lua_State *L)
     pump_for(L, 120); /* let the release-edge click event run */
 }
 
+/* Same, but with no running app -- drives the bare LVGL handler so injected
+ * taps/swipes reach the launcher home screen (the `home` command), whose
+ * toggle/tiles are LVGL objects with C callbacks, not a Lua app. */
+static void pump_home_input(void)
+{
+    for (int guard = 0; guard < 1000; guard++) {
+        lv_timer_handler();
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 5 * 1000 * 1000 };
+        nanosleep(&ts, NULL);
+        if (sim_input_idle()) break;
+    }
+    for (int i = 0; i < 30; i++) {   /* let the release-edge click dispatch */
+        lv_timer_handler();
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 5 * 1000 * 1000 };
+        nanosleep(&ts, NULL);
+    }
+}
+
 /* ---- Running app ------------------------------------------------------- */
 
 static lua_State *s_app;        /* the currently running app VM, or NULL */
@@ -336,10 +354,28 @@ static bool sim_home_get_app(size_t index, launcher_home_app_t *out, void *ctx)
     return true;
 }
 
-/* Build and load the launcher home with `count` fake apps (clamped to the
- * fake list; 0 shows the empty state), then flush a frame so `shot` sees it. */
-static void render_home(int count, bool sd_mounted)
+/* Home render state, so the view toggle can rebuild in the other layout the
+ * way the device's view_toggle_clicked does. */
+static int             s_home_count = -1;
+static bool            s_home_sd = true;
+static launcher_view_t s_home_view = LAUNCHER_VIEW_LIST;
+
+static void sim_home_render(void);
+
+/* The sim's view toggle: flip list <-> grid and rebuild, so `home : tap <x> <y>`
+ * on the toggle actually switches the layout (the interaction is testable, not
+ * just the two static renders). */
+static void sim_home_toggle_cb(lv_event_t *e)
 {
+    (void)e;
+    s_home_view = (s_home_view == LAUNCHER_VIEW_LIST) ? LAUNCHER_VIEW_GRID
+                                                      : LAUNCHER_VIEW_LIST;
+    sim_home_render();
+}
+
+static void sim_home_render(void)
+{
+    int count = s_home_count;
     if (count < 0) count = SIM_FAKE_APP_COUNT;
     if (count > SIM_FAKE_APP_COUNT) count = SIM_FAKE_APP_COUNT;
 
@@ -348,11 +384,21 @@ static void render_home(int count, bool sd_mounted)
     lv_obj_set_style_pad_all(scr, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(scr, 0, LV_PART_MAIN);
 
-    launcher_home_build(scr, (size_t)count, sd_mounted, 64,
-                        sim_home_get_app, NULL, NULL, NULL, NULL);
+    launcher_home_build(scr, (size_t)count, s_home_sd, 64, s_home_view,
+                        sim_home_get_app, NULL, NULL, NULL, NULL, sim_home_toggle_cb);
     lv_screen_load(scr);
     lv_timer_handler();   /* flush the render into the framebuffer */
     lv_timer_handler();
+}
+
+/* Set up the home state and render it. `view`/`count`/`sd_mounted` come from
+ * the `home` command; 0 apps shows the empty state. */
+static void render_home(launcher_view_t view, int count, bool sd_mounted)
+{
+    s_home_view = view;
+    s_home_count = count;
+    s_home_sd = sd_mounted;
+    sim_home_render();
 }
 
 /* ---- Command interpreter ----------------------------------------------- */
@@ -379,11 +425,20 @@ static void exec_cmd(int argc, char **argv)
         if (!need(argc, 2, "sleep")) return;
         double s = atof(argv[1]);
         if (s_app) pump_for(s_app, (int)(s * 1000));
+        else {                       /* settle a home-screen animation/scroll */
+            uint32_t start = sim_tick_ms();
+            do {
+                lv_timer_handler();
+                struct timespec ts = { .tv_sec = 0, .tv_nsec = 5 * 1000 * 1000 };
+                nanosleep(&ts, NULL);
+            } while ((int)(sim_tick_ms() - start) < (int)(s * 1000));
+        }
     } else if (!strcmp(cmd, "tap")) {
         if (!need(argc, 3, "tap")) return;
         int x = atoi(argv[1]), y = atoi(argv[2]);
         sim_input_inject(x, y, x, y, 80);
         if (s_app) pump_until_idle(s_app);
+        else pump_home_input();   /* launcher home has no app task */
     } else if (!strcmp(cmd, "swipe")) {
         if (!need(argc, 5, "swipe")) return;
         int x0 = atoi(argv[1]), y0 = atoi(argv[2]);
@@ -391,6 +446,7 @@ static void exec_cmd(int argc, char **argv)
         int ms = argc >= 6 ? atoi(argv[5]) : 250;
         sim_input_inject(x0, y0, x1, y1, ms);
         if (s_app) pump_until_idle(s_app);
+        else pump_home_input();   /* launcher home has no app task */
     } else if (!strcmp(cmd, "pwr")) {
         /* PWR (bottom-right button) belongs to apps via require("button").
          *   pwr            quick press+release  -> pressed, released
@@ -473,11 +529,18 @@ static void exec_cmd(int argc, char **argv)
         }
     } else if (!strcmp(cmd, "home")) {
         /* Render the launcher's own home screen (the shared launcher_home_build)
-         * with a fake app list. `home` = full list; `home <n>` = n apps
-         * (0 = the empty/no-apps state). Stops any running app first. */
+         * with a fake app list.
+         *   home                list view, full fake list
+         *   home grid | list    that view, full list
+         *   home [grid|list] N  N apps (0 = the empty/no-apps state)
+         * Stops any running app first; the toggle is live (tap it to switch). */
         if (s_app) app_stop();
-        int n = argc >= 2 ? atoi(argv[1]) : -1;   /* -1 => full fake list */
-        render_home(n, /*sd_mounted=*/true);
+        launcher_view_t view = LAUNCHER_VIEW_LIST;
+        int argi = 1;
+        if (argc >= 2 && !strcmp(argv[1], "grid")) { view = LAUNCHER_VIEW_GRID; argi = 2; }
+        else if (argc >= 2 && !strcmp(argv[1], "list")) { view = LAUNCHER_VIEW_LIST; argi = 2; }
+        int n = argc > argi ? atoi(argv[argi]) : -1;   /* -1 => full fake list */
+        render_home(view, n, /*sd_mounted=*/true);
         printf("HOME_OK\n");
     } else {
         fprintf(stderr, "unknown command: %s\n", cmd);

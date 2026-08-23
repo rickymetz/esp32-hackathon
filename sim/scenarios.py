@@ -147,6 +147,16 @@ def home_header_lit(w, rgb):
     return n > 200, f"Apps header not rendered ({n} bright px)"
 
 
+# Tapping the header toggle from the list switches to the 2x2 grid, whose tiles
+# carry a saturated colour icon (the list has none). Probe the first tile's icon
+# and require it be strongly coloured -- proving the toggle rebuilt as a grid,
+# independent of which palette colour the name hashes to.
+def home_toggled_to_grid(w, rgb):
+    r, g, b = px(w, rgb, 75, 118)
+    sat = max(r, g, b) - min(r, g, b)
+    return sat > 80, f"first grid icon not saturated ({r},{g},{b}, sat={sat})"
+
+
 SCENARIOS = [
     ("flashlight-on",  ["run", "apps/flashlight.lua"], flashlight_on),
     ("flashlight-off", ["run", "apps/flashlight.lua", ":", "tap", "184", "224"], flashlight_off),
@@ -163,6 +173,7 @@ SCENARIOS = [
                         ":", "sleep", "0.3"], level_tilted_off_centre),
     ("tone-play-blue", ["run", "apps/tone.lua", ":", "sleep", "0.3"], tone_play_blue),
     ("home-header",    ["home"], home_header_lit),
+    ("home-toggle-grid", ["home", ":", "tap", "324", "48", ":", "sleep", "0.3"], home_toggled_to_grid),
 ]
 
 

@@ -13,8 +13,10 @@ works here unchanged:
   sleep <seconds>                  wait (UI settle, timers, animations)
   shot <out.png>                   capture the screen to a PNG
   check <out.png>                  capture and assert the frame is non-blank
-  home [n]                         render the launcher's own home screen with a
-                                   fake app list (n apps; 0 = empty state)
+  home [list|grid] [n]             render the launcher's own home screen with a
+                                   fake app list — list or 2x2 grid view; n apps
+                                   (0 = empty state). The header toggle is live:
+                                   `home : tap 324 48` switches list -> grid.
   type <text>                      drive require("keyboard") text entry, then OK
   typenum <digits>                 drive the number keypad, then OK
 

@@ -27,6 +27,14 @@ typedef struct {
  * list). Called once per visible row during the build. */
 typedef bool (*launcher_home_get_app_t)(size_t index, launcher_home_app_t *out, void *ctx);
 
+/* The home screen shows apps either as a scrollable vertical list (the
+ * original) or as a swipeable 2x2 grid of icon tiles ("sheets"). A header
+ * toggle switches between them. */
+typedef enum {
+    LAUNCHER_VIEW_LIST = 0,
+    LAUNCHER_VIEW_GRID = 1,
+} launcher_view_t;
+
 /*
  * Build the home UI onto `screen` (which the caller has already created, styled
  * with a black background, and will load). Draws the "Apps" header, then either
@@ -34,17 +42,22 @@ typedef bool (*launcher_home_get_app_t)(size_t index, launcher_home_app_t *out, 
  * rows capped at `max_visible` (with a "N more not shown" note and a Refresh row
  * at the end).
  *
- * When `on_row_click` is non-NULL each app row is wired for interaction: it gets
- * `on_row_click` (CLICKED) with user_data set to a strdup of the app's basename,
- * and `on_row_delete` (DELETE) to free that copy when LVGL deletes the row.
- * `on_refresh` (CLICKED) is attached to the Refresh control when non-NULL.
- * Pass NULL for all three (the simulator) to render non-interactive rows.
+ * `view` selects the list or the 2x2 grid. When there are apps, a toggle in the
+ * top-right corner switches between them via `on_toggle` (CLICKED).
+ *
+ * When `on_row_click` is non-NULL each app row/tile is wired for interaction: it
+ * gets `on_row_click` (CLICKED) with user_data set to a strdup of the app's
+ * basename, and `on_row_delete` (DELETE) to free that copy when LVGL deletes it.
+ * `on_refresh` (CLICKED) is attached to the Refresh control, and `on_toggle`
+ * (CLICKED) to the view toggle, when non-NULL. Pass NULL for the callbacks (the
+ * simulator) to render a non-interactive screen.
  *
  * Pure LVGL: the caller holds any display lock and owns the screen lifecycle.
  */
 void launcher_home_build(lv_obj_t *screen, size_t count, bool sd_mounted,
-                         size_t max_visible,
+                         size_t max_visible, launcher_view_t view,
                          launcher_home_get_app_t get_app, void *ctx,
                          lv_event_cb_t on_row_click,
                          lv_event_cb_t on_row_delete,
-                         lv_event_cb_t on_refresh);
+                         lv_event_cb_t on_refresh,
+                         lv_event_cb_t on_toggle);

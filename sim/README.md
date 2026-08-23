@@ -36,8 +36,9 @@ You can also call the binary directly:
 Verbs: `run <app.lua>`, `stop`, `tap x y`, `swipe x0 y0 x1 y1 [ms]`,
 `pwr [down|up|long]` (inject the PWR button — quick click by default),
 `sleep <seconds>`, `shot <out.png>`, `check <out.png>`,
-`home [n]` (render the launcher's own home screen with a fake app list —
-`n` apps, `0` for the empty state; see *The launcher home*, below).
+`home [list|grid] [n]` (render the launcher's own home screen with a fake app
+list, in the list or 2×2-grid view; `n` apps, `0` for the empty state; see
+*The launcher home*, below).
 
 **Fake-sensor injection.** The board has no such controls; these set the sim's
 stub readings so degraded and dynamic UI paths — a tilted level, a low battery,
@@ -93,10 +94,13 @@ list) is the most-seen surface. Its LVGL builder was factored out of
 `launcher_main.c` into `launcher/main/launcher_home.c` — pure LVGL, no BSP or
 app registry — so both the board and the sim call the same
 `launcher_home_build()`. The device passes its real app-registry accessor and
-row/refresh callbacks; the `home [n]` command passes a fixed fake app list and
-no callbacks, so the rendered home is the real launcher UI, board-free.
-(Because CI here builds the sim, not the firmware, compiling `launcher_home.c`
-in the sim is also what verifies that shared code compiles.)
+row/refresh/toggle callbacks; the `home` command passes a fixed fake app list.
+The home has two layouts — a scrollable **list** and a swipeable **2×2 grid**
+of letter-avatar tiles ("sheets" with page dots) — switched by a top-right
+toggle. `home grid` renders the grid; `home : tap 324 48` exercises the toggle;
+`home grid : swipe 300 224 60 224` pages the grid. (Because CI here builds the
+sim, not the firmware, compiling `launcher_home.c` in the sim is also what
+verifies that shared code compiles.)
 
 ## What it does NOT simulate
 

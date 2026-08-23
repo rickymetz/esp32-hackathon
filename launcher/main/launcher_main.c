@@ -89,6 +89,7 @@ static const char *TAG = "launcher";
 
 static lv_obj_t *s_launcher_screen;
 static lv_display_t *s_disp;   /* for re-applying the theme after app exit */
+static launcher_view_t s_view_mode = LAUNCHER_VIEW_LIST;   /* list <-> grid */
 static void apply_persisted_font_scale(lv_display_t *disp);
 
 /* ---- Synthetic touch injection (serial TAP/SWIPE; see launcher_main.h).
@@ -699,6 +700,34 @@ static void refresh_clicked(lv_event_t *e)
     xSemaphoreGive(s_app_mutex);
 }
 
+/* The header view toggle: flip list <-> grid and rebuild in place. Unlike
+ * Refresh this does not rescan the card -- the app set is unchanged, only the
+ * layout -- but it uses the same rebuild-and-swap-screens dance so the same
+ * "never touch a running app's screen" invariant holds. */
+static void view_toggle_clicked(lv_event_t *e)
+{
+    (void)e;
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    if (s_app_task != NULL) {
+        xSemaphoreGive(s_app_mutex);
+        return;   /* never rebuild under a running app */
+    }
+
+    s_view_mode = (s_view_mode == LAUNCHER_VIEW_LIST) ? LAUNCHER_VIEW_GRID
+                                                      : LAUNCHER_VIEW_LIST;
+
+    lv_obj_t *old = s_launcher_screen;
+    build_launcher_ui();
+    if (old != NULL && old != s_launcher_screen) {
+        bsp_display_lock(0);
+        lv_obj_delete(old);
+        bsp_display_unlock();
+    }
+
+    xSemaphoreGive(s_app_mutex);
+}
+
 /* Adapts app_registry to launcher_home_build's get_app callback. The static
  * app_entry_t is consumed by the builder (label text copied, basename strdup'd)
  * before the next call, so reusing it across rows is safe on the UI task. */
@@ -731,8 +760,9 @@ static void build_launcher_ui(void)
      * simulator can render it too (with a fake app list). This passes the real
      * app-registry accessor and the real row/refresh callbacks. */
     launcher_home_build(s_launcher_screen, count, app_registry_sd_mounted(),
-                        MAX_VISIBLE_ROWS, launcher_home_get_app, NULL,
-                        app_row_clicked, row_data_delete_cb, refresh_clicked);
+                        MAX_VISIBLE_ROWS, s_view_mode, launcher_home_get_app, NULL,
+                        app_row_clicked, row_data_delete_cb, refresh_clicked,
+                        view_toggle_clicked);
 
     lv_screen_load(s_launcher_screen);
     bsp_display_unlock();
