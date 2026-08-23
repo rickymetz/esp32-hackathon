@@ -77,18 +77,33 @@ static void draw_toggle_glyph(lv_obj_t *btn, launcher_view_t current)
     }
 }
 
+/* The header view switcher follows the corner-button standard (ui.corner_button):
+ * a 72px circular visual centred in an 88px invisible hit area, so it reads at
+ * watch scale but still catches taps. Icon-only -> a circle. */
+#define CORNER_TARGET 88
+#define CORNER_VIS    72
+
 static void add_toggle(lv_obj_t *screen, launcher_view_t view, lv_event_cb_t on_toggle)
 {
-    lv_obj_t *btn = lv_button_create(screen);
-    lv_obj_set_size(btn, 72, 72);
-    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -8, 12);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x24303C), LV_PART_MAIN);
-    lv_obj_set_style_radius(btn, 16, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN);
+    const int inset = (CORNER_TARGET - CORNER_VIS) / 2;
+
+    lv_obj_t *visual = lv_button_create(screen);
+    lv_obj_set_size(visual, CORNER_VIS, CORNER_VIS);
+    lv_obj_align(visual, LV_ALIGN_TOP_RIGHT, -4 - inset, 8 + inset);
+    lv_obj_set_style_bg_color(visual, lv_color_hex(0x1E1E28), LV_PART_MAIN);
+    lv_obj_set_style_radius(visual, CORNER_VIS / 2, LV_PART_MAIN);   /* circle */
+    lv_obj_set_style_pad_all(visual, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(visual, LV_OBJ_FLAG_CLICKABLE);   /* the hit area takes taps */
+    draw_toggle_glyph(visual, view);
+
+    lv_obj_t *hit = lv_button_create(screen);
+    lv_obj_set_size(hit, CORNER_TARGET, CORNER_TARGET);
+    lv_obj_align(hit, LV_ALIGN_TOP_RIGHT, -4, 8);
+    lv_obj_set_style_bg_opa(hit, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(hit, 0, LV_PART_MAIN);
     if (on_toggle) {
-        lv_obj_add_event_cb(btn, on_toggle, LV_EVENT_CLICKED, NULL);
+        lv_obj_add_event_cb(hit, on_toggle, LV_EVENT_CLICKED, NULL);
     }
-    draw_toggle_glyph(btn, view);
 }
 
 /* ---- the list layout (the original) ------------------------------------ */
@@ -186,43 +201,29 @@ static void grid_dots_free(lv_event_t *e)
     free(lv_event_get_user_data(e));
 }
 
-/* One app tile: a rounded panel with a letter-avatar icon and the name below. */
-static void app_tile(lv_obj_t *page, const launcher_home_app_t *app,
-                     int x, int y, int w, int h,
+/* One app icon: a rounded-square avatar (the app's initial on a colour hashed
+ * from its name) that IS the launch button -- no card well, no name label, so
+ * the grid reads as an app launcher, not a list with pictures. */
+static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
+                     int cx, int cy, int size,
                      lv_event_cb_t on_click, lv_event_cb_t on_delete)
 {
-    lv_obj_t *tile = lv_button_create(page);
-    lv_obj_set_size(tile, w, h);
-    lv_obj_set_pos(tile, x, y);
-    lv_obj_set_style_bg_color(tile, lv_color_hex(0x1E1E28), LV_PART_MAIN);
-    lv_obj_set_style_radius(tile, 16, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(tile, 0, LV_PART_MAIN);
-    wire_launch(tile, app->basename, on_click, on_delete);
-
-    lv_obj_t *icon = lv_obj_create(tile);
-    lv_obj_set_size(icon, 68, 68);
-    lv_obj_align(icon, LV_ALIGN_TOP_MID, 0, 16);
+    lv_obj_t *icon = lv_button_create(page);
+    lv_obj_set_size(icon, size, size);
+    lv_obj_set_pos(icon, cx - size / 2, cy - size / 2);
     lv_obj_set_style_bg_color(icon, lv_color_hex(letter_color(app->name)), LV_PART_MAIN);
-    lv_obj_set_style_radius(icon, 18, LV_PART_MAIN);
-    lv_obj_set_style_border_width(icon, 0, LV_PART_MAIN);
-    lv_obj_clear_flag(icon, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_radius(icon, size / 4, LV_PART_MAIN);   /* squircle-ish */
+    lv_obj_set_style_pad_all(icon, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(icon, 0, LV_PART_MAIN);
+    wire_launch(icon, app->basename, on_click, on_delete);
 
     char initial[2] = { app->name && app->name[0] ? app->name[0] : '?', '\0' };
     if (initial[0] >= 'a' && initial[0] <= 'z') initial[0] -= 32;   /* upper */
     lv_obj_t *ilabel = lv_label_create(icon);
     lv_label_set_text(ilabel, initial);
     lv_obj_set_style_text_color(ilabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(ilabel, lua_module_lvgl_scaled_builtin_font(32), LV_PART_MAIN);
+    lv_obj_set_style_text_font(ilabel, lua_module_lvgl_scaled_builtin_font(48), LV_PART_MAIN);
     lv_obj_center(ilabel);
-
-    lv_obj_t *name = lv_label_create(tile);
-    lv_label_set_text(name, app->name);
-    lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(name, w - 12);
-    lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_color(name, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(name, &lv_font_lexend_26, LV_PART_MAIN);
-    lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 94);
 }
 
 static void build_grid(lv_obj_t *screen, size_t count,
@@ -239,8 +240,10 @@ static void build_grid(lv_obj_t *screen, size_t count,
     lv_obj_set_style_bg_opa(tv, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_scrollbar_mode(tv, LV_SCROLLBAR_MODE_OFF);
 
-    const int TW = 160, TH = 150, GX = 16, GY = 14;
-    const int X0 = 16, Y0 = 8;
+    /* Icon-only cells, evenly spaced in the 368x330 page. */
+    const int ICON = 128;
+    const int col_cx[GRID_COLS] = { 101, 267 };
+    const int row_cy[GRID_ROWS] = { 89, 242 };
     size_t i = 0;
     for (int p = 0; p < pages; p++) {
         lv_obj_t *page = lv_tileview_add_tile(tv, p, 0, LV_DIR_HOR);
@@ -250,8 +253,8 @@ static void build_grid(lv_obj_t *screen, size_t count,
             if (i >= count || !get_app(i, &app, ctx)) break;
             i++;
             int c = cell % GRID_COLS, r = cell / GRID_COLS;
-            app_tile(page, &app, X0 + c * (TW + GX), Y0 + r * (TH + GY),
-                     TW, TH, on_row_click, on_row_delete);
+            app_icon(page, &app, col_cx[c], row_cy[r], ICON,
+                     on_row_click, on_row_delete);
         }
     }
 
