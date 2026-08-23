@@ -2,5 +2,5 @@
 #pragma once
 #include "lvgl.h"
 
-/* Custom app-icon image for an icon-name key, or NULL if none. */
+/* Full-colour custom app-icon image for an icon-name key, or NULL. */
 const lv_image_dsc_t *launcher_app_image(const char *key);

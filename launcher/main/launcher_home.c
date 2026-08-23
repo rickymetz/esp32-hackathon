@@ -90,13 +90,13 @@ const char *launcher_home_default_icon(const char *basename)
     if (!basename) return NULL;
     struct { const char *sub; const char *icon; } map[] = {
         { "stopwatch",  "stopwatch" },   /* before "watch"/others */
-        { "countdown",  "stopwatch" },
+        { "countdown",  "hourglass" },
         { "clock",      "clock" },
-        { "face",       "clock" },        /* watch faces */
+        { "face",       "faces" },        /* watch faces */
         { "counter",    "plus" },
         { "tally",      "list" },
         { "tone",       "audio" },
-        { "metronome",  "metronome" },
+        { "metronome",  "audio" },
         { "flashlight", "flashlight" },
         { "reaction",   "fire" },
         { "color",      "tint" },
@@ -295,24 +295,24 @@ static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
     lv_obj_t *icon = lv_button_create(page);
     lv_obj_set_size(icon, size, size);
     lv_obj_set_pos(icon, cx - size / 2, cy - size / 2);
-    lv_obj_set_style_bg_color(icon, lv_color_hex(letter_color(app->name)), LV_PART_MAIN);
     lv_obj_set_style_radius(icon, size / 4, LV_PART_MAIN);   /* squircle-ish */
     lv_obj_set_style_pad_all(icon, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(icon, 0, LV_PART_MAIN);
     wire_launch(icon, app->basename, on_click, on_delete);
 
-    /* Icon fallback chain: a custom bitmap the app ships, else a FontAwesome
-     * glyph, else the app's initial as a letter avatar. */
+    /* Icon fallback chain: a full-colour bitmap the app ships (which is the
+     * whole tile art, so the button sits transparent behind it), else a
+     * FontAwesome glyph on a colour-hashed tile, else a letter avatar. */
     const lv_image_dsc_t *img = launcher_app_image(app->icon);
     if (img) {
+        lv_obj_set_style_bg_opa(icon, LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_t *im = lv_image_create(icon);
         lv_image_set_src(im, img);
-        lv_obj_set_style_image_recolor(im, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-        lv_obj_set_style_image_recolor_opa(im, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_center(im);
         return;
     }
 
+    lv_obj_set_style_bg_color(icon, lv_color_hex(letter_color(app->name)), LV_PART_MAIN);
     lv_obj_t *ilabel = lv_label_create(icon);
     const char *glyph = glyph_for(app->icon);
     if (glyph) {
