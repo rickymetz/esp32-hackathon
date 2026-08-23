@@ -196,16 +196,14 @@ def ic_clock(cv):
 
 
 def ic_faces(cv):
-    # A watch face variant -- indigo tile, dot markers, no second hand.
-    tile(cv, 0x5A4FCF)
-    cv.paint(disc(0.5, 0.5, 0.34), solid(WHITE))
-    for i in range(4):
-        a = i * math.pi / 2
-        cv.paint(disc(0.5 + 0.275 * math.sin(a), 0.5 - 0.275 * math.cos(a), 0.028),
-                 solid(0x5A4FCF))
-    cv.paint(seg(0.5, 0.5, 0.5, 0.30, 0.032), solid(0x3A3396))    # minute (10:10 look)
-    cv.paint(seg(0.5, 0.5, 0.35, 0.42, 0.036), solid(0x3A3396))   # hour
-    cv.paint(disc(0.5, 0.5, 0.034), solid(0x3A3396))
+    # "Watch faces" picker: a 2x2 of mini dials on a warm coral tile -- reads as
+    # "choose a face", and stays clearly distinct from Clock's single blue dial.
+    tile(cv, 0xF2775A)
+    for fx, fy in ((0.33, 0.33), (0.67, 0.33), (0.33, 0.67), (0.67, 0.67)):
+        cv.paint(disc(fx, fy, 0.15), solid(WHITE))
+        cv.paint(seg(fx, fy, fx, fy - 0.095, 0.016), solid(INK))      # minute
+        cv.paint(seg(fx, fy, fx + 0.075, fy + 0.03, 0.016), solid(INK))  # hour
+        cv.paint(disc(fx, fy, 0.018), solid(INK))
 
 
 def ic_stopwatch(cv):
@@ -268,7 +266,7 @@ def ic_reaction(cv):
 
 
 def ic_tip(cv):
-    tile(cv, 0xE1A100)
+    tile(cv, 0x2FA84F)   # money green -- and clears the warm clash with Countdown
     cv.paint(disc(0.5, 0.5, 0.30), solid(WHITE))                  # coin
     coin = disc(0.5, 0.5, 0.30)
     arc_stroke(cv, 0.5, 0.42, 0.082, -30, -270, 0.030, 0x8A6320, clip=coin)  # $ top
@@ -278,11 +276,11 @@ def ic_tip(cv):
 
 def ic_flashlight(cv):
     tile(cv, 0x2C3E50)
-    cv.paint(poly([(0.52, 0.30), (0.90, 0.12), (0.90, 0.48)]), solid(0xF7E39A))  # beam
-    cv.paint(rrect(0.12, 0.42, 0.30, 0.58, 0.03), solid(WHITE))                   # body
-    cv.paint(poly([(0.30, 0.37), (0.50, 0.44), (0.50, 0.56), (0.30, 0.63)]),
+    cv.paint(poly([(0.54, 0.27), (0.93, 0.09), (0.93, 0.51)]), solid(0xFFE066))  # beam
+    cv.paint(rrect(0.10, 0.41, 0.32, 0.59, 0.04), solid(WHITE))                   # body
+    cv.paint(poly([(0.30, 0.33), (0.54, 0.42), (0.54, 0.58), (0.30, 0.67)]),
              solid(WHITE))                                                        # head
-    cv.paint(rrect(0.47, 0.44, 0.53, 0.56, 0.02), solid(A_YELLOW))               # lens
+    cv.paint(rrect(0.50, 0.40, 0.56, 0.60, 0.02), solid(A_YELLOW))               # lens
 
 
 def ic_calculator(cv):
@@ -294,6 +292,14 @@ def ic_calculator(cv):
         for ci, cx in enumerate((0.375, 0.5, 0.625)):
             col = A_AMBER if ci == 2 else 0x12B886   # operator column pops amber
             cv.paint(rrect(cx - 0.05, cy - 0.05, cx + 0.05, cy + 0.05, 0.02), solid(col))
+
+
+def ic_color(cv):
+    tile(cv, 0x2E323C)   # neutral so the swatches pop
+    cv.paint(rrect(0.23, 0.23, 0.48, 0.48, 0.05), solid(0xEB5757))   # red
+    cv.paint(rrect(0.52, 0.23, 0.77, 0.48, 0.05), solid(0x27AE60))   # green
+    cv.paint(rrect(0.23, 0.52, 0.48, 0.77, 0.05), solid(0x2F80ED))   # blue
+    cv.paint(rrect(0.52, 0.52, 0.77, 0.77, 0.05), solid(0xF2C94C))   # yellow
 
 
 def ic_metronome(cv):
@@ -314,7 +320,7 @@ ICONS = {
     "stopwatch": ic_stopwatch, "plus": ic_counter, "audio": ic_tone,
     "list": ic_tally, "hourglass": ic_countdown, "fire": ic_reaction,
     "dollar": ic_tip, "level": ic_level, "flashlight": ic_flashlight,
-    "metronome": ic_metronome, "calculator": ic_calculator,
+    "metronome": ic_metronome, "calculator": ic_calculator, "color": ic_color,
 }
 
 

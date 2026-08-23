@@ -342,9 +342,10 @@ static int app_run(const char *path)
 static const char *const s_fake_apps[] = {
     "Counter", "Clock", "Faces", "Level", "Tone", "Stopwatch",
     "Tally", "Dice", "Countdown", "Reaction", "Tip", "Flashlight",
-    /* Metronome/Calculator exercise custom images; Settings/Color fall through
-     * to the glyph avatar, so the home views cover both icon paths. */
-    "Metronome", "Settings", "Color", "Calculator",
+    /* Metronome/Calculator/Color exercise custom images; Settings hits the
+     * glyph-avatar fallback; Zebra maps to nothing and hits the letter-avatar
+     * fallback -- so the home views cover all three icon paths. */
+    "Metronome", "Settings", "Color", "Calculator", "Zebra",
 };
 #define SIM_FAKE_APP_COUNT ((int)(sizeof(s_fake_apps) / sizeof(s_fake_apps[0])))
 

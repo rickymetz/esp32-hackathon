@@ -82,11 +82,21 @@ FRAMES = [
     ("clock_lowbat", ["battery", "8", "0", "0", ":", "run", "apps/clock.lua", ":", "sleep", "0.4"]),
     ("level_tilted", ["run", "apps/level.lua",
                         ":", "accel", "0.5", "0", "0.866", ":", "sleep", "0.3"]),
-    # Calculator keypad + logic: 2 + 3 = 5. A structural regression in the
-    # buttonmatrix layout or the arithmetic changes this frame.
-    ("calc_sum",     ["run", "apps/calculator.lua",
+    # Calculator keypad + logic, three discriminating results so an operator
+    # swap, a format regression (3 vs 3.0), or a broken divide-by-zero guard
+    # each change a distinct frame -- not just one addition that a loose
+    # tolerance could wave through.
+    ("calc_sum",     ["run", "apps/calculator.lua",       # 2 + 3 = 5
                         ":", "tap", "139", "344", ":", "tap", "317", "344",
                         ":", "tap", "228", "344", ":", "tap", "303", "409",
+                        ":", "sleep", "0.2"]),
+    ("calc_div",     ["run", "apps/calculator.lua",       # 8 / 2 = 4 (integer format)
+                        ":", "tap", "139", "215", ":", "tap", "317", "150",
+                        ":", "tap", "139", "344", ":", "tap", "303", "409",
+                        ":", "sleep", "0.2"]),
+    ("calc_err",     ["run", "apps/calculator.lua",       # 1 / 0 = Err (guard, no crash)
+                        ":", "tap", "139", "344", ":", "tap", "317", "150",
+                        ":", "tap", "65", "409", ":", "tap", "303", "409",
                         ":", "sleep", "0.2"]),
 
     # The launcher's OWN home screen (the app list), built by the shared
@@ -101,6 +111,13 @@ FRAMES = [
     # The last grid page carries the custom metronome image alongside the
     # glyph-avatar fallback tiles (Settings, Color) -- covers both icon paths.
     ("home_grid_last", ["home", "grid",
+                        ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.4",
+                        ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.4",
+                        ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.6"]),
+    # One more page reaches the letter-avatar fallback tile (an unmapped app,
+    # "Zebra"), the icon path neither an image nor a glyph covers.
+    ("home_grid_p5", ["home", "grid",
+                        ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.4",
                         ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.4",
                         ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.4",
                         ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.6"]),

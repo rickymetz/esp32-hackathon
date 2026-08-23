@@ -100,7 +100,7 @@ const char *launcher_home_default_icon(const char *basename)
         { "metronome",  "metronome" },
         { "flashlight", "flashlight" },
         { "reaction",   "fire" },
-        { "color",      "tint" },
+        { "color",      "color" },
         { "settings",   "settings" },
         { "wifi",       "wifi" },
         { "sensor",     "thermometer" },
@@ -331,8 +331,11 @@ typedef struct { lv_obj_t *dots[16]; int n; lv_obj_t *tv; } grid_dots_t;
 static void grid_page_changed(lv_event_t *e)
 {
     grid_dots_t *d = (grid_dots_t *)lv_event_get_user_data(e);
-    lv_obj_t *active = lv_tileview_get_tile_act(d->tv);
-    int idx = active ? (int)lv_obj_get_x(active) / 368 : 0;   /* col == page */
+    lv_obj_t *active = lv_tileview_get_tile_active(d->tv);
+    /* Tiles sit at col * content_width; derive the page from that rather than a
+     * hardcoded 368, which would misindex if the tileview ever gained padding. */
+    int cw = lv_obj_get_content_width(d->tv);
+    int idx = (active && cw > 0) ? (int)lv_obj_get_x(active) / cw : 0;
     for (int i = 0; i < d->n; i++) {
         lv_obj_set_style_bg_color(d->dots[i],
             lv_color_hex(i == idx ? 0x2F80ED : 0x3A3A44), LV_PART_MAIN);
@@ -368,6 +371,10 @@ static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
         lv_obj_set_style_bg_opa(icon, LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_t *im = lv_image_create(icon);
         lv_image_set_src(im, img);
+        /* Fill the whole tile (120px art stretched to `size`) so image discs
+         * and the letter-avatar circles below are the same diameter. */
+        lv_obj_set_size(im, size, size);
+        lv_image_set_inner_align(im, LV_IMAGE_ALIGN_STRETCH);
         lv_obj_center(im);
         return;
     }
@@ -473,6 +480,7 @@ void launcher_home_build(lv_obj_t *screen, size_t count, bool sd_mounted,
         lv_obj_set_size(refresh, 200, 104);   /* >= 200x104; smaller drops taps */
         lv_obj_align(refresh, LV_ALIGN_BOTTOM_MID, 0, -16);
         lv_obj_set_style_bg_color(refresh, lv_color_hex(0x24303C), LV_PART_MAIN);
+        lv_obj_set_style_radius(refresh, 12, LV_PART_MAIN);   /* match the in-list Refresh */
         if (on_refresh) {
             lv_obj_add_event_cb(refresh, on_refresh, LV_EVENT_CLICKED, NULL);
         }

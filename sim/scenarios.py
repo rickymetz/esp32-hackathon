@@ -152,13 +152,25 @@ def home_header_lit(w, rgb):
 # and require it be strongly coloured -- proving the toggle rebuilt as a grid,
 # independent of which palette colour the name hashes to.
 def home_toggled_to_grid(w, rgb):
-    # After toggling to grid, the first cell (counter) draws its cream chip and
-    # amber plus at centre -- a bright illustration that stands well clear of the
-    # muted dusk-gradient tile background, so brightness there proves the custom
-    # icon rendered, not just that a coloured well appeared.
-    r, g, b = px(w, rgb, 101, 161)
-    bright = max(r, g, b)
-    return bright > 170, f"first grid icon illustration not lit ({r},{g},{b}, max={bright})"
+    # Two-point check so a broken toggle (list stays up) can't false-pass: the
+    # first grid tile is bright at its centre AND the point just left of it is
+    # pure black (a tile gap). In list view that left-edge point sits inside a
+    # navy row, so the black-gap test is what actually proves we switched.
+    cr, cg, cb = px(w, rgb, 101, 161)      # tile 1 centre
+    gr, gg, gb = px(w, rgb, 30, 161)       # gap left of tile 1
+    tile_lit = max(cr, cg, cb) > 170
+    gap_black = max(gr, gg, gb) < 16
+    return tile_lit and gap_black, \
+        f"not grid (tile max={max(cr, cg, cb)}, gap max={max(gr, gg, gb)})"
+
+
+def home_back_to_list(w, rgb):
+    # After toggling twice we're back to the list: the point left of where tile 1
+    # sat is now the navy row background (~41), not the black grid gap (0) and not
+    # a bright tile -- so the second toggle actually rebuilt the list.
+    r, g, b = px(w, rgb, 30, 161)
+    m = max(r, g, b)
+    return 16 <= m <= 90, f"not list after round-trip (left-edge max={m})"
 
 
 SCENARIOS = [
@@ -178,6 +190,8 @@ SCENARIOS = [
     ("tone-play-blue", ["run", "apps/tone.lua", ":", "sleep", "0.3"], tone_play_blue),
     ("home-header",    ["home"], home_header_lit),
     ("home-toggle-grid", ["home", ":", "tap", "324", "48", ":", "sleep", "0.3"], home_toggled_to_grid),
+    ("home-toggle-roundtrip", ["home", ":", "tap", "324", "48", ":", "sleep", "0.3",
+                                        ":", "tap", "324", "48", ":", "sleep", "0.3"], home_back_to_list),
 ]
 
 
