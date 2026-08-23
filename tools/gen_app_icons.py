@@ -285,6 +285,17 @@ def ic_flashlight(cv):
     cv.paint(rrect(0.47, 0.44, 0.53, 0.56, 0.02), solid(A_YELLOW))               # lens
 
 
+def ic_calculator(cv):
+    tile(cv, 0x12B886)
+    cv.paint(rrect(0.27, 0.15, 0.73, 0.85, 0.07), solid(WHITE))       # body
+    cv.paint(rrect(0.32, 0.21, 0.68, 0.35, 0.03), solid(0x0E3B33))    # screen
+    cv.paint(rrect(0.55, 0.265, 0.65, 0.305, 0.012), solid(0x53E0CC)) # readout digits
+    for cy in (0.475, 0.61, 0.745):                                   # 3x3 keypad
+        for ci, cx in enumerate((0.375, 0.5, 0.625)):
+            col = A_AMBER if ci == 2 else 0x12B886   # operator column pops amber
+            cv.paint(rrect(cx - 0.05, cy - 0.05, cx + 0.05, cy + 0.05, 0.02), solid(col))
+
+
 def ic_metronome(cv):
     tile(cv, 0xB9765A)
     cv.paint(rrect(0.20, 0.79, 0.80, 0.85, 0.02), solid(WHITE))       # base plinth
@@ -303,7 +314,7 @@ ICONS = {
     "stopwatch": ic_stopwatch, "plus": ic_counter, "audio": ic_tone,
     "list": ic_tally, "hourglass": ic_countdown, "fire": ic_reaction,
     "dollar": ic_tip, "level": ic_level, "flashlight": ic_flashlight,
-    "metronome": ic_metronome,
+    "metronome": ic_metronome, "calculator": ic_calculator,
 }
 
 

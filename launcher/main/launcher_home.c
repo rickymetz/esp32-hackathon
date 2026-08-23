@@ -89,6 +89,7 @@ const char *launcher_home_default_icon(const char *basename)
 {
     if (!basename) return NULL;
     struct { const char *sub; const char *icon; } map[] = {
+        { "calculator", "calculator" },  /* before "counter" -- shares "c…" */
         { "stopwatch",  "stopwatch" },   /* before "watch"/others */
         { "countdown",  "hourglass" },
         { "clock",      "clock" },

@@ -65,6 +65,7 @@ FRAMES = [
     ("tip",          ["run", "apps/tip.lua", ":", "sleep", "0.4"]),
     ("level",        ["run", "apps/level.lua", ":", "sleep", "0.4"]),
     ("tone",         ["run", "apps/tone.lua", ":", "sleep", "0.4"]),
+    ("calculator",   ["run", "apps/calculator.lua", ":", "sleep", "0.4"]),
 
     # --- Interaction / injected states (beyond the initial settled frame) ---
     # A post-tap value, the launcher error screen, an open keyboard, a tileview
@@ -81,6 +82,12 @@ FRAMES = [
     ("clock_lowbat", ["battery", "8", "0", "0", ":", "run", "apps/clock.lua", ":", "sleep", "0.4"]),
     ("level_tilted", ["run", "apps/level.lua",
                         ":", "accel", "0.5", "0", "0.866", ":", "sleep", "0.3"]),
+    # Calculator keypad + logic: 2 + 3 = 5. A structural regression in the
+    # buttonmatrix layout or the arithmetic changes this frame.
+    ("calc_sum",     ["run", "apps/calculator.lua",
+                        ":", "tap", "139", "344", ":", "tap", "317", "344",
+                        ":", "tap", "228", "344", ":", "tap", "303", "409",
+                        ":", "sleep", "0.2"]),
 
     # The launcher's OWN home screen (the app list), built by the shared
     # launcher_home_build() with a fake app list -- the most-seen surface, and
