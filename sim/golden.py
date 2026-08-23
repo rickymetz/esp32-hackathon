@@ -2,21 +2,20 @@
 """Golden-frame regression for the simulator.
 
 Where scenarios.py asserts a few hand-picked pixels, this checks the *whole*
-frame against a committed reference -- catching layout shifts, a widget that
-moved or vanished, a font/theme change, a colour regression anywhere on screen.
-
-To stay robust across machines (the CI runner renders on different hardware
-than wherever a golden was captured) and small enough to commit, each golden is
-the canonical frame **downscaled 4x** to a 92x116 thumbnail (box-averaged, which
-smooths anti-aliasing noise) and stored as a PNG under sim/golden/. Comparison
-is perceptual, not exact: a thumbnail cell "differs" only if a channel is off by
-more than CELL_TOL, and a frame fails only if more than FRAC_TOL of its cells
-differ -- so AA/FP wobble passes but a real change (which moves many cells)
-fails. The committed thumbnails render in GitHub diffs, so a golden update is
-reviewable by eye.
+frame against a committed reference. It is a net for STRUCTURAL / GROSS
+regressions -- a frame that renders blank or wholly different, a background or
+theme swap, a large fill recolouring, a major layout break. It is deliberately
+NOT a pixel-diff: to stay committable and robust across machines, each golden is
+the canonical frame downscaled 4x to a 92x112 thumbnail (box-averaged, which
+smooths anti-aliasing), and a frame fails only if more than FRAC_TOL of its
+cells move past CELL_TOL. That budget means a *small* change -- one caption
+vanishing, a button nudged a few px, a 1px border recolouring -- can pass here.
+Guard those specific elements with a scenarios.py probe instead; this catches
+the big stuff a hand-picked pixel would miss. The committed thumbnails render in
+GitHub diffs, so a golden update is reviewable by eye.
 
     sim/golden.py            # compare every frame to its golden; non-zero on drift
-    sim/golden.py --update   # (re)generate goldens from the current build
+    sim/golden.py --update [name...]   # regenerate all goldens, or just the named ones
 
 Only settled, deterministic frames are covered -- apps driven by math.random or
 mid-animation (dice, simon, reaction, breathe, metronome) are left to
@@ -35,14 +34,22 @@ GOLDEN_DIR = os.path.join(HERE, "golden")
 
 SCALE = 4          # 368x448 -> 92x112 thumbnail
 CELL_TOL = 28      # per-channel delta below which a cell is "unchanged"
-FRAC_TOL = 0.03    # fail if >3% of cells differ
+# The sim renders deterministically (software rasterizer, compiled bitmap fonts,
+# RGB565, pinned LVGL/Lua), so cross-machine drift on an unchanged frame is ~0 --
+# leaving headroom to keep this tight. 1.2% (~124 of 10304 cells) still passes
+# AA wobble but trips on a genuine structural change.
+FRAC_TOL = 0.012
 
 # name -> commands that drive the app to its canonical, settled frame.
-# Keep these deterministic: no randomness, no mid-animation capture.
+# Keep these deterministic: no randomness, no mid-animation capture. clock and
+# faces render seconds (a :SS field / a second hand) and are only stable because
+# the sim RTC is frozen at sec=0 (sim_sensors.c); if that clock ever advances,
+# re-capture those two or mask the seconds region.
 FRAMES = [
     ("counter",      ["run", "apps/counter.lua", ":", "sleep", "0.4"]),
     ("clock",        ["run", "apps/clock.lua", ":", "sleep", "0.4"]),
     ("faces",        ["run", "apps/faces.lua", ":", "sleep", "0.4"]),
+    ("wifi_setup",   ["run", "apps/wifi_setup.lua", ":", "sleep", "0.4"]),
     ("color",        ["run", "apps/color.lua", ":", "sleep", "0.4"]),
     ("flashlight",   ["run", "apps/flashlight.lua", ":", "sleep", "0.4"]),
     ("hello_world",  ["run", "apps/hello_world.lua", ":", "sleep", "0.4"]),
@@ -165,10 +172,16 @@ def main():
         sys.exit("sim not built -- run sim/build.sh")
     os.makedirs(os.path.join(HERE, "build"), exist_ok=True)
     os.makedirs(GOLDEN_DIR, exist_ok=True)
-    update = "--update" in sys.argv
+    args = sys.argv[1:]
+    update = "--update" in args
+    # names after --update limit the (re)generation to just those apps, so an
+    # intended single-app change doesn't churn the other goldens' binaries.
+    only = set(a for a in args if not a.startswith("-"))
 
     failures = 0
     for name, cmds in FRAMES:
+        if only and name not in only:
+            continue
         gpath = os.path.join(GOLDEN_DIR, f"{name}.png")
         try:
             tw, th, thumb = render_thumb(name, cmds)
@@ -191,15 +204,16 @@ def main():
             continue
         frac = diff_cells(thumb, gold)
         if frac > FRAC_TOL:
-            print(f"  FAIL  {name}  -- {frac*100:.1f}% of cells changed (>{FRAC_TOL*100:.0f}%)")
+            print(f"  FAIL  {name}  -- {frac*100:.1f}% of cells changed (>{FRAC_TOL*100:.1f}%)")
             failures += 1
         else:
             print(f"  ok    {name}  ({frac*100:.1f}% drift)")
 
+    processed = len(only) if only else len(FRAMES)
     if update:
-        print(f"\ngoldens: wrote {len(FRAMES)} to sim/golden/")
+        print(f"\ngoldens: wrote {processed} to sim/golden/")
         return
-    print(f"\ngolden: {len(FRAMES) - failures} ok, {failures} failed")
+    print(f"\ngolden: {processed - failures} ok, {failures} failed")
     sys.exit(1 if failures else 0)
 
 

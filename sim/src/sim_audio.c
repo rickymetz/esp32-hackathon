@@ -35,17 +35,19 @@ static int l_audio_tone(lua_State *L)
 static int l_audio_play(lua_State *L)
 {
     luaL_checktype(L, 1, LUA_TTABLE);
-    lua_Integer n = luaL_len(L, 1);
+    /* rawlen/rawgeti to mirror the device byte-for-byte (it ignores __len /
+     * __index on the note table). */
+    lua_Integer n = lua_rawlen(L, 1);
     if (n < 1 || n > QUEUE_LEN) {
         return luaL_error(L, "audio.play: 1-%d notes", QUEUE_LEN);
     }
     for (lua_Integer i = 1; i <= n; i++) {
-        lua_geti(L, 1, i);
+        lua_rawgeti(L, 1, i);
         if (!lua_istable(L, -1)) {
             return luaL_error(L, "audio.play: note %d must be {freq, ms}", (int)i);
         }
-        lua_geti(L, -1, 1);
-        lua_geti(L, -2, 2);
+        lua_rawgeti(L, -1, 1);
+        lua_rawgeti(L, -2, 2);
         int freq = (int)lua_tointeger(L, -2);
         int ms = (int)lua_tointeger(L, -1);
         lua_pop(L, 3);

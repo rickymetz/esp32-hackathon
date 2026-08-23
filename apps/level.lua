@@ -17,12 +17,19 @@ local ui = require("ui")
 
 lvgl.init({ buffer_lines = 40 })
 
-local CX, CY   = 184, 236       -- vial centre on the 368x448 panel
-local R_VIAL   = 150            -- outer vial radius
+local CX, CY   = 184, 214       -- vial centre on the 368x448 panel
+local R_VIAL   = 140            -- outer vial radius (clears the hero readout)
 local R_BUBBLE = 24             -- bubble radius
 local TRAVEL   = R_VIAL - R_BUBBLE
 local GAIN     = TRAVEL / 0.5   -- 0.5 g (~30 deg) sends the bubble to the rim
 local LEVEL_DEG = 2.0           -- within this, call it level
+
+-- A spirit-level bubble floats toward the RAISED side, i.e. opposite the
+-- in-plane gravity component, so the offset is negated. Which physical edge
+-- that is depends on the QMI8658's mounting sign, which can't be checked in the
+-- sim (it reads dead-flat); flip this to +1 if hardware shows it tracking the
+-- low side instead.
+local SIGN = -1
 
 local GREEN = "#39D98A"
 local AMBER = "#F2C94C"
@@ -63,8 +70,8 @@ local bubble = lvgl.container(scr, {
 bubble:set_clickable(false)
 
 local readout = lvgl.label(scr, {
-    text = "--", align = "bottom_mid", y = -34,
-    text_color = "#FFFFFF", font = lvgl.font(40),
+    text = "--", align = "bottom_mid", y = -24,
+    text_color = "#FFFFFF", font = lvgl.font(60),
 })
 
 local function clamp(v, lo, hi)
@@ -73,6 +80,8 @@ local function clamp(v, lo, hi)
     return v
 end
 
+local last_level = nil          -- track state so styles are only rewritten on change
+
 local function update()
     local ax, ay, az = imu.accel()
     if not ax then
@@ -80,8 +89,15 @@ local function update()
         return
     end
 
-    local dx = clamp(ax * GAIN, -TRAVEL, TRAVEL)
-    local dy = clamp(ay * GAIN, -TRAVEL, TRAVEL)
+    local dx = SIGN * ax * GAIN
+    local dy = SIGN * ay * GAIN
+    -- Clamp the VECTOR, not each axis: independent per-axis clamping would let
+    -- a diagonal tilt push the bubble to TRAVEL*sqrt(2), outside the round vial.
+    local d = math.sqrt(dx * dx + dy * dy)
+    if d > TRAVEL then
+        dx = dx * TRAVEL / d
+        dy = dy * TRAVEL / d
+    end
     -- align offset is measured from the vial centre (y already at CY-224).
     bubble:align("center", math.floor(dx + 0.5), (CY - 224) + math.floor(dy + 0.5))
 
@@ -91,15 +107,13 @@ local function update()
         tilt = math.deg(math.acos(clamp(az / mag, -1.0, 1.0)))
     end
 
-    if tilt <= LEVEL_DEG then
-        bubble:set_style({ bg_color = GREEN })
-        readout:set_text("LEVEL")
-        readout:set_style({ text_color = GREEN })
-    else
-        bubble:set_style({ bg_color = AMBER })
-        readout:set_text(string.format("%.1f\u{00B0}", tilt))
-        readout:set_style({ text_color = "#FFFFFF" })
+    local level = tilt <= LEVEL_DEG
+    if level ~= last_level then          -- only restyle on a state change
+        last_level = level
+        bubble:set_style({ bg_color = level and GREEN or AMBER })
+        readout:set_style({ text_color = level and GREEN or "#FFFFFF" })
     end
+    readout:set_text(level and "LEVEL" or string.format("%.1f\u{00B0}", tilt))
 end
 
 update()

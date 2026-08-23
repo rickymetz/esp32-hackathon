@@ -110,15 +110,17 @@ def clock_shows_time(w, rgb):
 
 # The sim IMU reads flat, so level.lua's bubble sits centred and green. A
 # regression (imu returns nil, or the level threshold breaks) would leave the
-# centre amber or empty.
+# centre amber or empty. Probe the vial centre (CX=184, CY=214).
 def level_centred_green(w, rgb):
-    r, g, b = px(w, rgb, 184, 236)
+    r, g, b = px(w, rgb, 184, 214)
     return (g > 150 and g > r and g > b), f"bubble not green at centre: {r},{g},{b}"
 
 
-# tone.lua's Play button is a solid accent-blue slab at the bottom.
+# tone.lua's Play button is a solid accent-blue slab at the bottom. Probe an
+# off-centre fill pixel -- NOT the horizontal centre, which lands on the
+# "> Play" label (per the sample-away-from-centred-text rule above).
 def tone_play_blue(w, rgb):
-    r, g, b = px(w, rgb, 184, 360)
+    r, g, b = px(w, rgb, 250, 360)
     return (b > 150 and b > r and b > g), f"play button not blue: {r},{g},{b}"
 
 

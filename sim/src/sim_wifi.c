@@ -27,7 +27,7 @@
 
 #include <string.h>
 
-#define SSID_MAX  33          /* strlen must be < this, i.e. <= 32 chars */
+#define SSID_MAX  32          /* strlen must be < this -- matches the device */
 #define PASS_MAX  64          /* strlen must be < this, i.e. <= 63 chars */
 #define CONNECT_POLLS  3      /* status() calls spent in "connecting" */
 
@@ -121,9 +121,10 @@ static int l_wifi_time_synced(lua_State *L)
 
 static int l_wifi_disconnect(lua_State *L)
 {
+    /* The device drops the connection but leaves s_time_synced alone -- NTP
+     * already set the RTC "this boot", and that stays true after a disconnect. */
     s_state = WIFI_OFF;
     s_polls_left = 0;
-    s_time_synced = false;
     s_ip[0] = '\0';
     lua_pushboolean(L, 1);
     return 1;
@@ -131,8 +132,12 @@ static int l_wifi_disconnect(lua_State *L)
 
 static int l_wifi_forget(lua_State *L)
 {
+    /* The device only deletes the saved credentials; a live connection stays
+     * up (status() still reports "connected"). Mirror that -- clear the saved
+     * flag, touch nothing else. */
     s_have_creds = false;
-    return l_wifi_disconnect(L);
+    lua_pushboolean(L, 1);
+    return 1;
 }
 
 static const luaL_Reg wifi_funcs[] = {

@@ -140,19 +140,23 @@ turns green) — catching binding/state regressions a blank-check can't.
 sim/scenarios.py
 ```
 
-`sim/golden.py` goes the whole way to a full-frame check: it renders each
-curated app to its canonical settled frame, downscales 4× to a thumbnail
+`sim/golden.py` is the full-frame net for **structural** regressions: it renders
+each curated app to its canonical settled frame, downscales 4× to a thumbnail
 (box-averaging smooths anti-aliasing), and compares against a committed golden
 under `sim/golden/`. The comparison is perceptual — a thumbnail cell counts as
 changed only past a per-channel tolerance, and a frame fails only if more than
-3% of cells change — so it survives cross-machine render wobble but catches a
-moved widget, a lost label, a theme or colour regression anywhere on screen.
-The thumbnails are ~2 KB each and render in GitHub diffs, so a deliberate update
-is reviewable by eye.
+~1.2% of cells change. That budget catches the big stuff a hand-picked pixel
+would miss (a blanked or wholly different frame, a background/theme swap, a large
+recolour, a major layout break) while surviving cross-machine render wobble; it
+is *not* a pixel-diff, so a single vanished caption or a few-pixel nudge can slip
+through — guard those specific elements with a `scenarios.py` probe. The
+thumbnails are ~2 KB each and render in GitHub diffs, so a deliberate update is
+reviewable by eye.
 
 ```bash
-sim/golden.py            # compare; exits nonzero on drift
-sim/golden.py --update   # regenerate goldens after an intended visual change
+sim/golden.py                 # compare; exits nonzero on drift
+sim/golden.py --update        # regenerate every golden after an intended change
+sim/golden.py --update clock  # or just the named app(s)
 ```
 
 Random- or animation-driven apps (dice, simon, reaction, breathe, metronome)
