@@ -1,19 +1,20 @@
--- Calculator: a four-function calculator built on lvgl.buttonmatrix -- the
--- widget for a dense keypad, since it hit-tests one grid internally instead of
--- tiling many separate button widgets (which would leave dead gaps between
--- keys). At five rows under the display the keys land ~86x67px, under the
--- contract's 88x88 touch floor: a deliberate density tradeoff a calculator
--- forces on a 448px screen -- fewer, larger keys couldn't hold a full keypad.
+-- Calculator: a four-function calculator sized for real fingers.
+--
+-- The keypad is a 4x4 lvgl.buttonmatrix so every digit/operator key clears the
+-- 88px touch floor (~86x87px); a 5-row pad would force ~60px rows, squarely in
+-- the band CLAUDE.md measured dropping ~half its taps. To fit four rows under a
+-- display, C and backspace live as their own buttons in the display strip and
+-- the rarely-used % / +- keys are dropped -- negate via "0 - n", and this stays
+-- a clean four-function calc.
 --
 --   * A key commits on release of the cell the finger went DOWN on (pressed
---     captures it, released fires it), so a sloppy tap that slides into a
---     neighbour still registers the intended key -- value_changed alone fires
---     per-cell while dragging and would enter several.
---   * A dim hint shows the pending "value op" so the armed operation is visible.
---   * Arithmetic runs in floating point: 32-bit Lua integers would wrap on a
---     large product with no error. Results format as an integer when exact and
---     in range, else %.6g -- so "6 / 2" reads "3", a huge product reads in
---     scientific rather than a wrapped negative.
+--     captures it, released fires it), so a tap that slides into a neighbour
+--     still registers the intended key.
+--   * Arithmetic is floating point and integers format with %.0f up to 1e15, so
+--     a 10-digit result shows in full instead of hitting the 32-bit integer
+--     ceiling; overflow and divide-by-zero both show a sticky "Err" that only C
+--     or backspace clears.
+--   * A dim "value op" hint shows the pending operation.
 --
 -- Build the UI and return; there is no loop and no timer.
 
@@ -24,41 +25,47 @@ lvgl.init({ buffer_lines = 40 })
 local scr = lvgl.create_screen()
 scr:set_style({ bg_color = "#000000" })
 
--- A dim readout of the pending "bankedValue operator", top-left, so the user
--- can see which operation is armed while typing the second operand.
-local hint = lvgl.label(scr, {
-    text = "",
-    align = "top_left", x = 18, y = 34,
-    text_color = "#7A8699",
-    font = lvgl.font(26),
-})
-
--- Display: right-aligned so digits grow leftward from the edge.
-local disp = lvgl.label(scr, {
-    text = "0",
-    align = "top_right", x = -18, y = 26,
-    text_color = "#FFFFFF",
-    font = lvgl.font(60),
-})
-
 -- ---- calculator state --------------------------------------------------
 
 local acc = nil        -- the value banked before the pending operator
 local op = nil         -- pending operator, or nil
 local entry = "0"      -- the number currently being typed / shown
 local fresh = true     -- true => the next digit starts a new entry
+local err = false      -- true while showing an error; only C / backspace clears
 
-local ENTRY_MAX = 12   -- keep the readout within the panel width
+local ENTRY_MAX = 9    -- keep a typed number within the readout width
 
 local function fmt(n)
-    if n ~= n then return "Err" end          -- NaN (guarded 0/0)
-    local i = math.tointeger(n)              -- nil if not exact or out of 32-bit range
-    if i then return tostring(i) end
-    return string.format("%.6g", n)
+    if n ~= n or n == math.huge or n == -math.huge then return "Err" end
+    -- Test integrality directly rather than via math.tointeger, whose range is
+    -- the 32-bit Lua int on the device -- otherwise a 10-digit integer result
+    -- would fall to scientific notation and lose digits.
+    if n == math.floor(n) and math.abs(n) < 1e15 then
+        return string.format("%.0f", n)
+    end
+    return string.format("%.10g", n)
 end
+
+-- ---- widgets -----------------------------------------------------------
+
+local hint = lvgl.label(scr, {
+    text = "",
+    align = "top_left", x = 186, y = 10,
+    text_color = "#7A8699",
+    font = lvgl.font(26),
+})
+
+local disp = lvgl.label(scr, {
+    text = "0",
+    align = "top_right", x = -14, y = 22,
+    text_color = "#FFFFFF",
+    font = lvgl.font(48),
+})
 
 local function show()
     disp:set_text(entry)
+    disp:set_style({ font = lvgl.font(#entry > 7 and 32 or 48) })
+    disp:set_style({ text_color = err and "#EB5757" or "#FFFFFF" })
 end
 
 local function show_hint()
@@ -70,6 +77,11 @@ local function value()
     return (tonumber(entry) or 0) + 0.0
 end
 
+local function result(n)
+    entry = fmt(n)
+    if entry == "Err" then err = true end
+end
+
 local function apply(a, o, b)
     if o == "+" then return a + b end
     if o == "-" then return a - b end
@@ -79,6 +91,14 @@ local function apply(a, o, b)
 end
 
 local function press(k)
+    if err then
+        -- Latched error: ignore everything until the user clears it.
+        if k == "C" or k == "<" then
+            acc, op, entry, fresh, err = nil, nil, "0", true, false
+        end
+        return
+    end
+
     if k:match("^%d$") then
         if fresh or entry == "0" then entry = k
         elseif #entry < ENTRY_MAX then entry = entry .. k end
@@ -88,42 +108,52 @@ local function press(k)
         elseif not entry:find("%.") and #entry < ENTRY_MAX then entry = entry .. "." end
     elseif k == "C" then
         acc, op, entry, fresh = nil, nil, "0", true
-    elseif k == "+/-" then
-        if entry:sub(1, 1) == "-" then entry = entry:sub(2)
-        elseif entry ~= "0" then entry = "-" .. entry end
-    elseif k == "%" then
-        entry, fresh = fmt(value() / 100), true
+    elseif k == "<" then                              -- backspace
+        if fresh or #entry <= 1 or (entry:sub(1, 1) == "-" and #entry == 2) then
+            entry, fresh = "0", true
+        else
+            entry = entry:sub(1, #entry - 1)
+        end
     elseif k == "+" or k == "-" or k == "x" or k == "/" then
         if op and not fresh then
-            acc = apply(acc, op, value())
-            entry = fmt(acc)
+            result(apply(acc, op, value()))
+            acc = tonumber(entry) or 0
         else
             acc = value()
         end
         op, fresh = k, true
     elseif k == "=" then
         if op then
-            entry = fmt(apply(acc, op, value()))
+            result(apply(acc, op, value()))
             acc, op, fresh = nil, nil, true
         end
     end
 end
 
--- ---- keypad ------------------------------------------------------------
+-- Utility keys live in the display strip so the number pad can stay 4 rows.
+local function util(label, x, key)
+    local b = lvgl.button(scr, {
+        text = label, x = x, y = 6, w = 84, h = 78,
+        bg_color = "#24303C", text_color = "#9FB4C7", radius = 12,
+    })
+    b:on("clicked", function() press(key); show(); show_hint() end)
+end
+util("C", 8, "C")
+util(lvgl.symbol.backspace, 98, "<")
+
+-- ---- keypad (4x4, >=~86px keys) ---------------------------------------
 
 local pad = lvgl.buttonmatrix(scr, {})
-pad:set_size(368, 336)
+pad:set_size(368, 358)
 pad:align("bottom_mid", 0, 0)
-pad:set_style({ bg_opa = 0, border_width = 0, pad = 6 })
+pad:set_style({ bg_opa = 0, border_width = 0, pad = 4 })
 pad:set_map({
-    "C",   "+/-", "%",   "/", "\n",
-    "7",   "8",   "9",   "x", "\n",
-    "4",   "5",   "6",   "-", "\n",
-    "1",   "2",   "3",   "+", "\n",
-    "0",   ".",   "=",
+    "7", "8", "9", "/", "\n",
+    "4", "5", "6", "x", "\n",
+    "1", "2", "3", "-", "\n",
+    "0", ".", "=", "+",
 })
 
--- Commit the key the finger went DOWN on, on release -- see the header note.
 local armed_key
 pad:on("pressed", function()
     local i = pad:get_selected()

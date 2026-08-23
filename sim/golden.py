@@ -87,16 +87,16 @@ FRAMES = [
     # each change a distinct frame -- not just one addition that a loose
     # tolerance could wave through.
     ("calc_sum",     ["run", "apps/calculator.lua",       # 2 + 3 = 5
-                        ":", "tap", "139", "344", ":", "tap", "317", "344",
-                        ":", "tap", "228", "344", ":", "tap", "303", "409",
+                        ":", "tap", "138", "314", ":", "tap", "322", "403",
+                        ":", "tap", "230", "314", ":", "tap", "230", "403",
                         ":", "sleep", "0.2"]),
     ("calc_div",     ["run", "apps/calculator.lua",       # 8 / 2 = 4 (integer format)
-                        ":", "tap", "139", "215", ":", "tap", "317", "150",
-                        ":", "tap", "139", "344", ":", "tap", "303", "409",
+                        ":", "tap", "138", "135", ":", "tap", "322", "135",
+                        ":", "tap", "138", "314", ":", "tap", "230", "403",
                         ":", "sleep", "0.2"]),
-    ("calc_err",     ["run", "apps/calculator.lua",       # 1 / 0 = Err (guard, no crash)
-                        ":", "tap", "139", "344", ":", "tap", "317", "150",
-                        ":", "tap", "65", "409", ":", "tap", "303", "409",
+    ("calc_err",     ["run", "apps/calculator.lua",       # 1 / 0 = Err (sticky red guard)
+                        ":", "tap", "46", "314", ":", "tap", "322", "135",
+                        ":", "tap", "46", "403", ":", "tap", "230", "403",
                         ":", "sleep", "0.2"]),
 
     # The launcher's OWN home screen (the app list), built by the shared

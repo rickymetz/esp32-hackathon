@@ -175,9 +175,14 @@ def tile(cv, c):
 # ---- icon library -------------------------------------------------------
 
 def ic_counter(cv):
+    # A stepper (-- | +) reads as "increment a count", where a bare plus reads
+    # as generic add. White pill, dark controls.
     tile(cv, 0x27AE60)
-    cv.paint(seg(0.5, 0.29, 0.5, 0.71, 0.11), solid(WHITE))
-    cv.paint(seg(0.29, 0.5, 0.71, 0.5, 0.11), solid(WHITE))
+    cv.paint(rrect(0.14, 0.39, 0.86, 0.61, 0.11), solid(WHITE))          # pill
+    cv.paint(seg(0.22, 0.5, 0.34, 0.5, 0.05), solid(INK))               # minus
+    cv.paint(seg(0.5, 0.42, 0.5, 0.58, 0.022), solid(0xB6C6BC))         # divider
+    cv.paint(seg(0.66, 0.5, 0.78, 0.5, 0.05), solid(INK))              # plus
+    cv.paint(seg(0.72, 0.44, 0.72, 0.56, 0.05), solid(INK))
 
 
 def ic_clock(cv):
@@ -200,28 +205,29 @@ def ic_faces(cv):
     # "choose a face", and stays clearly distinct from Clock's single blue dial.
     tile(cv, 0xF2775A)
     for fx, fy in ((0.33, 0.33), (0.67, 0.33), (0.33, 0.67), (0.67, 0.67)):
-        cv.paint(disc(fx, fy, 0.15), solid(WHITE))
-        cv.paint(seg(fx, fy, fx, fy - 0.095, 0.016), solid(INK))      # minute
-        cv.paint(seg(fx, fy, fx + 0.075, fy + 0.03, 0.016), solid(INK))  # hour
-        cv.paint(disc(fx, fy, 0.018), solid(INK))
+        cv.paint(disc(fx, fy, 0.16), solid(WHITE))
+        # Bolder hands + centre so the dials survive the downsample at ~100px.
+        cv.paint(seg(fx, fy, fx, fy - 0.10, 0.028), solid(INK))       # minute
+        cv.paint(seg(fx, fy, fx + 0.08, fy + 0.035, 0.028), solid(INK))  # hour
+        cv.paint(disc(fx, fy, 0.026), solid(INK))
 
 
 def ic_stopwatch(cv):
     tile(cv, 0x34495E)
     cv.paint(rrect(0.44, 0.10, 0.56, 0.18, 0.02), solid(WHITE))   # top button
-    cv.paint(seg(0.5, 0.16, 0.5, 0.22, 0.02), solid(WHITE))       # stem
+    cv.paint(seg(0.5, 0.16, 0.5, 0.28, 0.02), solid(WHITE))       # stem (reaches the face)
     cv.paint(disc(0.5, 0.57, 0.31), solid(WHITE))                 # face
     cv.paint(seg(0.5, 0.57, 0.5, 0.32, 0.028), solid(A_RED))      # red hand
     cv.paint(disc(0.5, 0.57, 0.030), solid(INK))
 
 
 def ic_level(cv):
-    tile(cv, 0x8E5AD6)
-    cv.paint(rrect(0.14, 0.41, 0.86, 0.59, 0.05), solid(WHITE))       # body
-    cv.paint(rrect(0.35, 0.45, 0.65, 0.55, 0.035), solid(0x5E33A0))   # vial window
-    cv.paint(disc(0.5, 0.5, 0.045), solid(WHITE))                     # bubble
-    cv.paint(seg(0.44, 0.455, 0.44, 0.545, 0.011), solid(WHITE))      # guide lines
-    cv.paint(seg(0.56, 0.455, 0.56, 0.545, 0.011), solid(WHITE))
+    tile(cv, 0x9B51E0)   # magenta-violet -- opens the gap from Reaction's blue-violet
+    cv.paint(rrect(0.12, 0.37, 0.88, 0.63, 0.06), solid(WHITE))       # body (taller)
+    cv.paint(rrect(0.33, 0.44, 0.67, 0.56, 0.04), solid(0x53286F))    # vial window
+    cv.paint(disc(0.5, 0.5, 0.055), solid(0x9BE7C0))                  # bubble (mint, larger)
+    cv.paint(seg(0.42, 0.45, 0.42, 0.55, 0.020), solid(WHITE))        # guide lines (thicker)
+    cv.paint(seg(0.58, 0.45, 0.58, 0.55, 0.020), solid(WHITE))
 
 
 def ic_tone(cv):
@@ -235,10 +241,10 @@ def ic_tone(cv):
 
 
 def ic_tally(cv):
-    tile(cv, 0x2D9CDB)
-    for x in (0.30, 0.42, 0.54, 0.66):
-        cv.paint(seg(x, 0.28, x, 0.72, 0.038), solid(WHITE))
-    cv.paint(seg(0.26, 0.72, 0.70, 0.28, 0.038), solid(WHITE))   # the cross-stroke
+    tile(cv, 0x22B8C9)   # cyan -- opens the gap from Clock's royal blue
+    for x in (0.28, 0.42, 0.56, 0.70):
+        cv.paint(seg(x, 0.24, x, 0.76, 0.040), solid(WHITE))
+    cv.paint(seg(0.24, 0.76, 0.74, 0.24, 0.040), solid(WHITE))   # the cross-stroke
 
 
 def ic_dice(cv):
@@ -260,18 +266,19 @@ def ic_countdown(cv):
 
 def ic_reaction(cv):
     tile(cv, 0x7B61FF)
-    cv.paint(poly([(0.58, 0.15), (0.34, 0.54), (0.49, 0.54),
-                   (0.42, 0.85), (0.70, 0.44), (0.53, 0.44)]),
-             solid(A_YELLOW))
+    cv.paint(poly([(0.56, 0.15), (0.32, 0.54), (0.47, 0.54),
+                   (0.40, 0.85), (0.68, 0.44), (0.51, 0.44)]),
+             solid(A_YELLOW))   # bolt, centred in the disc
 
 
 def ic_tip(cv):
-    tile(cv, 0x2FA84F)   # money green -- and clears the warm clash with Countdown
+    tile(cv, 0x159957)   # deep emerald -- distinct from Counter's grass green
     cv.paint(disc(0.5, 0.5, 0.30), solid(WHITE))                  # coin
     coin = disc(0.5, 0.5, 0.30)
-    arc_stroke(cv, 0.5, 0.42, 0.082, -30, -270, 0.030, 0x8A6320, clip=coin)  # $ top
-    arc_stroke(cv, 0.5, 0.58, 0.082, -90, 150, 0.030, 0x8A6320, clip=coin)   # $ bottom
-    cv.paint(seg(0.5, 0.27, 0.5, 0.73, 0.026), solid(0x8A6320))  # $ stem
+    # $ in INK, matching every other dark-on-white mark; thicker so it reads.
+    arc_stroke(cv, 0.5, 0.42, 0.082, -30, -270, 0.036, INK, clip=coin)  # $ top
+    arc_stroke(cv, 0.5, 0.58, 0.082, -90, 150, 0.036, INK, clip=coin)   # $ bottom
+    cv.paint(seg(0.5, 0.26, 0.5, 0.74, 0.030), solid(INK))       # $ stem
 
 
 def ic_flashlight(cv):
@@ -283,8 +290,8 @@ def ic_flashlight(cv):
     cv.paint(poly([(0.40, 0.42), (0.60, 0.35), (0.60, 0.65), (0.40, 0.58)]),
              solid(WHITE))                                                        # head (flares out)
     cv.paint(rrect(0.575, 0.35, 0.625, 0.65, 0.02), solid(A_YELLOW))            # lens
-    cv.paint(poly([(0.625, 0.40), (0.90, 0.23), (0.90, 0.77), (0.625, 0.60)]),
-             solid(0xFFE066), clip=TILE)                                          # beam
+    cv.paint(poly([(0.615, 0.40), (0.90, 0.23), (0.90, 0.77), (0.615, 0.60)]),
+             solid(0xFFE066), clip=TILE)                                          # beam (overlaps lens)
 
 
 def ic_calculator(cv):
@@ -299,7 +306,7 @@ def ic_calculator(cv):
 
 
 def ic_color(cv):
-    tile(cv, 0x2E323C)   # neutral so the swatches pop
+    tile(cv, 0x3E4657)   # slate light enough to keep a visible disc edge on black
     cv.paint(rrect(0.23, 0.23, 0.48, 0.48, 0.05), solid(0xEB5757))   # red
     cv.paint(rrect(0.52, 0.23, 0.77, 0.48, 0.05), solid(0x27AE60))   # green
     cv.paint(rrect(0.23, 0.52, 0.48, 0.77, 0.05), solid(0x2F80ED))   # blue
@@ -307,16 +314,16 @@ def ic_color(cv):
 
 
 def ic_metronome(cv):
-    tile(cv, 0xB9765A)
+    tile(cv, 0xC0693F)   # burnt orange -- more saturated, joins the vivid family
     cv.paint(rrect(0.20, 0.79, 0.80, 0.85, 0.02), solid(WHITE))       # base plinth
     cv.paint(poly([(0.40, 0.19), (0.60, 0.19), (0.75, 0.81), (0.25, 0.81)]),
              solid(WHITE))                                            # body
     cv.paint(poly([(0.44, 0.25), (0.56, 0.25), (0.655, 0.74), (0.345, 0.74)]),
-             solid(0x8A5540))                                         # scale recess
-    cv.paint(seg(0.5, 0.75, 0.60, 0.14, 0.020), solid(WHITE))        # pendulum rod
-    cv.paint(rrect(0.512, 0.445, 0.582, 0.500, 0.010), solid(A_AMBER))  # weight
-    cv.paint(disc(0.60, 0.14, 0.024), solid(A_AMBER))                # finial
-    cv.paint(disc(0.5, 0.75, 0.022), solid(0x8A5540))               # pivot
+             solid(0x8A3F22))                                         # scale recess
+    cv.paint(seg(0.5, 0.75, 0.60, 0.14, 0.022), solid(WHITE))        # pendulum rod
+    cv.paint(rrect(0.505, 0.435, 0.590, 0.505, 0.012), solid(A_AMBER))  # weight (larger)
+    cv.paint(disc(0.60, 0.14, 0.028), solid(A_AMBER))                # finial
+    cv.paint(disc(0.5, 0.75, 0.024), solid(0x8A3F22))              # pivot
 
 
 ICONS = {
