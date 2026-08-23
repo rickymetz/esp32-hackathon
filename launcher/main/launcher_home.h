@@ -21,7 +21,16 @@
 typedef struct {
     const char *name;      /* row label -- LVGL copies it, so it need not persist */
     const char *basename;  /* app filename -- strdup'd into on_row_click's user_data */
+    const char *icon;      /* icon-name key for the grid glyph, or NULL -> letter
+                            * avatar. launcher_home_default_icon() derives one
+                            * from the basename; both callers use it. */
 } launcher_home_app_t;
+
+/* Curated default icon for a known app basename (case-insensitive substring
+ * match, extension ignored). Returns an icon-name key launcher_home resolves to
+ * a glyph, or NULL when no pictograph fits (the grid then shows a letter
+ * avatar). Shared by the device and the simulator so both pick the same icon. */
+const char *launcher_home_default_icon(const char *basename);
 
 /* Fill *out for app `index` (0-based); return false to stop early (end of
  * list). Called once per visible row during the build. */

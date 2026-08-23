@@ -740,6 +740,7 @@ static bool launcher_home_get_app(size_t index, launcher_home_app_t *out, void *
     }
     out->name = app.name;
     out->basename = path_basename(app.path);
+    out->icon = launcher_home_default_icon(out->basename);
     return true;
 }
 

@@ -34,6 +34,87 @@ static uint32_t letter_color(const char *name)
     return palette[h % (sizeof(palette) / sizeof(palette[0]))];
 }
 
+/* ---- app icons: a glyph per app ---------------------------------------- */
+
+/* Resolve an icon-name key to a UTF-8 glyph string. Mixes the LVGL built-in
+ * symbols with the extended FontAwesome set baked into the Lexend faces (see
+ * fonts_lexend/ICONS.md); both render through the theme font's icon fallback.
+ * Returns NULL for an unknown key. */
+static const char *glyph_for(const char *key)
+{
+    if (!key) return NULL;
+    struct { const char *k; const char *g; } map[] = {
+        { "clock",       "\xEF\x80\x97" },       /* U+F017 */
+        { "stopwatch",   "\xEF\x8B\xB2" },       /* U+F2F2 */
+        { "sun",         "\xEF\x86\x85" },       /* U+F185 */
+        { "fire",        "\xEF\x81\xAD" },       /* U+F06D */
+        { "heart",       "\xEF\x80\x84" },       /* U+F004 */
+        { "thermometer", "\xEF\x8B\x89" },       /* U+F2C9 */
+        { "microphone",  "\xEF\x84\xB0" },       /* U+F130 */
+        { "audio",       LV_SYMBOL_AUDIO },
+        { "tint",        LV_SYMBOL_TINT },
+        { "list",        LV_SYMBOL_LIST },
+        { "settings",    LV_SYMBOL_SETTINGS },
+        { "wifi",        LV_SYMBOL_WIFI },
+        { "plus",        LV_SYMBOL_PLUS },
+        { "keyboard",    LV_SYMBOL_KEYBOARD },
+        { "image",       LV_SYMBOL_IMAGE },
+        { "dollar",      "$" },
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+        if (!strcmp(key, map[i].k)) return map[i].g;
+    }
+    return NULL;
+}
+
+/* True if `hay` (lower-cased) contains `needle`. */
+static bool name_has(const char *hay, const char *needle)
+{
+    size_t nl = strlen(needle);
+    for (const char *p = hay; *p; p++) {
+        size_t i = 0;
+        while (i < nl && p[i]) {
+            char c = p[i];
+            if (c >= 'A' && c <= 'Z') c += 32;
+            if (c != needle[i]) break;
+            i++;
+        }
+        if (i == nl) return true;
+    }
+    return false;
+}
+
+const char *launcher_home_default_icon(const char *basename)
+{
+    if (!basename) return NULL;
+    struct { const char *sub; const char *icon; } map[] = {
+        { "stopwatch",  "stopwatch" },   /* before "watch"/others */
+        { "countdown",  "stopwatch" },
+        { "clock",      "clock" },
+        { "face",       "clock" },        /* watch faces */
+        { "counter",    "plus" },
+        { "tally",      "list" },
+        { "tone",       "audio" },
+        { "metronome",  "audio" },
+        { "flashlight", "sun" },
+        { "reaction",   "fire" },
+        { "color",      "tint" },
+        { "settings",   "settings" },
+        { "wifi",       "wifi" },
+        { "sensor",     "thermometer" },
+        { "sign",       "keyboard" },
+        { "breathe",    "heart" },
+        { "tip",        "dollar" },
+        { "camera",     "image" },
+        { "voice",      "microphone" },
+        /* dice, level, simon, hello: no clean pictograph -> letter avatar */
+    };
+    for (size_t i = 0; i < sizeof(map) / sizeof(map[0]); i++) {
+        if (name_has(basename, map[i].sub)) return map[i].icon;
+    }
+    return NULL;
+}
+
 /* Attach a strdup'd basename + the click/delete callbacks to a row or tile,
  * exactly as the list rows always did. No-op when not interactive (the sim). */
 static void wire_launch(lv_obj_t *obj, const char *basename,
@@ -217,10 +298,16 @@ static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
     lv_obj_set_style_shadow_width(icon, 0, LV_PART_MAIN);
     wire_launch(icon, app->basename, on_click, on_delete);
 
-    char initial[2] = { app->name && app->name[0] ? app->name[0] : '?', '\0' };
-    if (initial[0] >= 'a' && initial[0] <= 'z') initial[0] -= 32;   /* upper */
     lv_obj_t *ilabel = lv_label_create(icon);
-    lv_label_set_text(ilabel, initial);
+    const char *glyph = glyph_for(app->icon);
+    if (glyph) {
+        lv_label_set_text(ilabel, glyph);   /* a real pictograph */
+    } else {
+        /* Letter avatar: the app's initial, for apps with no mapped glyph. */
+        char initial[2] = { app->name && app->name[0] ? app->name[0] : '?', '\0' };
+        if (initial[0] >= 'a' && initial[0] <= 'z') initial[0] -= 32;
+        lv_label_set_text(ilabel, initial);
+    }
     lv_obj_set_style_text_color(ilabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_style_text_font(ilabel, lua_module_lvgl_scaled_builtin_font(48), LV_PART_MAIN);
     lv_obj_center(ilabel);

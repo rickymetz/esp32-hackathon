@@ -351,6 +351,7 @@ static bool sim_home_get_app(size_t index, launcher_home_app_t *out, void *ctx)
     if (index >= (size_t)SIM_FAKE_APP_COUNT) return false;
     out->name = s_fake_apps[index];
     out->basename = s_fake_apps[index];   /* callbacks are NULL in the sim */
+    out->icon = launcher_home_default_icon(s_fake_apps[index]);
     return true;
 }
 
