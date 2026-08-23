@@ -42,6 +42,7 @@
 #include "display_service.h"
 #include "lua_module_lvgl.h"
 #include "app_registry.h"
+#include "launcher_home.h"
 #include "app_sandbox.h"
 #include "app_timer.h"
 #include "app_button.h"
@@ -675,6 +676,21 @@ static void refresh_clicked(lv_event_t *e)
     xSemaphoreGive(s_app_mutex);
 }
 
+/* Adapts app_registry to launcher_home_build's get_app callback. The static
+ * app_entry_t is consumed by the builder (label text copied, basename strdup'd)
+ * before the next call, so reusing it across rows is safe on the UI task. */
+static bool launcher_home_get_app(size_t index, launcher_home_app_t *out, void *ctx)
+{
+    (void)ctx;
+    static app_entry_t app;
+    if (!app_registry_get_copy(index, &app)) {
+        return false;
+    }
+    out->name = app.name;
+    out->basename = path_basename(app.path);
+    return true;
+}
+
 static void build_launcher_ui(void)
 {
     size_t count = app_registry_count();
@@ -688,122 +704,12 @@ static void build_launcher_ui(void)
     lv_obj_set_style_pad_all(s_launcher_screen, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_launcher_screen, 0, LV_PART_MAIN);
 
-    lv_obj_t *header = lv_label_create(s_launcher_screen);
-    lv_label_set_text(header, "Apps");
-    lv_obj_set_style_text_color(header, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(header, lua_module_lvgl_scaled_builtin_font(40), LV_PART_MAIN);
-    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 24);
-
-    if (count == 0) {
-        /* Nothing else on screen, so a centered standalone button is safe
-         * here -- and necessary: after inserting a card this is the only
-         * way to rescan without rebooting. */
-        lv_obj_t *refresh = lv_button_create(s_launcher_screen);
-        lv_obj_set_size(refresh, 200, 104);   /* >= 200x104; smaller drops taps */
-        lv_obj_align(refresh, LV_ALIGN_BOTTOM_MID, 0, -16);
-        lv_obj_set_style_bg_color(refresh, lv_color_hex(0x24303C), LV_PART_MAIN);
-        lv_obj_add_event_cb(refresh, refresh_clicked, LV_EVENT_CLICKED, NULL);
-
-        lv_obj_t *rlabel = lv_label_create(refresh);
-        lv_label_set_text(rlabel, "Refresh");
-        lv_obj_set_style_text_color(rlabel, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-        lv_obj_center(rlabel);
-
-        lv_obj_t *empty = lv_label_create(s_launcher_screen);
-        lv_label_set_text(empty, app_registry_sd_mounted()
-                                     ? "No apps yet.\nCopy .lua files to\n/apps on the SD card."
-                                     : "No SD card.\nInsert one with an\n/apps directory.");
-        lv_obj_set_style_text_color(empty, lv_color_hex(0x8A8A99), LV_PART_MAIN);
-        lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-        lv_obj_set_style_text_font(empty, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
-        lv_obj_center(empty);
-    } else {
-        lv_obj_t *list = lv_obj_create(s_launcher_screen);
-        lv_obj_set_size(list, LV_PCT(100), LV_PCT(84));
-        lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
-        lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
-        lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
-        lv_obj_set_style_pad_all(list, 12, LV_PART_MAIN);
-        lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_style_pad_row(list, 16, LV_PART_MAIN);
-        /* Fade the scrollbar when idle -- the always-on hairline reads as
-         * a rendering defect (persona review; the ui module already does
-         * this, the launcher list was the holdout). */
-        lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_ACTIVE);
-
-        size_t visible = (count < MAX_VISIBLE_ROWS) ? count : MAX_VISIBLE_ROWS;
-        for (size_t i = 0; i < visible; i++) {
-            app_entry_t app;
-            if (!app_registry_get_copy(i, &app)) {
-                break;   /* end of list, or the array shrank under us */
-            }
-
-            /* Own copy of the basename, not a pointer into app_registry's
-             * static array: a rescan (Refresh, or a serial PUSH) rewrites
-             * that array in place, and this row can outlive the scan that
-             * built it. Freed in row_data_delete_cb when LVGL deletes the
-             * row. */
-            char *basename = strdup(path_basename(app.path));
-
-            lv_obj_t *row = lv_button_create(list);
-            lv_obj_set_size(row, LV_PCT(100), ROW_HEIGHT);
-            lv_obj_set_style_bg_color(row, lv_color_hex(0x1E1E28), LV_PART_MAIN);
-            lv_obj_set_style_radius(row, 12, LV_PART_MAIN);
-            lv_obj_add_event_cb(row, app_row_clicked, LV_EVENT_CLICKED, basename);
-            lv_obj_add_event_cb(row, row_data_delete_cb, LV_EVENT_DELETE, basename);
-
-            lv_obj_t *label = lv_label_create(row);
-            lv_label_set_text(label, app.name);
-            lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-            lv_obj_set_style_text_font(label, lua_module_lvgl_scaled_builtin_font(32), LV_PART_MAIN);
-            /* Leading-aligned like every ui.row: the review flagged the
-             * centered launcher rows as a second list grammar. */
-            lv_obj_align(label, LV_ALIGN_LEFT_MID, 16, 0);
-
-            if (i == 0) {
-                /* Structural proof (no board display to look at) that the
-                 * 32px font is actually resolved on a row label, not just
-                 * requested: log the font object LVGL resolved for this
-                 * label and its line_height. Montserrat 14's line_height is
-                 * 16px; Lexend 32's is 36px. */
-                const lv_font_t *resolved =
-                    lv_obj_get_style_text_font(label, LV_PART_MAIN);
-                ESP_LOGI(TAG, "row label font check: resolved=%p want=%p "
-                         "(scaled 32), line_height=%d",
-                         (const void *)resolved,
-                         (const void *)lua_module_lvgl_scaled_builtin_font(32),
-                         lv_font_get_line_height(resolved));
-            }
-        }
-
-        if (count > MAX_VISIBLE_ROWS) {
-            /* Silent truncation would be worse than the bug this caps --
-             * say what's missing instead of just hiding it. */
-            lv_obj_t *more = lv_label_create(list);
-            lv_label_set_text_fmt(more, "%u more not shown",
-                                   (unsigned)(count - MAX_VISIBLE_ROWS));
-            lv_obj_set_style_text_color(more, lv_color_hex(0x8A8A99), LV_PART_MAIN);
-            lv_obj_set_style_text_font(more, &lv_font_lexend_26, LV_PART_MAIN);
-            lv_obj_set_style_text_align(more, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-            lv_obj_set_width(more, LV_PCT(100));
-        }
-
-        /* Refresh lives IN the list, as its last full-width row: the list
-         * container spans the screen bottom and its rows paint over anything
-         * behind it, which is exactly how the old standalone bottom button
-         * ended up invisible behind 3+ rows (found by Rick on device). A row
-         * scrolls into reach no matter how many apps precede it. */
-        lv_obj_t *refresh = lv_button_create(list);
-        lv_obj_set_size(refresh, LV_PCT(100), ROW_HEIGHT);
-        lv_obj_set_style_bg_color(refresh, lv_color_hex(0x24303C), LV_PART_MAIN);
-        lv_obj_set_style_radius(refresh, 12, LV_PART_MAIN);
-        lv_obj_add_event_cb(refresh, refresh_clicked, LV_EVENT_CLICKED, NULL);
-
-        lv_obj_t *rlabel = lv_label_create(refresh);
-        lv_label_set_text(rlabel, "Refresh");
-        lv_obj_set_style_text_color(rlabel, lv_color_hex(0x9FB4C7), LV_PART_MAIN);
-        lv_obj_center(rlabel);
-    }
+    /* The whole app-list UI now lives in launcher_home.c so the headless
+     * simulator can render it too (with a fake app list). This passes the real
+     * app-registry accessor and the real row/refresh callbacks. */
+    launcher_home_build(s_launcher_screen, count, app_registry_sd_mounted(),
+                        MAX_VISIBLE_ROWS, launcher_home_get_app, NULL,
+                        app_row_clicked, row_data_delete_cb, refresh_clicked);
 
     lv_screen_load(s_launcher_screen);
     bsp_display_unlock();

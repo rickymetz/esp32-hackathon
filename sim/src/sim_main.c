@@ -22,6 +22,7 @@
 #include "app_sensors.h"
 #include "app_sandbox.h"
 #include "lua_module_ui.h"
+#include "launcher_home.h"
 
 /* Sim-only reset hooks (the device wifi/sensors modules are event/register
  * driven and have no such entry point; the stubs add one for determinism). */
@@ -315,6 +316,45 @@ static int app_run(const char *path)
     return 0;
 }
 
+/* ---- Launcher home render (the `home` command) ------------------------- */
+
+/* A fixed, deterministic app list so the launcher home screen -- the launcher's
+ * own UI, built by the shared launcher_home_build() -- can be rendered and
+ * golden-tested without a board or a real SD scan. */
+static const char *const s_fake_apps[] = {
+    "Counter", "Clock", "Faces", "Level", "Tone", "Stopwatch",
+    "Tally", "Dice", "Countdown", "Reaction", "Tip", "Flashlight",
+};
+#define SIM_FAKE_APP_COUNT ((int)(sizeof(s_fake_apps) / sizeof(s_fake_apps[0])))
+
+static bool sim_home_get_app(size_t index, launcher_home_app_t *out, void *ctx)
+{
+    (void)ctx;
+    if (index >= (size_t)SIM_FAKE_APP_COUNT) return false;
+    out->name = s_fake_apps[index];
+    out->basename = s_fake_apps[index];   /* callbacks are NULL in the sim */
+    return true;
+}
+
+/* Build and load the launcher home with `count` fake apps (clamped to the
+ * fake list; 0 shows the empty state), then flush a frame so `shot` sees it. */
+static void render_home(int count, bool sd_mounted)
+{
+    if (count < 0) count = SIM_FAKE_APP_COUNT;
+    if (count > SIM_FAKE_APP_COUNT) count = SIM_FAKE_APP_COUNT;
+
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(scr, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(scr, 0, LV_PART_MAIN);
+
+    launcher_home_build(scr, (size_t)count, sd_mounted, 64,
+                        sim_home_get_app, NULL, NULL, NULL, NULL);
+    lv_screen_load(scr);
+    lv_timer_handler();   /* flush the render into the framebuffer */
+    lv_timer_handler();
+}
+
 /* ---- Command interpreter ----------------------------------------------- */
 
 static int need(int have, int want, const char *cmd)
@@ -431,6 +471,14 @@ static void exec_cmd(int argc, char **argv)
         } else {
             fprintf(stderr, "wifi: expected 'ok' or 'fail'\n");
         }
+    } else if (!strcmp(cmd, "home")) {
+        /* Render the launcher's own home screen (the shared launcher_home_build)
+         * with a fake app list. `home` = full list; `home <n>` = n apps
+         * (0 = the empty/no-apps state). Stops any running app first. */
+        if (s_app) app_stop();
+        int n = argc >= 2 ? atoi(argv[1]) : -1;   /* -1 => full fake list */
+        render_home(n, /*sd_mounted=*/true);
+        printf("HOME_OK\n");
     } else {
         fprintf(stderr, "unknown command: %s\n", cmd);
     }

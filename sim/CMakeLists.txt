@@ -58,6 +58,7 @@ add_library(bindings STATIC
     # Reused launcher modules -- all portable against the shims.
     ${LAUNCHER}/main/app_timer.c
     ${LAUNCHER}/main/app_sandbox.c
+    ${LAUNCHER}/main/launcher_home.c
     ${LAUNCHER}/components/lua_module_button/app_button.c
     # Sim-specific pieces.
     src/display_service_sim.c

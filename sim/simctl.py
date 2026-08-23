@@ -13,6 +13,8 @@ works here unchanged:
   sleep <seconds>                  wait (UI settle, timers, animations)
   shot <out.png>                   capture the screen to a PNG
   check <out.png>                  capture and assert the frame is non-blank
+  home [n]                         render the launcher's own home screen with a
+                                   fake app list (n apps; 0 = empty state)
   type <text>                      drive require("keyboard") text entry, then OK
   typenum <digits>                 drive the number keypad, then OK
 

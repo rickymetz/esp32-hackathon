@@ -140,6 +140,13 @@ def level_tilted_off_centre(w, rgb):
     return (g < 90 and r < 90), f"centre still lit after tilt: {r},{g},{b}"
 
 
+# The launcher home (shared launcher_home_build) draws the white "Apps" header
+# at top centre. A bright band there proves the launcher's own screen builds.
+def home_header_lit(w, rgb):
+    n = bright_count(w, rgb, 120, 25, 250, 70)
+    return n > 200, f"Apps header not rendered ({n} bright px)"
+
+
 SCENARIOS = [
     ("flashlight-on",  ["run", "apps/flashlight.lua"], flashlight_on),
     ("flashlight-off", ["run", "apps/flashlight.lua", ":", "tap", "184", "224"], flashlight_off),
@@ -155,6 +162,7 @@ SCENARIOS = [
     ("level-tilted",   ["run", "apps/level.lua", ":", "accel", "0.5", "0", "0.866",
                         ":", "sleep", "0.3"], level_tilted_off_centre),
     ("tone-play-blue", ["run", "apps/tone.lua", ":", "sleep", "0.3"], tone_play_blue),
+    ("home-header",    ["home"], home_header_lit),
 ]
 
 

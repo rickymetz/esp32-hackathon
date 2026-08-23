@@ -81,6 +81,12 @@ FRAMES = [
     ("clock_lowbat", ["battery", "8", "0", "0", ":", "run", "apps/clock.lua", ":", "sleep", "0.4"]),
     ("level_tilted", ["run", "apps/level.lua",
                         ":", "accel", "0.5", "0", "0.866", ":", "sleep", "0.3"]),
+
+    # The launcher's OWN home screen (the app list), built by the shared
+    # launcher_home_build() with a fake app list -- the most-seen surface, and
+    # the one the sim couldn't reach until it was factored out of launcher_main.
+    ("home",         ["home"]),
+    ("home_empty",   ["home", "0"]),
 ]
 
 
