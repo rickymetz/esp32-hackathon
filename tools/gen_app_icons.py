@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """Generate custom app-icon images for the launcher grid.
 
-These are full-colour, lightly skeuomorphic icons (gradients, shading, a real
-3D die, a watch face...) that fill the whole tile, not flat glyphs. Each is
-rasterised to an LVGL RGB565 image (over black) and written to
-launcher/main/launcher_icons.{c,h}; the launcher draws the image as the tile.
+A cohesive family of *circular*, edge-to-edge icons in a modern-gradient style:
+every tile is a full disc sharing one indigo-dusk sky gradient with a gentle top
+light and a bottom vignette for depth, and each carries a small illustration
+(a die, a watch face, an hourglass, a coin...) drawn in warm cream plus a
+restrained accent set (amber / gold / teal / coral) with soft drop shadows.
+No heavy gloss -- the depth comes from the gradients and the shadows.
+
+Each icon is rasterised to an LVGL RGB565 image (composited over black) and
+written to launcher/main/launcher_icons.{c,h}; the launcher draws the image as
+the tile. On the true-black OLED the disc's transparent corners bake to black,
+so the circle reads clean at half the flash of ARGB8888.
 
 Pure Python (no Pillow): a tiny painter composites layers (each a shape + a
 solid/gradient/radial fill) into a supersampled RGBA buffer, box-downsampled for
@@ -55,11 +62,26 @@ def radial(cx, cy, r, c0, c1, a0=255, a1=255):
     return f
 
 
+def esoft(c, cx, cy, rx, ry, a0, a1):
+    """Elliptical alpha falloff -- used for soft drop shadows and glows."""
+    r0, g0, b0 = hx(c)
+
+    def f(u, v):
+        t = min(1.0, math.hypot((u - cx) / rx, (v - cy) / ry))
+        return (r0, g0, b0, int(a0 + (a1 - a0) * t))
+    return f
+
+
 # ---- shapes (return (inside_fn, (x0,y0,x1,y1) bbox)) --------------------
 
 def disc(cx, cy, r):
     return (lambda u, v: (u - cx) ** 2 + (v - cy) ** 2 <= r * r,
             (cx - r, cy - r, cx + r, cy + r))
+
+
+def edisc(cx, cy, rx, ry):
+    return (lambda u, v: ((u - cx) / rx) ** 2 + ((v - cy) / ry) ** 2 <= 1.0,
+            (cx - rx, cy - ry, cx + rx, cy + ry))
 
 
 def ring(cx, cy, r, t):
@@ -142,8 +164,8 @@ class Canvas:
     def downsample(self):
         """Box-downsample to RGB565 (little-endian) composited over black. The
         launcher grid sits on a true-black screen, so the icons' transparent
-        rounded corners bake to black and still read as rounded -- at half the
-        flash of ARGB8888."""
+        corners bake to black and still read as circular -- at half the flash of
+        ARGB8888."""
         W = self.W
         out = bytearray(SIZE * SIZE * 2)
         n = SS * SS
@@ -164,45 +186,82 @@ class Canvas:
         return out
 
 
+# ---- the shared family --------------------------------------------------
+# One circular sky, one restrained palette. Identity comes from the little
+# illustration on top, not from a per-app background colour.
+
+DISC = disc(0.5, 0.5, 0.5)
+
+SKY_TOP = 0x3A5390      # indigo dusk, lit at the top
+SKY_BOT = 0x151C33      # deep navy at the bottom
+
+CREAM = 0xF3EEE4
+CREAM_LO = 0xDED8CC     # shaded cream (volume)
+STEEL = 0xC7C1B4
+INK = 0x28304A          # near-navy "black" for marks/hands
+AMBER = 0xE0863C
+AMBER_HI = 0xFBE38A
+GOLD = 0xF6C544
+CORAL = 0xEC6A5E
+TEAL = 0x53B7A9
+MINT = 0xCFF3E6
+SLATE = 0x8790A6
+
+
+def sky(cv):
+    """The shared circular background: dusk gradient + top light + vignette."""
+    cv.paint(DISC, vgrad(SKY_TOP, SKY_BOT, 0.05, 0.98))
+    cv.paint(DISC, radial(0.5, 0.26, 0.60, 0xFFFFFF, 0xFFFFFF, 34, 0), clip=DISC)
+    cv.paint(DISC, radial(0.5, 1.05, 0.85, 0x000000, 0x000000, 80, 0), clip=DISC)
+
+
+def shadow(cv, cx, cy, rx, ry, a=110):
+    """A soft elliptical drop shadow, clipped to the disc, for grounded depth."""
+    cv.paint(edisc(cx, cy, rx, ry), esoft(0x000000, cx, cy, rx, ry, a, 0), clip=DISC)
+
+
+def arc_stroke(cv, cx, cy, r, a0, a1, t, c, clip=None):
+    """Stroke a circular arc (degrees, screen coords) by walking overlapping
+    discs -- gives smooth curves the polygon rasteriser can't."""
+    steps = max(8, int(abs(a1 - a0) / 8))
+    for i in range(steps + 1):
+        a = math.radians(a0 + (a1 - a0) * i / steps)
+        cv.paint(disc(cx + r * math.cos(a), cy + r * math.sin(a), t / 2),
+                 solid(c), clip=clip)
+
+
 # ---- icon library -------------------------------------------------------
-# Each icon is a function(Canvas) painting its layers over a rounded-tile bg.
-
-TILE = rrect(0.0, 0.0, 1.0, 1.0, 0.22)
-
-
-def bg(cv, c0, c1):
-    cv.paint(TILE, vgrad(c0, c1))
-    # soft top sheen
-    cv.paint(rrect(0.06, 0.05, 0.94, 0.4, 0.16), solid(0xFFFFFF, 40), clip=TILE)
-
 
 def ic_dice(cv):
-    bg(cv, 0x3A4A6B, 0x1E2740)
-    # isometric cube
-    Tp, Lt, Rt = (0.5, 0.22), (0.24, 0.37), (0.76, 0.37)
-    Cn, Lb, Rb, Bt = (0.5, 0.52), (0.24, 0.66), (0.76, 0.66), (0.5, 0.81)
-    cv.paint(poly([Tp, Rt, Cn, Lt]), vgrad(0xFFFFFF, 0xEDEDE4, 0.22, 0.52))  # top
-    cv.paint(poly([Lt, Cn, Bt, Lb]), vgrad(0xD3D3C8, 0xBEBEB2, 0.37, 0.81))  # left
-    cv.paint(poly([Rt, Rb, Bt, Cn]), vgrad(0xB8B8AC, 0xA0A096, 0.37, 0.81))  # right
-    pip = lambda x, y, r=0.032: cv.paint(disc(x, y, r), solid(0x2B2B2B))
-    pip(0.5, 0.37)                                             # top: 1
-    pip(0.34, 0.5); pip(0.40, 0.60)                            # left: 2
-    pip(0.60, 0.47); pip(0.66, 0.57); pip(0.72, 0.67)          # right: 3
+    sky(cv)
+    shadow(cv, 0.5, 0.83, 0.25, 0.06, 130)
+    Tp, Lt, Rt = (0.5, 0.20), (0.23, 0.35), (0.77, 0.35)
+    Cn, Lb, Rb, Bt = (0.5, 0.50), (0.23, 0.66), (0.77, 0.66), (0.5, 0.81)
+    cv.paint(poly([Tp, Rt, Cn, Lt]), vgrad(0xFBF7EE, 0xEFE9DC, 0.20, 0.50))  # top
+    cv.paint(poly([Lt, Cn, Bt, Lb]), vgrad(0xD9D3C6, 0xC7C1B4, 0.35, 0.81))  # left
+    cv.paint(poly([Rt, Rb, Bt, Cn]), vgrad(0xC2BCAF, 0xAAA498, 0.35, 0.81))  # right
+    pip = lambda x, y, c=AMBER, r=0.030: cv.paint(disc(x, y, r), solid(c))
+    pip(0.5, 0.35)                                        # top face: 1
+    pip(0.335, 0.49); pip(0.40, 0.60)                     # left face: 2
+    pip(0.60, 0.47); pip(0.665, 0.565); pip(0.73, 0.66)   # right face: 3
 
 
 def ic_clock(cv):
-    bg(cv, 0x2E6BE6, 0x1B45A8)
-    cv.paint(disc(0.5, 0.5, 0.36), solid(0xC9D2DE))           # bezel
-    cv.paint(disc(0.5, 0.5, 0.31), vgrad(0xFFFFFF, 0xE7ECF2, 0.2, 0.8))  # face
-    for i in range(12):                                       # ticks
+    sky(cv)
+    shadow(cv, 0.5, 0.87, 0.30, 0.055, 120)
+    cv.paint(disc(0.5, 0.5, 0.36), solid(0xE8E2D6))                     # rim
+    cv.paint(disc(0.5, 0.5, 0.325), vgrad(0xFBF8F1, 0xEAE4D8, 0.18, 0.82))  # face
+    for i in range(12):
         a = i * math.pi / 6
-        cv.paint(seg(0.5 + 0.27 * math.sin(a), 0.5 - 0.27 * math.cos(a),
-                     0.5 + 0.30 * math.sin(a), 0.5 - 0.30 * math.cos(a), 0.02),
-                 solid(0x8A94A2))
-    cv.paint(seg(0.5, 0.5, 0.5, 0.32, 0.028), solid(0x2B3242))   # minute
-    cv.paint(seg(0.5, 0.5, 0.64, 0.58, 0.032), solid(0x2B3242))  # hour
-    cv.paint(seg(0.5, 0.5, 0.40, 0.36, 0.014), solid(0xE8434B))  # second
-    cv.paint(disc(0.5, 0.5, 0.03), solid(0xE8434B))
+        r_in = 0.275 if i % 3 == 0 else 0.285
+        w = 0.022 if i % 3 == 0 else 0.013
+        cv.paint(seg(0.5 + r_in * math.sin(a), 0.5 - r_in * math.cos(a),
+                     0.5 + 0.30 * math.sin(a), 0.5 - 0.30 * math.cos(a), w),
+                 solid(SLATE))
+    cv.paint(seg(0.5, 0.5, 0.5, 0.30, 0.026), solid(INK))     # minute
+    cv.paint(seg(0.5, 0.5, 0.63, 0.57, 0.030), solid(INK))    # hour
+    cv.paint(seg(0.5, 0.5, 0.395, 0.355, 0.013), solid(CORAL))  # second
+    cv.paint(disc(0.5, 0.5, 0.028), solid(CORAL))
 
 
 def ic_faces(cv):
@@ -210,83 +269,104 @@ def ic_faces(cv):
 
 
 def ic_stopwatch(cv):
-    bg(cv, 0x2C3440, 0x171B22)
-    cv.paint(rrect(0.44, 0.06, 0.56, 0.15, 0.02), solid(0xC0C6CE))  # button
-    cv.paint(disc(0.5, 0.56, 0.35), solid(0xAEB6C0))               # chrome ring
-    cv.paint(disc(0.5, 0.56, 0.30), vgrad(0xFFFFFF, 0xE7ECF2, 0.3, 0.85))
-    cv.paint(seg(0.5, 0.56, 0.5, 0.32, 0.03), solid(0xE8434B))     # red hand
-    cv.paint(disc(0.5, 0.56, 0.028), solid(0x2B3242))
+    sky(cv)
+    shadow(cv, 0.5, 0.90, 0.28, 0.05, 120)
+    cv.paint(rrect(0.44, 0.07, 0.56, 0.155, 0.02), solid(0xD9D3C6))    # top button
+    cv.paint(seg(0.5, 0.14, 0.5, 0.20, 0.02), solid(0xD9D3C6))         # stem
+    cv.paint(disc(0.5, 0.56, 0.36), solid(TEAL))                       # teal bezel
+    cv.paint(disc(0.5, 0.56, 0.315), vgrad(0xFBF8F1, 0xEAE4D8, 0.28, 0.86))  # face
+    cv.paint(seg(0.5, 0.56, 0.5, 0.30, 0.026), solid(CORAL))           # red hand
+    cv.paint(disc(0.5, 0.56, 0.028), solid(INK))
 
 
 def ic_counter(cv):
-    bg(cv, 0x2F80ED, 0x1A5FBF)
-    cv.paint(seg(0.5, 0.24, 0.5, 0.76, 0.14), solid(0xFFFFFF))
-    cv.paint(seg(0.24, 0.5, 0.76, 0.5, 0.14), solid(0xFFFFFF))
-    cv.paint(seg(0.5, 0.24, 0.5, 0.76, 0.14), solid(0xFFFFFF, 60))  # (kept simple)
+    sky(cv)
+    shadow(cv, 0.5, 0.81, 0.24, 0.05, 120)
+    cv.paint(disc(0.5, 0.5, 0.30), vgrad(0xFBF8F1, 0xEAE4D8, 0.2, 0.8))  # cream chip
+    cv.paint(seg(0.5, 0.34, 0.5, 0.66, 0.075), solid(AMBER))            # amber plus
+    cv.paint(seg(0.34, 0.5, 0.66, 0.5, 0.075), solid(AMBER))
 
 
 def ic_tone(cv):
-    bg(cv, 0xE0567A, 0xA82F52)
-    cv.paint(disc(0.36, 0.72, 0.11), solid(0xFFFFFF))
-    cv.paint(disc(0.66, 0.64, 0.11), solid(0xFFFFFF))
-    cv.paint(seg(0.455, 0.72, 0.455, 0.26, 0.05), solid(0xFFFFFF))
-    cv.paint(seg(0.755, 0.64, 0.755, 0.2, 0.05), solid(0xFFFFFF))
-    cv.paint(poly([(0.455, 0.22), (0.755, 0.16), (0.755, 0.28), (0.455, 0.34)]),
-             solid(0xFFFFFF))
+    sky(cv)
+    shadow(cv, 0.37, 0.80, 0.11, 0.035, 120)
+    shadow(cv, 0.63, 0.72, 0.11, 0.035, 120)
+    cv.paint(disc(0.37, 0.70, 0.095), solid(CREAM))
+    cv.paint(disc(0.63, 0.62, 0.095), solid(CREAM))
+    cv.paint(seg(0.455, 0.70, 0.455, 0.26, 0.045), solid(CREAM))
+    cv.paint(seg(0.715, 0.62, 0.715, 0.20, 0.045), solid(CREAM))
+    cv.paint(poly([(0.455, 0.22), (0.715, 0.16), (0.715, 0.28), (0.455, 0.34)]),
+             solid(AMBER))                                              # beam accent
 
 
 def ic_tally(cv):
-    bg(cv, 0x3EA36B, 0x217A48)
-    for i, x in enumerate((0.3, 0.42, 0.54, 0.66)):
-        cv.paint(seg(x, 0.28, x, 0.72, 0.035), solid(0xFFFFFF))
-    cv.paint(seg(0.26, 0.72, 0.7, 0.28, 0.035), solid(0xFFFFFF))
+    sky(cv)
+    shadow(cv, 0.5, 0.82, 0.23, 0.05, 120)
+    cv.paint(rrect(0.28, 0.20, 0.72, 0.80, 0.06),
+             vgrad(0xFBF8F1, 0xEAE4D8, 0.2, 0.8))                       # card
+    for y in (0.34, 0.50, 0.66):
+        cv.paint(rrect(0.335, y - 0.048, 0.425, y + 0.038, 0.018), solid(TEAL))  # box
+        cv.paint(seg(0.355, y - 0.004, 0.378, y + 0.022, 0.014), solid(0xFBF8F1))
+        cv.paint(seg(0.378, y + 0.022, 0.412, y - 0.030, 0.014), solid(0xFBF8F1))
+        cv.paint(rrect(0.46, y - 0.018, 0.66, y + 0.014, 0.016), solid(0xC3C0BA))  # line
 
 
 def ic_countdown(cv):
-    bg(cv, 0xE59A3C, 0xB56E1C)
-    # hourglass
-    cv.paint(poly([(0.3, 0.2), (0.7, 0.2), (0.5, 0.5)]), solid(0xFFFFFF))
-    cv.paint(poly([(0.5, 0.5), (0.7, 0.8), (0.3, 0.8)]), solid(0xFFFFFF))
-    cv.paint(seg(0.28, 0.18, 0.72, 0.18, 0.04), solid(0xFFF0D8))
-    cv.paint(seg(0.28, 0.82, 0.72, 0.82, 0.04), solid(0xFFF0D8))
-    cv.paint(poly([(0.42, 0.34), (0.58, 0.34), (0.5, 0.46)]), solid(0xE59A3C))  # sand gap
+    sky(cv)
+    shadow(cv, 0.5, 0.87, 0.20, 0.045, 120)
+    cv.paint(seg(0.30, 0.20, 0.70, 0.20, 0.045), solid(0xE8E2D6))       # top cap
+    cv.paint(seg(0.30, 0.80, 0.70, 0.80, 0.045), solid(0xE8E2D6))       # bottom cap
+    cv.paint(poly([(0.32, 0.22), (0.68, 0.22), (0.5, 0.5)]), solid(0xEAE4D8, 80))
+    cv.paint(poly([(0.5, 0.5), (0.68, 0.78), (0.32, 0.78)]), solid(0xEAE4D8, 80))
+    cv.paint(poly([(0.40, 0.34), (0.60, 0.34), (0.5, 0.47)]), solid(AMBER))    # top sand
+    cv.paint(poly([(0.5, 0.53), (0.635, 0.76), (0.365, 0.76)]), solid(AMBER))  # low sand
+    cv.paint(seg(0.5, 0.47, 0.5, 0.62, 0.012), solid(AMBER))            # falling stream
 
 
 def ic_reaction(cv):
-    bg(cv, 0xF2994A, 0xC26320)
-    cv.paint(poly([(0.56, 0.14), (0.34, 0.54), (0.48, 0.54),
-                   (0.42, 0.86), (0.68, 0.44), (0.52, 0.44)]),
-             vgrad(0xFFF3C4, 0xFFD34E, 0.14, 0.86))
+    sky(cv)
+    cv.paint(disc(0.52, 0.5, 0.34), radial(0.52, 0.5, 0.34, GOLD, GOLD, 80, 0),
+             clip=DISC)                                                 # energy glow
+    cv.paint(poly([(0.58, 0.14), (0.34, 0.54), (0.49, 0.54),
+                   (0.42, 0.86), (0.70, 0.44), (0.53, 0.44)]),
+             vgrad(AMBER_HI, AMBER, 0.14, 0.86))                        # bolt
 
 
 def ic_tip(cv):
-    bg(cv, 0x3EA36B, 0x217A48)
-    cv.paint(disc(0.5, 0.5, 0.32), vgrad(0xFFE98A, 0xE7B84A, 0.2, 0.8))   # coin
-    cv.paint(ring(0.5, 0.5, 0.28, 0.03), solid(0xC79A34))
-    cv.paint(seg(0.5, 0.26, 0.5, 0.74, 0.035), solid(0x8A6A1E))          # $
-    cv.paint(poly([(0.62, 0.36), (0.4, 0.36), (0.38, 0.5), (0.62, 0.5),
-                   (0.6, 0.64), (0.38, 0.64)]), solid(0x8A6A1E))
-    cv.paint(poly([(0.44, 0.4), (0.58, 0.4), (0.58, 0.455), (0.44, 0.455)]), solid(0xF3D77A))
-    cv.paint(poly([(0.42, 0.545), (0.56, 0.545), (0.56, 0.6), (0.42, 0.6)]), solid(0xF3D77A))
+    sky(cv)
+    shadow(cv, 0.5, 0.81, 0.24, 0.05, 130)
+    cv.paint(disc(0.5, 0.5, 0.32), radial(0.42, 0.40, 0.5, 0xFCE08A, 0xD79A2E))  # coin
+    cv.paint(ring(0.5, 0.5, 0.285, 0.028), solid(0xB9842A))            # rim
+    cv.paint(edisc(0.40, 0.36, 0.09, 0.05), solid(0xFFFFFF, 80),
+             clip=disc(0.5, 0.5, 0.30))                                 # shine
+    coin = disc(0.5, 0.5, 0.30)
+    arc_stroke(cv, 0.5, 0.42, 0.082, -30, -270, 0.028, 0x8A6320, clip=coin)  # top bowl
+    arc_stroke(cv, 0.5, 0.58, 0.082, -90, 150, 0.028, 0x8A6320, clip=coin)   # bot bowl
+    cv.paint(seg(0.5, 0.27, 0.5, 0.73, 0.024), solid(0x8A6320))        # $ stem (on top)
 
 
 def ic_level(cv):
-    bg(cv, 0x8E5AD6, 0x5E33A0)
-    cv.paint(rrect(0.14, 0.4, 0.86, 0.6, 0.08), vgrad(0xF7D774, 0xD9A93C, 0.4, 0.6))  # body
-    cv.paint(rrect(0.32, 0.44, 0.68, 0.56, 0.05), solid(0x2E7D4F))       # vial
-    cv.paint(disc(0.5, 0.5, 0.045), solid(0xBFF3C9))                     # bubble
-    cv.paint(seg(0.42, 0.44, 0.42, 0.56, 0.012), solid(0xBFF3C9))
-    cv.paint(seg(0.58, 0.44, 0.58, 0.56, 0.012), solid(0xBFF3C9))
+    sky(cv)
+    shadow(cv, 0.5, 0.64, 0.33, 0.045, 120)
+    cv.paint(rrect(0.13, 0.41, 0.87, 0.59, 0.05),
+             vgrad(CREAM, CREAM_LO, 0.41, 0.59))                        # body
+    cv.paint(rrect(0.34, 0.445, 0.66, 0.555, 0.04), solid(0x2E5E56))    # vial well
+    cv.paint(rrect(0.35, 0.45, 0.65, 0.55, 0.035), solid(TEAL))        # vial fluid
+    cv.paint(disc(0.5, 0.5, 0.042), solid(MINT))                       # bubble
+    cv.paint(seg(0.44, 0.455, 0.44, 0.545, 0.010), solid(0xEAF6F1))    # guide lines
+    cv.paint(seg(0.56, 0.455, 0.56, 0.545, 0.010), solid(0xEAF6F1))
 
 
 def ic_flashlight(cv):
-    bg(cv, 0x30363E, 0x171A1F)
-    # beam
-    cv.paint(poly([(0.5, 0.34), (0.86, 0.14), (0.86, 0.54)]), solid(0xFFE27A, 90))
-    cv.paint(rrect(0.14, 0.4, 0.34, 0.6, 0.04), vgrad(0xD6DBE2, 0x9099A3, 0.4, 0.6))  # body
-    cv.paint(poly([(0.34, 0.36), (0.5, 0.42), (0.5, 0.58), (0.34, 0.64)]),
-             vgrad(0xEDF1F6, 0xB9C0C9, 0.36, 0.64))                       # head
-    cv.paint(rrect(0.46, 0.42, 0.52, 0.58, 0.02), solid(0xFFE27A))       # lens
+    sky(cv)
+    cv.paint(poly([(0.52, 0.30), (0.92, 0.10), (0.92, 0.50)]),
+             radial(0.52, 0.30, 0.55, AMBER_HI, AMBER_HI, 150, 0), clip=DISC)  # beam
+    shadow(cv, 0.34, 0.66, 0.13, 0.035, 120)
+    cv.paint(rrect(0.12, 0.42, 0.30, 0.58, 0.03),
+             vgrad(0xE8E2D6, 0xB9B3A6, 0.42, 0.58))                     # body
+    cv.paint(poly([(0.30, 0.37), (0.50, 0.44), (0.50, 0.56), (0.30, 0.63)]),
+             vgrad(CREAM, STEEL, 0.37, 0.63))                           # head
+    cv.paint(rrect(0.47, 0.44, 0.53, 0.56, 0.02), solid(AMBER_HI))     # lens
 
 
 ICONS = {
@@ -301,7 +381,8 @@ def main():
     names = sorted(ICONS.keys())
     with open(OUT_C, "w") as c:
         c.write('/* Generated by tools/gen_app_icons.py -- do not edit by hand.\n'
-                ' * Full-colour app-icon images (LVGL RGB565, over black) for the launcher grid. */\n')
+                ' * Circular, edge-to-edge app-icon images (LVGL RGB565, over black)\n'
+                ' * for the launcher grid: one shared dusk-gradient family. */\n')
         c.write('#include "launcher_icons.h"\n#include <string.h>\n\n')
         for n in names:
             cv = Canvas()
@@ -324,9 +405,9 @@ def main():
     with open(OUT_H, "w") as h:
         h.write('/* Generated by tools/gen_app_icons.py -- do not edit by hand. */\n'
                 '#pragma once\n#include "lvgl.h"\n\n'
-                '/* Full-colour custom app-icon image for an icon-name key, or NULL. */\n'
+                '/* Circular custom app-icon image for an icon-name key, or NULL. */\n'
                 'const lv_image_dsc_t *launcher_app_image(const char *key);\n')
-    print(f"wrote {len(names)} colour icons ({SIZE}x{SIZE} RGB565) to launcher_icons.{{c,h}}")
+    print(f"wrote {len(names)} circular icons ({SIZE}x{SIZE} RGB565) to launcher_icons.{{c,h}}")
 
 
 if __name__ == "__main__":

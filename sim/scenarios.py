@@ -152,9 +152,13 @@ def home_header_lit(w, rgb):
 # and require it be strongly coloured -- proving the toggle rebuilt as a grid,
 # independent of which palette colour the name hashes to.
 def home_toggled_to_grid(w, rgb):
-    r, g, b = px(w, rgb, 75, 118)
-    sat = max(r, g, b) - min(r, g, b)
-    return sat > 80, f"first grid icon not saturated ({r},{g},{b}, sat={sat})"
+    # After toggling to grid, the first cell (counter) draws its cream chip and
+    # amber plus at centre -- a bright illustration that stands well clear of the
+    # muted dusk-gradient tile background, so brightness there proves the custom
+    # icon rendered, not just that a coloured well appeared.
+    r, g, b = px(w, rgb, 101, 161)
+    bright = max(r, g, b)
+    return bright > 170, f"first grid icon illustration not lit ({r},{g},{b}, max={bright})"
 
 
 SCENARIOS = [
