@@ -53,6 +53,8 @@ FRAMES = [
     ("countdown",    ["run", "apps/countdown.lua", ":", "sleep", "0.4"]),
     ("stopwatch",    ["run", "apps/stopwatch.lua", ":", "sleep", "0.4"]),
     ("tip",          ["run", "apps/tip.lua", ":", "sleep", "0.4"]),
+    ("level",        ["run", "apps/level.lua", ":", "sleep", "0.4"]),
+    ("tone",         ["run", "apps/tone.lua", ":", "sleep", "0.4"]),
 ]
 
 

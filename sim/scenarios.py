@@ -108,6 +108,20 @@ def clock_shows_time(w, rgb):
     return n > 300, f"time band too dark ({n} bright px) -- rtc not feeding clock"
 
 
+# The sim IMU reads flat, so level.lua's bubble sits centred and green. A
+# regression (imu returns nil, or the level threshold breaks) would leave the
+# centre amber or empty.
+def level_centred_green(w, rgb):
+    r, g, b = px(w, rgb, 184, 236)
+    return (g > 150 and g > r and g > b), f"bubble not green at centre: {r},{g},{b}"
+
+
+# tone.lua's Play button is a solid accent-blue slab at the bottom.
+def tone_play_blue(w, rgb):
+    r, g, b = px(w, rgb, 184, 360)
+    return (b > 150 and b > r and b > g), f"play button not blue: {r},{g},{b}"
+
+
 SCENARIOS = [
     ("flashlight-on",  ["run", "apps/flashlight.lua"], flashlight_on),
     ("flashlight-off", ["run", "apps/flashlight.lua", ":", "tap", "184", "224"], flashlight_off),
@@ -118,6 +132,8 @@ SCENARIOS = [
     ("reaction-green", ["run", "apps/reaction.lua",
                         ":", "tap", "184", "248", ":", "sleep", "4.5"], reaction_green),
     ("clock-shows-time", ["run", "apps/clock.lua", ":", "sleep", "0.3"], clock_shows_time),
+    ("level-centred",  ["run", "apps/level.lua", ":", "sleep", "0.3"], level_centred_green),
+    ("tone-play-blue", ["run", "apps/tone.lua", ":", "sleep", "0.3"], tone_play_blue),
 ]
 
 

@@ -50,6 +50,10 @@ SCENES = [
                    "The number keypad (require('keyboard'))."),
     ("settings",   ["sleep","0.3"],
                    "Set the UI font scale, with a live preview."),
+    ("level",      ["sleep","0.3"],
+                   "Bubble level from the accelerometer."),
+    ("tone",       ["tap","106","244",":","sleep","0.3"],
+                   "Tone generator; slider sets the pitch."),
     ("ui_test",    ["sleep","0.4"],
                    "Shared ui helpers: rows, toggle, page dots."),
 ]
