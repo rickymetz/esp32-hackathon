@@ -276,11 +276,15 @@ def ic_tip(cv):
 
 def ic_flashlight(cv):
     tile(cv, 0x2C3E50)
-    cv.paint(poly([(0.54, 0.27), (0.93, 0.09), (0.93, 0.51)]), solid(0xFFE066))  # beam
-    cv.paint(rrect(0.10, 0.41, 0.32, 0.59, 0.04), solid(WHITE))                   # body
-    cv.paint(poly([(0.30, 0.33), (0.54, 0.42), (0.54, 0.58), (0.30, 0.67)]),
-             solid(WHITE))                                                        # head
-    cv.paint(rrect(0.50, 0.40, 0.56, 0.60, 0.02), solid(A_YELLOW))               # lens
+    # A torch pointing right: barrel -> flared head -> lens -> beam, each part
+    # overlapping the next so it reads as one connected object. The beam is
+    # clipped to the disc so it can't spill into the (black) corners.
+    cv.paint(rrect(0.13, 0.44, 0.42, 0.56, 0.03), solid(WHITE))                   # barrel
+    cv.paint(poly([(0.40, 0.42), (0.60, 0.35), (0.60, 0.65), (0.40, 0.58)]),
+             solid(WHITE))                                                        # head (flares out)
+    cv.paint(rrect(0.575, 0.35, 0.625, 0.65, 0.02), solid(A_YELLOW))            # lens
+    cv.paint(poly([(0.625, 0.40), (0.90, 0.23), (0.90, 0.77), (0.625, 0.60)]),
+             solid(0xFFE066), clip=TILE)                                          # beam
 
 
 def ic_calculator(cv):
