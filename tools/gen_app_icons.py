@@ -357,6 +357,20 @@ def ic_level(cv):
     cv.paint(seg(0.56, 0.455, 0.56, 0.545, 0.010), solid(0xEAF6F1))
 
 
+def ic_metronome(cv):
+    sky(cv)
+    shadow(cv, 0.5, 0.84, 0.27, 0.05, 130)
+    cv.paint(rrect(0.20, 0.79, 0.80, 0.85, 0.02), solid(0xC8B084))       # base plinth
+    body = poly([(0.40, 0.19), (0.60, 0.19), (0.75, 0.81), (0.25, 0.81)])
+    cv.paint(body, vgrad(0xF3EEE4, 0xD8C29A, 0.19, 0.81))               # wooden body
+    cv.paint(poly([(0.44, 0.25), (0.56, 0.25), (0.655, 0.74), (0.345, 0.74)]),
+             vgrad(0x2A3252, 0x1A2038, 0.25, 0.74))                     # scale recess
+    cv.paint(seg(0.5, 0.75, 0.60, 0.14, 0.020), solid(INK))            # pendulum rod
+    cv.paint(rrect(0.512, 0.445, 0.582, 0.500, 0.010), solid(AMBER))   # sliding weight
+    cv.paint(disc(0.60, 0.14, 0.024), solid(AMBER_HI))                  # top finial
+    cv.paint(disc(0.5, 0.75, 0.022), solid(0x8A6320))                  # pivot
+
+
 def ic_flashlight(cv):
     sky(cv)
     cv.paint(poly([(0.52, 0.30), (0.92, 0.10), (0.92, 0.50)]),
@@ -374,6 +388,7 @@ ICONS = {
     "stopwatch": ic_stopwatch, "plus": ic_counter, "audio": ic_tone,
     "list": ic_tally, "hourglass": ic_countdown, "fire": ic_reaction,
     "dollar": ic_tip, "level": ic_level, "flashlight": ic_flashlight,
+    "metronome": ic_metronome,
 }
 
 

@@ -96,7 +96,7 @@ const char *launcher_home_default_icon(const char *basename)
         { "counter",    "plus" },
         { "tally",      "list" },
         { "tone",       "audio" },
-        { "metronome",  "audio" },
+        { "metronome",  "metronome" },
         { "flashlight", "flashlight" },
         { "reaction",   "fire" },
         { "color",      "tint" },
@@ -192,6 +192,62 @@ static void add_toggle(lv_obj_t *screen, launcher_view_t view, lv_event_cb_t on_
 
 /* ---- the list layout (the original) ------------------------------------ */
 
+/* A small leading icon for a list row, following the same image->glyph->letter
+ * fallback chain as the grid tiles, so both views read as the same launcher.
+ * Decorative (non-clickable) so taps still fall through to the row button. */
+#define LIST_ICON 64
+
+static void row_icon(lv_obj_t *row, const launcher_home_app_t *app)
+{
+    const lv_image_dsc_t *img = launcher_app_image(app->icon);
+    if (img) {
+        /* The icon bitmap is a disc baked over black; on the true-black grid the
+         * corners vanish, but on the navy rows they'd read as a dark square. A
+         * corner-clipping circular parent hides them so the disc floats clean. */
+        lv_obj_t *clip = lv_obj_create(row);
+        lv_obj_set_size(clip, LIST_ICON, LIST_ICON);
+        lv_obj_align(clip, LV_ALIGN_LEFT_MID, 14, 0);
+        lv_obj_set_style_radius(clip, LIST_ICON / 2, LV_PART_MAIN);
+        lv_obj_set_style_clip_corner(clip, true, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(clip, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_set_style_border_width(clip, 0, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(clip, 0, LV_PART_MAIN);
+        lv_obj_remove_flag(clip, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_remove_flag(clip, LV_OBJ_FLAG_CLICKABLE);
+
+        lv_obj_t *im = lv_image_create(clip);
+        lv_image_set_src(im, img);
+        lv_obj_set_size(im, LIST_ICON, LIST_ICON);
+        lv_image_set_inner_align(im, LV_IMAGE_ALIGN_STRETCH);  /* scale 120->64 */
+        lv_obj_center(im);
+        lv_obj_remove_flag(im, LV_OBJ_FLAG_CLICKABLE);
+        return;
+    }
+
+    lv_obj_t *av = lv_obj_create(row);
+    lv_obj_set_size(av, LIST_ICON, LIST_ICON);
+    lv_obj_align(av, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_set_style_radius(av, LIST_ICON / 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(av, lv_color_hex(letter_color(app->name)), LV_PART_MAIN);
+    lv_obj_set_style_border_width(av, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(av, 0, LV_PART_MAIN);
+    lv_obj_remove_flag(av, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(av, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t *lbl = lv_label_create(av);
+    const char *glyph = glyph_for(app->icon);
+    if (glyph) {
+        lv_label_set_text(lbl, glyph);
+    } else {
+        char initial[2] = { app->name && app->name[0] ? app->name[0] : '?', '\0' };
+        if (initial[0] >= 'a' && initial[0] <= 'z') initial[0] -= 32;
+        lv_label_set_text(lbl, initial);
+    }
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
+    lv_obj_center(lbl);
+}
+
 static void build_list(lv_obj_t *screen, size_t count, size_t max_visible,
                        launcher_home_get_app_t get_app, void *ctx,
                        lv_event_cb_t on_row_click, lv_event_cb_t on_row_delete,
@@ -223,13 +279,15 @@ static void build_list(lv_obj_t *screen, size_t count, size_t max_visible,
         lv_obj_set_style_radius(row, 12, LV_PART_MAIN);
         wire_launch(row, app.basename, on_row_click, on_row_delete);
 
+        row_icon(row, &app);   /* leftmost inline icon */
+
         lv_obj_t *label = lv_label_create(row);
         lv_label_set_text(label, app.name);
         lv_obj_set_style_text_color(label, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
         lv_obj_set_style_text_font(label, lua_module_lvgl_scaled_builtin_font(32), LV_PART_MAIN);
-        /* Leading-aligned like every ui.row: the review flagged the
-         * centered launcher rows as a second list grammar. */
-        lv_obj_align(label, LV_ALIGN_LEFT_MID, 16, 0);
+        /* Leading-aligned like every ui.row, cleared past the icon: the review
+         * flagged the centered launcher rows as a second list grammar. */
+        lv_obj_align(label, LV_ALIGN_LEFT_MID, 14 + LIST_ICON + 16, 0);
     }
 
     if (count > max_visible) {

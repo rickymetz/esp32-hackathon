@@ -91,6 +91,12 @@ FRAMES = [
     ("home_grid_p2", ["home", "grid",
                         ":", "swipe", "300", "224", "60", "224", "250",
                         ":", "sleep", "0.6"]),
+    # The last grid page carries the custom metronome image alongside the
+    # glyph-avatar fallback tiles (Settings, Color) -- covers both icon paths.
+    ("home_grid_last", ["home", "grid",
+                        ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.4",
+                        ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.4",
+                        ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.6"]),
 ]
 
 

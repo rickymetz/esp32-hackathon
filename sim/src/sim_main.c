@@ -342,6 +342,9 @@ static int app_run(const char *path)
 static const char *const s_fake_apps[] = {
     "Counter", "Clock", "Faces", "Level", "Tone", "Stopwatch",
     "Tally", "Dice", "Countdown", "Reaction", "Tip", "Flashlight",
+    /* Metronome exercises a custom image; Settings/Color fall through to the
+     * glyph avatar, so the home views cover both icon paths. */
+    "Metronome", "Settings", "Color",
 };
 #define SIM_FAKE_APP_COUNT ((int)(sizeof(s_fake_apps) / sizeof(s_fake_apps[0])))
 
