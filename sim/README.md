@@ -140,12 +140,32 @@ turns green) — catching binding/state regressions a blank-check can't.
 sim/scenarios.py
 ```
 
+`sim/golden.py` goes the whole way to a full-frame check: it renders each
+curated app to its canonical settled frame, downscales 4× to a thumbnail
+(box-averaging smooths anti-aliasing), and compares against a committed golden
+under `sim/golden/`. The comparison is perceptual — a thumbnail cell counts as
+changed only past a per-channel tolerance, and a frame fails only if more than
+3% of cells change — so it survives cross-machine render wobble but catches a
+moved widget, a lost label, a theme or colour regression anywhere on screen.
+The thumbnails are ~2 KB each and render in GitHub diffs, so a deliberate update
+is reviewable by eye.
+
+```bash
+sim/golden.py            # compare; exits nonzero on drift
+sim/golden.py --update   # regenerate goldens after an intended visual change
+```
+
+Random- or animation-driven apps (dice, simon, reaction, breathe, metronome)
+aren't golden-tested — their frames aren't deterministic; scenarios.py covers
+those.
+
 ## CI
 
-`.github/workflows/sim.yml` runs exactly that on every PR that touches the sim,
+`.github/workflows/sim.yml` runs all of this on every PR that touches the sim,
 the apps, or the bindings they depend on: it builds the sim on a plain Linux
-runner (no ESP-IDF, no board) and runs `test.sh`, uploading the rendered
-frames as an artifact. The LVGL/Lua checkout is cached between runs.
+runner (no ESP-IDF, no board), runs the unit tests, `test.sh`, the scenario
+assertions and the golden-frame check, and uploads the rendered frames as an
+artifact. The LVGL/Lua checkout is cached between runs.
 
 ## Sanitizers
 
