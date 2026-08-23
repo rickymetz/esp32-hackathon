@@ -864,9 +864,53 @@ built for a sidebar-and-pages layout that does not suit a 368 px screen — pref
 
 ### Layout
 
+Three layout calls, on any object. **Both flex and grid are available** — grid is the
+better tool whenever things must line up in columns, which flex only fakes.
+
+**Flex** — a row or a column:
+
 ```lua
-list:set_flex({ flow = "column", pad_row = 10 })
+list:set_flex({
+    flow = "column",     -- row · column · row_wrap · column_wrap
+                         --   row_reverse · row_wrap_reverse
+    main = "start",      -- along the flow:   start · end · center
+    cross = "center",    -- across the flow:    space_evenly · space_around
+    track = "start",     --   between wrapped tracks:  space_between
+    pad_row = 16,        -- gap between rows
+    pad_column = 8,      -- gap between columns
+})
 ```
+
+**Grid** — tracks are sizes in pixels, `"content"` (fit the child), or `"fr"` (share the
+leftover space). Place each child yourself; `col`/`row` are **1-based**:
+
+```lua
+panel:set_grid({
+    cols = { "fr", "fr" },        -- two equal columns
+    rows = { 104, 104, "content" },
+    col_align = "stretch",        -- start · end · center · stretch
+    row_align = "start",          --   space_evenly · space_around · space_between
+    pad_row = 16, pad_column = 12,
+})
+
+label:set_grid_cell({ col = 1, row = 1 })
+wide:set_grid_cell({ col = 1, row = 3, col_span = 2 })   -- spans both columns
+```
+
+**Scroll** — only the fields you pass are applied, so you can change one without
+disturbing the others:
+
+```lua
+list:set_scroll({
+    dir = "ver",            -- hor · ver · all · none
+    scrollbar = "auto",     -- off · on · auto · active
+    snap_y = "center",      -- none · start · end · center
+})
+```
+
+That last point matters: an earlier version applied *every* field including the ones you
+omitted, so `set_scroll({ scrollbar = "off" })` on a tileview silently wiped its
+scroll-snap and pages stopped snapping into place.
 
 ### Paging
 

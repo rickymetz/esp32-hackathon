@@ -21,6 +21,11 @@ int lua_lvgl_set_flex(lua_State *L)
     const char *obj_error = NULL;
 
     luaL_checktype(L, 2, LUA_TTABLE);
+    bool has_pad_row = lua_lvgl_has_field(L, 2, "pad_row");
+    bool has_pad_column = lua_lvgl_has_field(L, 2, "pad_column");
+    int pad_row = has_pad_row ? lua_lvgl_get_opt_int_field(L, 2, "pad_row", 0) : 0;
+    int pad_column = has_pad_column ? lua_lvgl_get_opt_int_field(L, 2, "pad_column", 0) : 0;
+
     flow_text = lua_lvgl_get_opt_string_field(L, 2, "flow");
     main_text = lua_lvgl_get_opt_string_field(L, 2, "main");
     cross_text = lua_lvgl_get_opt_string_field(L, 2, "cross");
@@ -43,6 +48,19 @@ int lua_lvgl_set_flex(lua_State *L)
     }
     lv_obj_set_flex_flow(obj, flow);
     lv_obj_set_flex_align(obj, main_align, cross_align, track_align);
+    /* Gap between tracks. LVGL keeps these as style properties rather than
+     * flex ones, but every caller here reached for set_flex{pad_row=...}
+     * because that is where the gap obviously belongs -- and the field was
+     * being silently dropped, so seven call sites (ui.list and ui.picker
+     * among them) were laying out tighter than their author asked for.
+     * Honour it here instead of correcting seven callers and every app
+     * written against them. */
+    if (has_pad_row) {
+        lv_obj_set_style_pad_row(obj, pad_row, 0);
+    }
+    if (has_pad_column) {
+        lv_obj_set_style_pad_column(obj, pad_column, 0);
+    }
     lua_lvgl_unlock();
     lua_pushboolean(L, 1);
     return 1;

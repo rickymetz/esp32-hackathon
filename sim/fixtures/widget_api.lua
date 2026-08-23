@@ -75,4 +75,21 @@ try("canvas:fill_bg",          function() cv:fill_bg("#000000", 255) end)
 try("canvas:set_px",           function() cv:set_px(1, 1, "#FF0000", 255) end)
 try("canvas:get_px",           function() cv:get_px(1, 1) end)
 
+
+
+-- Layout: every option the contract's Layout section documents.
+local panel = lvgl.container(scr, { w = 200, h = 200 })
+try("set_flex full",  function()
+    panel:set_flex({ flow = "column", main = "start", cross = "center",
+                     track = "start", pad_row = 16, pad_column = 8 })
+end)
+try("set_grid",       function()
+    panel:set_grid({ cols = { "fr", "fr" }, rows = { 104, 104, "content" },
+                     col_align = "stretch", row_align = "start",
+                     pad_row = 16, pad_column = 12 })
+end)
+local cell = lvgl.label(panel, { text = "c" })
+try("set_grid_cell",  function() cell:set_grid_cell({ col = 1, row = 1 }) end)
+try("set_grid_cell span", function() cell:set_grid_cell({ col = 1, row = 3, col_span = 2 }) end)
+try("set_scroll",     function() panel:set_scroll({ dir = "ver", scrollbar = "auto", snap_y = "center" }) end)
 print("WAPI done")
