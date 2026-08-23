@@ -38,10 +38,47 @@ static void clock_reset_default(void)
     s_clock.wday = 6;    s_clock.set = true;
 }
 
+/* Mutable IMU / battery readings. Default to a board lying flat and still on
+ * external power; the `accel`/`gyro`/`battery` sim commands overwrite them so
+ * tilt, motion, and low-battery UI paths are testable board-free. */
+static double s_ax = 0.0, s_ay = 0.0, s_az = 1.0;
+static double s_gx = 0.0, s_gy = 0.0, s_gz = 0.0;
+static int    s_bat_pct = 76;        /* <0 => "gauge not ready" */
+static double s_bat_volts = 4.05;
+static bool   s_bat_charging = false;
+static bool   s_bat_external = true;
+
+static void sensors_reset_default(void)
+{
+    s_ax = 0.0; s_ay = 0.0; s_az = 1.0;
+    s_gx = 0.0; s_gy = 0.0; s_gz = 0.0;
+    s_bat_pct = 76; s_bat_volts = 4.05;
+    s_bat_charging = false; s_bat_external = true;
+}
+
 void sim_sensors_reset(void)
 {
     clock_reset_default();
+    sensors_reset_default();
 }
+
+/* ---- sim-only setters (driven by sim_main.c command verbs) ---- */
+
+void sim_sensors_set_accel(double x, double y, double z) { s_ax = x; s_ay = y; s_az = z; }
+void sim_sensors_set_gyro(double x, double y, double z)  { s_gx = x; s_gy = y; s_gz = z; }
+
+void sim_sensors_set_battery(int pct, bool charging, bool external)
+{
+    s_bat_pct = pct;
+    s_bat_charging = charging;
+    s_bat_external = external;
+    /* Track a plausible voltage with the charge so battery.volts moves too. */
+    if (pct >= 0) {
+        s_bat_volts = 3.30 + (double)pct / 100.0 * 0.90;   /* ~3.3V empty .. 4.2V full */
+    }
+}
+
+void sim_sensors_set_rtc_unset(void) { s_clock.set = false; }
 
 /* ---- rtc ---- */
 
@@ -113,17 +150,17 @@ esp_err_t app_sensors_rtc_set_tm(int year, int mon, int mday,
 
 static int l_imu_accel(lua_State *L)
 {
-    lua_pushnumber(L, 0.0);   /* x */
-    lua_pushnumber(L, 0.0);   /* y */
-    lua_pushnumber(L, 1.0);   /* z -- gravity, board face-up: |a| = 1 g */
+    lua_pushnumber(L, s_ax);
+    lua_pushnumber(L, s_ay);
+    lua_pushnumber(L, s_az);  /* default (0,0,1): board face-up, |a| = 1 g */
     return 3;
 }
 
 static int l_imu_gyro(lua_State *L)
 {
-    lua_pushnumber(L, 0.0);
-    lua_pushnumber(L, 0.0);
-    lua_pushnumber(L, 0.0);
+    lua_pushnumber(L, s_gx);
+    lua_pushnumber(L, s_gy);
+    lua_pushnumber(L, s_gz);
     return 3;
 }
 
@@ -143,10 +180,19 @@ static int luaopen_imu(lua_State *L) { luaL_newlib(L, imu_funcs); return 1; }
 
 /* ---- battery ---- */
 
-static int l_bat_percent(lua_State *L)  { lua_pushinteger(L, 76); return 1; }
-static int l_bat_volts(lua_State *L)    { lua_pushnumber(L, 4.05); return 1; }
-static int l_bat_charging(lua_State *L) { lua_pushboolean(L, 0); return 1; }
-static int l_bat_external(lua_State *L) { lua_pushboolean(L, 1); return 1; }
+static int l_bat_percent(lua_State *L)
+{
+    if (s_bat_pct < 0) {          /* mirror the device's un-settled gauge */
+        lua_pushnil(L);
+        lua_pushliteral(L, "gauge not ready");
+        return 2;
+    }
+    lua_pushinteger(L, s_bat_pct);
+    return 1;
+}
+static int l_bat_volts(lua_State *L)    { lua_pushnumber(L, s_bat_volts); return 1; }
+static int l_bat_charging(lua_State *L) { lua_pushboolean(L, s_bat_charging); return 1; }
+static int l_bat_external(lua_State *L) { lua_pushboolean(L, s_bat_external); return 1; }
 
 static const luaL_Reg bat_funcs[] = {
     {"percent", l_bat_percent},

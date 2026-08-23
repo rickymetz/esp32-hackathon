@@ -37,6 +37,7 @@ static int  s_state = WIFI_OFF;
 static int  s_polls_left = 0;
 static bool s_have_creds = false;
 static bool s_time_synced = false;
+static bool s_will_fail = false;      /* set by the `wifi fail` sim command */
 static char s_ip[16] = {0};
 
 void sim_wifi_reset(void)
@@ -45,8 +46,13 @@ void sim_wifi_reset(void)
     s_polls_left = 0;
     s_have_creds = false;
     s_time_synced = false;
+    s_will_fail = false;
     s_ip[0] = '\0';
 }
+
+/* sim-only: choose whether the next connect resolves to connected or failed
+ * (the device's "wrong password, gave up after five tries" path). */
+void sim_wifi_set_outcome(bool succeed) { s_will_fail = !succeed; }
 
 static void become_connected(void)
 {
@@ -91,7 +97,11 @@ static int l_wifi_status(lua_State *L)
             s_polls_left--;
         }
         if (s_polls_left == 0) {
-            become_connected();
+            if (s_will_fail) {
+                s_state = WIFI_FAILED;   /* gave up (e.g. wrong password) */
+            } else {
+                become_connected();
+            }
         }
     }
     switch (s_state) {

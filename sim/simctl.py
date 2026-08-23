@@ -16,6 +16,18 @@ works here unchanged:
   type <text>                      drive require("keyboard") text entry, then OK
   typenum <digits>                 drive the number keypad, then OK
 
+Fake-sensor injection (there is no such thing on the real board -- these set
+the sim's stub readings so degraded/dynamic UI paths are testable). Issue them
+BEFORE `run` to affect an app's load-time read, or after `run` for apps that
+poll on a timer:
+
+  accel <x> <y> <z>                set the IMU accel (g); e.g. 0.5 0 0.866 = 30deg
+  gyro <x> <y> <z>                 set the IMU gyro (deg/s)
+  battery <pct> [charging] [ext]   set the gauge; pct -1 => "gauge not ready"
+  rtc unset                        make rtc.now() report "rtc not set"
+  rtc set <y> <mo> <d> <h> <mi> <s> [wday]   set the wall clock
+  wifi ok | wifi fail              how the next wifi.connect() resolves
+
 `type`/`typenum` are simctl-side macros that expand to taps on the on-screen
 keyboard (opened by the app first). They assume the sim's keyboard layout
 (voice unavailable, so no mic key); `type` handles A-Z, space, and the
@@ -24,6 +36,8 @@ YZ.,-' punctuation, following the keyboard's auto-capitalisation.
 Example:
   sim/simctl.py run apps/counter.lua : sleep 1 : tap 184 224 : shot out.png
   sim/simctl.py run apps/tip.lua : tap 184 130 : typenum 4250 : shot tip.png
+  sim/simctl.py run apps/level.lua : accel 0.5 0 0.866 : sleep 0.2 : shot tilt.png
+  sim/simctl.py rtc unset : run apps/clock.lua : shot noclock.png
 
 Options:
   --sdroot DIR   SD-card root that app/font paths resolve against

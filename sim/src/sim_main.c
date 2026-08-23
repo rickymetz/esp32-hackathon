@@ -27,6 +27,16 @@
  * driven and have no such entry point; the stubs add one for determinism). */
 void sim_wifi_reset(void);
 void sim_sensors_reset(void);
+
+/* Sim-only state injectors, driven by the accel/gyro/battery/rtc/wifi verbs so
+ * degraded and dynamic paths (tilt, low battery, rtc-not-set, wifi-failed) are
+ * testable without a board. */
+void sim_sensors_set_accel(double x, double y, double z);
+void sim_sensors_set_gyro(double x, double y, double z);
+void sim_sensors_set_battery(int pct, bool charging, bool external);
+void sim_sensors_set_rtc_unset(void);
+esp_err_t app_sensors_rtc_set_tm(int y, int mo, int d, int h, int mi, int s, int wday);
+void sim_wifi_set_outcome(bool succeed);
 #include "sim_display.h"
 #include "sim_input.h"
 #include "lv_font_lexend.h"
@@ -108,8 +118,12 @@ static int setup_state(lua_State *L)
     app_button_reset(L);
     app_voice_reset(L);
     app_audio_reset(L);
-    sim_wifi_reset();
-    sim_sensors_reset();
+    /* NB: sensor/wifi state is NOT reset here -- only in teardown_state (below)
+     * and at process start (static defaults). That lets an injection verb run
+     * BEFORE `run` (e.g. `battery 5 : run clock`) survive into the app's
+     * load-time read; post-run injection still works for apps that poll on a
+     * timer. Each sim invocation is a fresh process, so nothing leaks across
+     * separate test/scenario runs. */
     app_sandbox_apply(L);
     app_sandbox_install_hook(L);
     return 0;
@@ -375,6 +389,47 @@ static void exec_cmd(int argc, char **argv)
             s_exit_code = 1;
         } else {
             printf("CHECK_OK %s (%d+ colors)\n", argv[1], colors);
+        }
+    } else if (!strcmp(cmd, "accel")) {
+        /* accel <x> <y> <z> in g -- set the fake IMU reading (tilt tests). */
+        if (!need(argc, 4, "accel")) return;
+        sim_sensors_set_accel(atof(argv[1]), atof(argv[2]), atof(argv[3]));
+        printf("ACCEL_OK %s %s %s\n", argv[1], argv[2], argv[3]);
+    } else if (!strcmp(cmd, "gyro")) {
+        if (!need(argc, 4, "gyro")) return;
+        sim_sensors_set_gyro(atof(argv[1]), atof(argv[2]), atof(argv[3]));
+        printf("GYRO_OK %s %s %s\n", argv[1], argv[2], argv[3]);
+    } else if (!strcmp(cmd, "battery")) {
+        /* battery <pct|-1> [charging] [external] -- -1 => "gauge not ready". */
+        if (!need(argc, 2, "battery")) return;
+        int pct = atoi(argv[1]);
+        bool charging = argc >= 3 ? atoi(argv[2]) != 0 : false;
+        bool external = argc >= 4 ? atoi(argv[3]) != 0 : (pct >= 0 && charging);
+        sim_sensors_set_battery(pct, charging, external);
+        printf("BATTERY_OK %d\n", pct);
+    } else if (!strcmp(cmd, "rtc")) {
+        /* rtc unset | rtc set <y> <mo> <d> <h> <mi> <s> [wday] */
+        if (!need(argc, 2, "rtc")) return;
+        if (!strcmp(argv[1], "unset")) {
+            sim_sensors_set_rtc_unset();
+            printf("RTC_OK unset\n");
+        } else if (!strcmp(argv[1], "set") && need(argc, 8, "rtc set")) {
+            int wday = argc >= 9 ? atoi(argv[8]) : 0;
+            app_sensors_rtc_set_tm(atoi(argv[2]), atoi(argv[3]), atoi(argv[4]),
+                                   atoi(argv[5]), atoi(argv[6]), atoi(argv[7]), wday);
+            printf("RTC_OK set\n");
+        } else {
+            fprintf(stderr, "rtc: expected 'unset' or 'set <y> <mo> <d> <h> <mi> <s> [wday]'\n");
+        }
+    } else if (!strcmp(cmd, "wifi")) {
+        /* wifi ok | wifi fail -- how the next connect() resolves. */
+        if (!need(argc, 2, "wifi")) return;
+        if (!strcmp(argv[1], "ok")) {
+            sim_wifi_set_outcome(true);  printf("WIFI_OK ok\n");
+        } else if (!strcmp(argv[1], "fail")) {
+            sim_wifi_set_outcome(false); printf("WIFI_OK fail\n");
+        } else {
+            fprintf(stderr, "wifi: expected 'ok' or 'fail'\n");
         }
     } else {
         fprintf(stderr, "unknown command: %s\n", cmd);

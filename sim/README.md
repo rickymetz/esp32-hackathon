@@ -35,7 +35,23 @@ You can also call the binary directly:
 
 Verbs: `run <app.lua>`, `stop`, `tap x y`, `swipe x0 y0 x1 y1 [ms]`,
 `pwr [down|up|long]` (inject the PWR button — quick click by default),
-`sleep <seconds>`, `shot <out.png>`.
+`sleep <seconds>`, `shot <out.png>`, `check <out.png>`.
+
+**Fake-sensor injection.** The board has no such controls; these set the sim's
+stub readings so degraded and dynamic UI paths — a tilted level, a low battery,
+an unset clock, a failed connection — become reproducible without hardware.
+Issue them *before* `run` to reach an app's load-time read, or *after* `run` for
+apps that poll on a timer (each sim invocation is a fresh process, so nothing
+leaks between runs):
+
+| Verb | Effect |
+| --- | --- |
+| `accel x y z` | set the IMU acceleration in g (e.g. `0.5 0 0.866` ≈ 30° tilt) |
+| `gyro x y z` | set the IMU angular rate in °/s |
+| `battery pct [charging] [ext]` | set the gauge; `pct` `-1` → "gauge not ready" |
+| `rtc unset` | make `rtc.now()` report `"rtc not set"` |
+| `rtc set y mo d h mi s [wday]` | set the wall clock |
+| `wifi ok` / `wifi fail` | how the next `wifi.connect()` resolves |
 
 Options: `--sdroot DIR` sets the SD-card root that app and `font_load` paths
 resolve against (default: repo root). `--timeout SECONDS` sets the per-app

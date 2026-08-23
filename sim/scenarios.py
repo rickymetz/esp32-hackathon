@@ -124,6 +124,14 @@ def tone_play_blue(w, rgb):
     return (b > 150 and b > r and b > g), f"play button not blue: {r},{g},{b}"
 
 
+# Inject a 30deg tilt (accel 0.5,0,0.866): the bubble must LEAVE the centre, so
+# the vial centre goes dark. This exercises the `accel` injection command and
+# the tilt path that a flat sim could never reach.
+def level_tilted_off_centre(w, rgb):
+    r, g, b = px(w, rgb, 184, 214)
+    return (g < 90 and r < 90), f"centre still lit after tilt: {r},{g},{b}"
+
+
 SCENARIOS = [
     ("flashlight-on",  ["run", "apps/flashlight.lua"], flashlight_on),
     ("flashlight-off", ["run", "apps/flashlight.lua", ":", "tap", "184", "224"], flashlight_off),
@@ -135,6 +143,8 @@ SCENARIOS = [
                         ":", "tap", "184", "248", ":", "sleep", "4.5"], reaction_green),
     ("clock-shows-time", ["run", "apps/clock.lua", ":", "sleep", "0.3"], clock_shows_time),
     ("level-centred",  ["run", "apps/level.lua", ":", "sleep", "0.3"], level_centred_green),
+    ("level-tilted",   ["run", "apps/level.lua", ":", "accel", "0.5", "0", "0.866",
+                        ":", "sleep", "0.3"], level_tilted_off_centre),
     ("tone-play-blue", ["run", "apps/tone.lua", ":", "sleep", "0.3"], tone_play_blue),
 ]
 
