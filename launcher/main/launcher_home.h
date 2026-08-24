@@ -59,11 +59,13 @@ typedef enum {
  * top-right corner switches between them via `on_toggle` (CLICKED).
  *
  * When `on_row_click` is non-NULL each app row/tile is wired for interaction: it
- * gets `on_row_click` (CLICKED) with user_data set to a strdup of the app's
- * basename, and `on_row_delete` (DELETE) to free that copy when LVGL deletes it.
- * `on_refresh` (CLICKED) is attached to the Refresh control, and `on_toggle`
- * (CLICKED) to the view toggle, when non-NULL. Pass NULL for the callbacks (the
- * simulator) to render a non-interactive screen.
+ * gets `on_row_click` (SHORT_CLICKED -- so a long-press does not also launch)
+ * with user_data set to a strdup of the app's basename, and `on_row_delete`
+ * (DELETE) to free that copy when LVGL deletes it. `on_row_long_press`
+ * (LONG_PRESSED), when non-NULL, gets the same basename copy -- the launcher
+ * uses it to open the app-info sheet. `on_refresh` (CLICKED) is attached to the
+ * Refresh control, and `on_toggle` (CLICKED) to the view toggle, when non-NULL.
+ * Pass NULL for the callbacks (the simulator) to render a non-interactive screen.
  *
  * Pure LVGL: the caller holds any display lock and owns the screen lifecycle.
  */
@@ -72,5 +74,17 @@ void launcher_home_build(lv_obj_t *screen, size_t count, bool sd_mounted,
                          launcher_home_get_app_t get_app, void *ctx,
                          lv_event_cb_t on_row_click,
                          lv_event_cb_t on_row_delete,
+                         lv_event_cb_t on_row_long_press,
                          lv_event_cb_t on_refresh,
                          lv_event_cb_t on_toggle);
+
+/*
+ * Build the app-info sheet onto `screen` (caller-created, black, will load):
+ * the app's icon, its name, a `detail` line (e.g. size), and an armed Delete
+ * plus a Cancel. `on_delete` (CLICKED) fires only after a 400ms arm delay (the
+ * sanctioned destructive-action pattern); `on_cancel` (CLICKED) dismisses. Both
+ * may be NULL (the simulator renders it non-interactive). Pure LVGL.
+ */
+void launcher_home_app_sheet(lv_obj_t *screen, const launcher_home_app_t *app,
+                             const char *detail,
+                             lv_event_cb_t on_delete, lv_event_cb_t on_cancel);

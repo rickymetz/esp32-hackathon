@@ -747,9 +747,27 @@ static void view_toggle_clicked(lv_event_t *e)
     xSemaphoreGive(s_app_mutex);
 }
 
-/* Adapts app_registry to launcher_home_build's get_app callback. The static
- * app_entry_t is consumed by the builder (label text copied, basename strdup'd)
- * before the next call, so reusing it across rows is safe on the UI task. */
+/* Fill a launcher_home_app_t view from a registry entry. `icon_buf` backs the
+ * folder-app icon path (a folder app may ship apps/<id>/icon.bin; launcher_home
+ * only uses it if the file exists, so a folder app without one falls back to a
+ * glyph). Shared by the home rows and the app-info sheet. */
+static void fill_home_app(const app_entry_t *app, launcher_home_app_t *out,
+                          char *icon_buf, size_t icon_buf_sz)
+{
+    out->name = app->name;
+    out->basename = app->id;   /* the stable RUN/DELETE identity, folder or flat */
+    out->icon = launcher_home_default_icon(app->id);
+    if (app->in_folder && icon_buf &&
+        snprintf(icon_buf, icon_buf_sz, "D:/apps/%s/icon.bin", app->id) < (int)icon_buf_sz) {
+        out->icon_path = icon_buf;
+    } else {
+        out->icon_path = NULL;
+    }
+}
+
+/* Adapts app_registry to launcher_home_build's get_app callback. The statics
+ * are consumed by the builder (label text copied, basename strdup'd) before the
+ * next call, so reusing them across rows is safe on the UI task. */
 static bool launcher_home_get_app(size_t index, launcher_home_app_t *out, void *ctx)
 {
     (void)ctx;
@@ -758,19 +776,80 @@ static bool launcher_home_get_app(size_t index, launcher_home_app_t *out, void *
     if (!app_registry_get_copy(index, &app)) {
         return false;
     }
-    out->name = app.name;
-    out->basename = app.id;   /* the stable RUN/DELETE identity, folder or flat */
-    out->icon = launcher_home_default_icon(app.id);
-    /* A folder app may ship its own icon at apps/<id>/icon.bin; point the home
-     * screen at it via the D: card FS. launcher_home only uses it if the file
-     * exists, so a folder app without an icon just falls back to a glyph. */
-    if (app.in_folder &&
-        snprintf(icon_path, sizeof(icon_path), "D:/apps/%s/icon.bin", app.id) < (int)sizeof(icon_path)) {
-        out->icon_path = icon_path;
-    } else {
-        out->icon_path = NULL;
-    }
+    fill_home_app(&app, out, icon_path, sizeof(icon_path));
     return true;
+}
+
+/* ---- app-info sheet (long-press a home app) ---------------------------- */
+
+static void build_launcher_ui(void);
+static lv_obj_t *s_sheet_screen;             /* the sheet, over the home screen */
+static char s_sheet_id[APP_ID_MAX];          /* which app the open sheet acts on */
+
+/* Cancel: drop the sheet, return to the (still-live) home screen. */
+static void sheet_cancel_cb(lv_event_t *e)
+{
+    (void)e;
+    bsp_display_lock(0);
+    if (s_launcher_screen) lv_screen_load(s_launcher_screen);
+    if (s_sheet_screen) { lv_obj_delete(s_sheet_screen); s_sheet_screen = NULL; }
+    bsp_display_unlock();
+}
+
+/* Delete: remove the app from the card, then rebuild the home list fresh. */
+static void sheet_delete_cb(lv_event_t *e)
+{
+    (void)e;
+    app_registry_delete_app(s_sheet_id);     /* unlink + rescan under the lock */
+
+    lv_obj_t *old_home = s_launcher_screen;
+    lv_obj_t *sheet = s_sheet_screen;
+    s_sheet_screen = NULL;
+    build_launcher_ui();                      /* creates + loads a new home screen */
+
+    bsp_display_lock(0);
+    if (old_home && old_home != s_launcher_screen) lv_obj_delete(old_home);
+    if (sheet) lv_obj_delete(sheet);
+    bsp_display_unlock();
+}
+
+/* Long-press a home row/tile: open the app-info sheet for it. */
+static void app_row_long_pressed(lv_event_t *e)
+{
+    const char *id = (const char *)lv_event_get_user_data(e);
+    if (id == NULL) return;
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    bool running = (s_app_task != NULL);
+    xSemaphoreGive(s_app_mutex);
+    if (running) return;                      /* never manage apps while one runs */
+    if (s_sheet_screen != NULL) return;       /* a sheet is already open */
+
+    app_entry_t match;
+    if (!app_registry_find_by_id(id, &match)) return;
+
+    /* Detail line: the code file's size, and "Folder" for a folder app. */
+    char detail[64] = "";
+    struct stat st;
+    if (stat(match.path, &st) == 0) {
+        double kb = (double)st.st_size / 1024.0;
+        snprintf(detail, sizeof(detail), "%s%.1f KB",
+                 match.in_folder ? "Folder app  -  " : "", kb);
+    }
+
+    snprintf(s_sheet_id, sizeof(s_sheet_id), "%s", match.id);
+    static char icon_path[APP_PATH_MAX];
+    launcher_home_app_t view;
+    fill_home_app(&match, &view, icon_path, sizeof(icon_path));
+
+    bsp_display_lock(0);
+    s_sheet_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_sheet_screen, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_sheet_screen, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_sheet_screen, 0, LV_PART_MAIN);
+    launcher_home_app_sheet(s_sheet_screen, &view, detail, sheet_delete_cb, sheet_cancel_cb);
+    lv_screen_load(s_sheet_screen);
+    bsp_display_unlock();
 }
 
 static void build_launcher_ui(void)
@@ -791,8 +870,8 @@ static void build_launcher_ui(void)
      * app-registry accessor and the real row/refresh callbacks. */
     launcher_home_build(s_launcher_screen, count, app_registry_sd_mounted(),
                         MAX_VISIBLE_ROWS, s_view_mode, launcher_home_get_app, NULL,
-                        app_row_clicked, row_data_delete_cb, refresh_clicked,
-                        view_toggle_clicked);
+                        app_row_clicked, row_data_delete_cb, app_row_long_pressed,
+                        refresh_clicked, view_toggle_clicked);
 
     lv_screen_load(s_launcher_screen);
     bsp_display_unlock();

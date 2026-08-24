@@ -121,6 +121,13 @@ FRAMES = [
                         ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.4",
                         ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.4",
                         ":", "swipe", "300", "224", "60", "224", "250", ":", "sleep", "0.6"]),
+
+    # The app-info sheet (long-press-to-delete). "Metronome" exercises the
+    # compiled-image icon in the sheet; the card variant points at a committed
+    # RGB565 .bin, so it also covers the card-icon decode path deterministically
+    # (the fixture the removed home-preview probe used to reach).
+    ("sheet",        ["sheet", "Metronome"]),
+    ("sheet_card",   ["sheet", "Quicktap", "D:/apps/quicktap/icon.bin"]),
 ]
 
 
