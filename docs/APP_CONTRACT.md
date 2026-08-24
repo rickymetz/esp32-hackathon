@@ -34,10 +34,22 @@ scr:load()
 
 That is a complete, working app.
 
-`buffer_lines` sizes LVGL's render buffer, in screen rows. **Copy the 40 and move on** —
-it is a memory-versus-redraw-smoothness trade, 40 suits every app here, and the only reason
-to change it is a full-screen animation that visibly tears (raise it) on a screen that is
-368 px wide.
+**`buffer_lines` does nothing. Copy the 40 and move on.**
+
+It is accepted and ignored. The render buffer belongs to the BSP — `bsp_display_start()`
+allocates it once, in the launcher, before any app exists — and no app can influence it.
+`lvgl.init` collects `buffer_lines`, `tick_ms` and `task_period_ms`, packs them into a
+config struct, and the display service never reads that struct.
+
+This document used to tell you to raise `buffer_lines` if a full-screen animation visibly
+tore. **That advice was wrong** — the value was discarded, so anyone who followed it
+changed nothing and went looking for the fault somewhere else. If you see tearing, say so
+rather than tuning a number that is thrown away; making the buffer app-settable is
+launcher work, and on a board whose largest contiguous internal block is ~73 KB, letting
+one app resize a shared buffer at runtime is a way to destabilise the whole device — which
+is why it is not simply switched on.
+
+The three keys stay accepted so no existing app breaks.
 
 ### The rules that matter
 
