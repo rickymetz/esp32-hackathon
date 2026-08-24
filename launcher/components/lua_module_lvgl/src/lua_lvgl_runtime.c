@@ -63,6 +63,14 @@ esp_err_t lua_lvgl_lock(void)
     if (!s_lvgl.mutex) {
         s_lvgl.mutex = xSemaphoreCreateMutex();
     }
+    /* Created alongside the mutex, and for the same reason: this is the
+     * earliest point both tasks are guaranteed to have passed through, and
+     * the drain loop waits on it from OUTSIDE the lock, so it cannot be
+     * created lazily there. A NULL handle is not fatal -- the drain loop
+     * falls back to a plain sleep. */
+    if (!s_lvgl.event_signal) {
+        s_lvgl.event_signal = xSemaphoreCreateBinary();
+    }
     if (!s_lvgl.mutex) {
         if (display_service_is_started()) {
             display_service_unlock();
