@@ -39,7 +39,7 @@ function M.corner_button(scr, opts)
         align = opts.align, x = vx, y = (opts.y or 0) + inset_y,
         w = vis_w, h = vis_h,
         bg_color = opts.bg_color or "#1E1E28",
-        text_color = opts.text_color or "#9FB4C7",
+        text_color = opts.text_color or "#A0A0AE",   -- caption-grey token
         radius = vis_h // 2,
     })
 
@@ -185,6 +185,8 @@ function M.header(scr, opts)
                 x = 104, y = 26,
                 text_color = "#FFFFFF",
                 font = lvgl.font(40),
+                -- Clamp so a long title can't run under a top-right action.
+                w = 368 - 104 - (opts.action and 112 or 8),
             })
         else
             h.title = M.title(scr, opts.title)
@@ -210,7 +212,13 @@ function M.confirm(opts, cb)
     local scr = lvgl.create_screen()
     scr:set_style({ bg_color = "#000000" })
 
+    -- Idempotent: a real double-tap queues two events before the first
+    -- finish deletes the screen, which would call cb twice (and delete a
+    -- dead screen) -- unacceptable on the one sanctioned destructive path.
+    local done = false
     local function finish(yes)
+        if done then return end
+        done = true
         caller:load()
         scr:delete()
         if cb then cb(yes) end
@@ -323,6 +331,10 @@ function M.row(parent, opts)
     if opts.on_click and not opts.dim then
         h.row:on("clicked", opts.on_click)
     end
+    -- Uniform handle: get()/set_checked() exist on every kind (the contract
+    -- lists them on the row handle), so a caller need not branch on kind.
+    h.get = h.get or function() return nil end
+    h.set_checked = h.set_checked or function() end
     return h
 end
 
@@ -335,7 +347,12 @@ function M.select(parent, opts, cb)
     local disabled = {}
     for _, d in ipairs(opts.disabled or {}) do disabled[d] = true end
 
-    local h = { rows = {}, selected = opts.selected or 1 }
+    -- Clamp a stale/out-of-range selected (e.g. a persisted index for a list
+    -- that has since shrunk) to a valid row -- otherwise nothing renders
+    -- checked and the first tap indexes h.rows[nil], leaving the select inert.
+    local sel = opts.selected or 1
+    if not options[sel] then sel = 1 end
+    local h = { rows = {}, selected = sel }
 
     for i, text in ipairs(options) do
         local row
@@ -352,7 +369,8 @@ function M.select(parent, opts, cb)
                     if opts.on_reselect then opts.on_reselect(i) end
                     return
                 end
-                h.rows[h.selected].set_checked(false)
+                local prev = h.rows[h.selected]
+                if prev then prev.set_checked(false) end
                 h.selected = i
                 row.set_checked(true)
                 if cb then cb(i) end
@@ -372,7 +390,8 @@ function M.select(parent, opts, cb)
     h.get = function() return h.selected end
     h.set = function(i)
         if h.rows[i] and i ~= h.selected then
-            h.rows[h.selected].set_checked(false)
+            local prev = h.rows[h.selected]
+            if prev then prev.set_checked(false) end
             h.selected = i
             h.rows[i].set_checked(true)
         end
@@ -389,7 +408,10 @@ function M.picker(opts, cb)
     local scr = lvgl.create_screen()
     scr:set_style({ bg_color = "#000000" })
 
+    local done = false
     local function finish(result)
+        if done then return end
+        done = true
         caller:load()
         scr:delete()
         if cb then cb(result) end
@@ -443,14 +465,17 @@ function M.dots(scr, tv, opts)
     end
     mark(1)
 
+    local pending
     tv:on("value_changed", function()
         local page = tv:get_active_index()
         if page then mark(page) end
         -- A fast multi-page fling coalesces events and the immediate read
         -- can be stale (dot 1 lit on page 3, caught by harness). Re-read
-        -- once the snap animation has settled; costs one timer slot for
-        -- 400ms per swipe.
-        timer.after(400, function()
+        -- once the snap animation has settled. Coalesce: cancel any prior
+        -- pending re-read so at most one 400ms slot is outstanding.
+        if pending then pending:cancel() end
+        pending = timer.after(400, function()
+            pending = nil
             local settled = tv:get_active_index()
             if settled then mark(settled) end
         end)
@@ -460,18 +485,28 @@ end
 
 -- ----------------------------------------------------------------- toast
 -- Transient status pill, self-dismissing. Costs one timer slot while up.
+local active_toast, active_timer
 function M.toast(scr, text, ms)
     -- 2.5s default (1.5s vanished before a glance landed -- the review's
     -- own screenshot captured no toast at all) and lifted clear of the
     -- page dots instead of covering the only paging affordance.
+    --
+    -- One toast at a time: replace any live one, so rapid triggers (e.g.
+    -- repeated taps on a disabled select row) can't stack 16 pills and
+    -- exhaust the timer budget, and a pill can't outlive a torn-down screen.
+    if active_timer then active_timer:cancel(); active_timer = nil end
+    if active_toast then pcall(function() active_toast:delete() end); active_toast = nil end
     local pill = lvgl.button(scr, {
         text = text,
         align = "bottom_mid", y = -48,
         w = 300, h = 72,
         bg_color = "#24303C", text_color = "#FFFFFF", radius = 36,
     })
-    timer.after(ms or 2500, function()
-        pill:delete()
+    active_toast = pill
+    active_timer = timer.after(ms or 2500, function()
+        active_timer = nil
+        if active_toast == pill then active_toast = nil end
+        pcall(function() pill:delete() end)
     end)
     return pill
 end
@@ -487,6 +522,7 @@ function M.stepper(parent, opts, cb)
     local max = opts.max or 99
     local step = opts.step or 1
     local value = opts.value or min
+    if value < min then value = min elseif value > max then value = max end
     local fmt = opts.label or "%d"
 
     h.row = lvgl.container(parent, {
@@ -598,6 +634,9 @@ function M.fill(opts, on_change, done)
         align = "center", y = 20,
         w = 300, h = 300,
         arc_width = 28,
+        -- Without these the value band and its track render the same hue, so
+        -- 1% looks identical to 100% -- the one thing this control exists to show.
+        line_color = "#2F80ED", track_color = "#1E1E28",
     })
 
     local label = lvgl.label(scr, {
@@ -622,8 +661,11 @@ function M.fill(opts, on_change, done)
     -- (on_change) -- so leaving commits by nature, and no glyph lies. The
     -- old x-that-saved was the review's sharpest semantics finding: the
     -- discard glyph must never commit.
+    local closed = false
     M.header(scr, { title = opts.title,
                     on_back = function()
+                        if closed then return end
+                        closed = true
                         local v = arc:get_value()
                         caller:load()
                         scr:delete()
@@ -638,7 +680,10 @@ end
 -- The primary action button every app hand-rolls, at the design's tap size
 -- (>= ~200x100) and palette. kind = "primary" | "secondary" | "danger".
 -- Returns the button widget so :on()/:set_text() compose directly.
-local BTN_BG = { primary = "#2F80ED", secondary = "#3A3A44", danger = "#C0392B" }
+-- Palette tokens (design guide): secondary/raised = #1E1E28, destructive =
+-- #B3261E (the same red ui.confirm uses -- danger buttons should route through
+-- ui.confirm, but if used, they match).
+local BTN_BG = { primary = "#2F80ED", secondary = "#1E1E28", danger = "#B3261E" }
 function M.button(parent, opts)
     opts = opts or {}
     local btn = lvgl.button(parent, {
@@ -663,7 +708,7 @@ function M.list(parent, opts)
         w = opts.w or 368, h = opts.h or 448,
         bg_opa = 0, border_width = 0, pad = opts.pad or 12,
     })
-    c:set_flex({ flow = "column", pad_row = opts.pad_row or 12 })
+    c:set_flex({ flow = "column", pad_row = opts.pad_row or 16 })   -- guide: 16px between rows
     c:set_scroll({ scrollbar = opts.scrollbar or "active" })
     return c
 end

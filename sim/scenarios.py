@@ -52,6 +52,20 @@ def px(w, rgb, x, y):
     return rgb[o], rgb[o + 1], rgb[o + 2]
 
 
+def bright_count(w, rgb, x0, y0, x1, y1, thresh=170):
+    """Count pixels in a box whose channels are all >= thresh -- a
+    text-agnostic 'something bright rendered here' probe, for asserting a
+    readout drew (e.g. the clock's big digits) without pinning a stroke pixel."""
+    n = 0
+    for y in range(y0, y1):
+        base = y * w * 3
+        for x in range(x0, x1):
+            o = base + x * 3
+            if rgb[o] >= thresh and rgb[o + 1] >= thresh and rgb[o + 2] >= thresh:
+                n += 1
+    return n
+
+
 def run(cmds):
     subprocess.run([SIM, "--sdroot", REPO] + cmds, cwd=REPO, capture_output=True)
 
@@ -85,15 +99,100 @@ def reaction_green(w, rgb):
     return (g > 120 and g > r and g > b), f"pad not green: {r},{g},{b}"
 
 
+# The rtc stub feeds a fixed 14:30; clock.lua renders it as big white digits.
+# If the stub regressed to nil ("rtc not set"), the app degrades to a small
+# message and the big-digit band goes nearly dark -- so a bright-pixel floor
+# in that band proves the clock got a real time.
+def clock_shows_time(w, rgb):
+    n = bright_count(w, rgb, 110, 155, 260, 225)
+    return n > 300, f"time band too dark ({n} bright px) -- rtc not feeding clock"
+
+
+# The mirror of clock_shows_time: with `rtc unset` the hero HH:MM is replaced by
+# a small "--:--", so the big-digit band's ink drops sharply (measured ~630 px
+# vs ~2477 for a real time). Proves the rtc injection reaches the degraded path.
+def clock_unset_dim(w, rgb):
+    n = bright_count(w, rgb, 110, 155, 260, 225)
+    return n < 1400, f"time band still lit ({n} bright px) -- rtc unset not honoured"
+
+
+# The sim IMU reads flat, so level.lua's bubble sits centred and green. A
+# regression (imu returns nil, or the level threshold breaks) would leave the
+# centre amber or empty. Probe the vial centre (CX=184, CY=214).
+def level_centred_green(w, rgb):
+    r, g, b = px(w, rgb, 184, 214)
+    return (g > 150 and g > r and g > b), f"bubble not green at centre: {r},{g},{b}"
+
+
+# tone.lua's Play button is a solid accent-blue slab at the bottom. Probe an
+# off-centre fill pixel -- NOT the horizontal centre, which lands on the
+# "> Play" label (per the sample-away-from-centred-text rule above).
+def tone_play_blue(w, rgb):
+    r, g, b = px(w, rgb, 250, 360)
+    return (b > 150 and b > r and b > g), f"play button not blue: {r},{g},{b}"
+
+
+# Inject a 30deg tilt (accel 0.5,0,0.866): the bubble must LEAVE the centre, so
+# the vial centre goes dark. This exercises the `accel` injection command and
+# the tilt path that a flat sim could never reach.
+def level_tilted_off_centre(w, rgb):
+    r, g, b = px(w, rgb, 184, 214)
+    return (g < 90 and r < 90), f"centre still lit after tilt: {r},{g},{b}"
+
+
+# The launcher home (shared launcher_home_build) draws the white "Apps" header
+# at top centre. A bright band there proves the launcher's own screen builds.
+def home_header_lit(w, rgb):
+    n = bright_count(w, rgb, 120, 25, 250, 70)
+    return n > 200, f"Apps header not rendered ({n} bright px)"
+
+
+# Tapping the header toggle from the list switches to the 2x2 grid, whose tiles
+# carry a saturated colour icon (the list has none). Probe the first tile's icon
+# and require it be strongly coloured -- proving the toggle rebuilt as a grid,
+# independent of which palette colour the name hashes to.
+def home_toggled_to_grid(w, rgb):
+    # Two-point check so a broken toggle (list stays up) can't false-pass: the
+    # first grid tile is bright at its centre AND the point just left of it is
+    # pure black (a tile gap). In list view that left-edge point sits inside a
+    # navy row, so the black-gap test is what actually proves we switched.
+    cr, cg, cb = px(w, rgb, 101, 161)      # tile 1 centre
+    gr, gg, gb = px(w, rgb, 30, 161)       # gap left of tile 1
+    tile_lit = max(cr, cg, cb) > 170
+    gap_black = max(gr, gg, gb) < 16
+    return tile_lit and gap_black, \
+        f"not grid (tile max={max(cr, cg, cb)}, gap max={max(gr, gg, gb)})"
+
+
+def home_back_to_list(w, rgb):
+    # After toggling twice we're back to the list: the point left of where tile 1
+    # sat is now the navy row background (~41), not the black grid gap (0) and not
+    # a bright tile -- so the second toggle actually rebuilt the list.
+    r, g, b = px(w, rgb, 30, 161)
+    m = max(r, g, b)
+    return 16 <= m <= 90, f"not list after round-trip (left-edge max={m})"
+
+
 SCENARIOS = [
     ("flashlight-on",  ["run", "apps/flashlight.lua"], flashlight_on),
     ("flashlight-off", ["run", "apps/flashlight.lua", ":", "tap", "184", "224"], flashlight_off),
     ("color-default",  ["run", "apps/color.lua"], color_default_blue),
     ("color-mixed",    ["run", "apps/color.lua",
-                        ":", "swipe", "200", "236", "320", "236", "300",
-                        ":", "swipe", "200", "364", "66", "364", "300"], color_mixed_orange),
+                        ":", "swipe", "150", "250", "256", "250", "300",   # R -> max
+                        ":", "swipe", "200", "394", "56", "394", "300"],   # B -> min
+                       color_mixed_orange),
     ("reaction-green", ["run", "apps/reaction.lua",
                         ":", "tap", "184", "248", ":", "sleep", "4.5"], reaction_green),
+    ("clock-shows-time", ["run", "apps/clock.lua", ":", "sleep", "0.3"], clock_shows_time),
+    ("clock-unset-dim",  ["rtc", "unset", ":", "run", "apps/clock.lua", ":", "sleep", "0.3"], clock_unset_dim),
+    ("level-centred",  ["run", "apps/level.lua", ":", "sleep", "0.3"], level_centred_green),
+    ("level-tilted",   ["run", "apps/level.lua", ":", "accel", "0.5", "0", "0.866",
+                        ":", "sleep", "0.3"], level_tilted_off_centre),
+    ("tone-play-blue", ["run", "apps/tone.lua", ":", "sleep", "0.3"], tone_play_blue),
+    ("home-header",    ["home"], home_header_lit),
+    ("home-toggle-grid", ["home", ":", "tap", "324", "48", ":", "sleep", "0.3"], home_toggled_to_grid),
+    ("home-toggle-roundtrip", ["home", ":", "tap", "324", "48", ":", "sleep", "0.3",
+                                        ":", "tap", "324", "48", ":", "sleep", "0.3"], home_back_to_list),
 ]
 
 

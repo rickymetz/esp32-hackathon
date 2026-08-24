@@ -17,9 +17,27 @@
 #include "app_timer.h"
 #include "app_button.h"
 #include "app_voice.h"
-#include "sim_sensors.h"
+#include "app_audio.h"
+#include "app_wifi.h"
+#include "app_sensors.h"
 #include "app_sandbox.h"
 #include "lua_module_ui.h"
+#include "launcher_home.h"
+
+/* Sim-only reset hooks (the device wifi/sensors modules are event/register
+ * driven and have no such entry point; the stubs add one for determinism). */
+void sim_wifi_reset(void);
+void sim_sensors_reset(void);
+
+/* Sim-only state injectors, driven by the accel/gyro/battery/rtc/wifi verbs so
+ * degraded and dynamic paths (tilt, low battery, rtc-not-set, wifi-failed) are
+ * testable without a board. */
+void sim_sensors_set_accel(double x, double y, double z);
+void sim_sensors_set_gyro(double x, double y, double z);
+void sim_sensors_set_battery(int pct, bool charging, bool external);
+void sim_sensors_set_rtc_unset(void);
+esp_err_t app_sensors_rtc_set_tm(int y, int mo, int d, int h, int mi, int s, int wday);
+void sim_wifi_set_outcome(bool succeed);
 #include "sim_display.h"
 #include "sim_input.h"
 #include "lv_font_lexend.h"
@@ -100,6 +118,13 @@ static int setup_state(lua_State *L)
     app_timer_reset(L);
     app_button_reset(L);
     app_voice_reset(L);
+    app_audio_reset(L);
+    /* NB: sensor/wifi state is NOT reset here -- only in teardown_state (below)
+     * and at process start (static defaults). That lets an injection verb run
+     * BEFORE `run` (e.g. `battery 5 : run clock`) survive into the app's
+     * load-time read; post-run injection still works for apps that poll on a
+     * timer. Each sim invocation is a fresh process, so nothing leaks across
+     * separate test/scenario runs. */
     app_sandbox_apply(L);
     app_sandbox_install_hook(L);
     return 0;
@@ -157,6 +182,24 @@ static void pump_until_idle(lua_State *L)
         if (sim_input_idle()) break;
     }
     pump_for(L, 120); /* let the release-edge click event run */
+}
+
+/* Same, but with no running app -- drives the bare LVGL handler so injected
+ * taps/swipes reach the launcher home screen (the `home` command), whose
+ * toggle/tiles are LVGL objects with C callbacks, not a Lua app. */
+static void pump_home_input(void)
+{
+    for (int guard = 0; guard < 1000; guard++) {
+        lv_timer_handler();
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 5 * 1000 * 1000 };
+        nanosleep(&ts, NULL);
+        if (sim_input_idle()) break;
+    }
+    for (int i = 0; i < 30; i++) {   /* let the release-edge click dispatch */
+        lv_timer_handler();
+        struct timespec ts = { .tv_sec = 0, .tv_nsec = 5 * 1000 * 1000 };
+        nanosleep(&ts, NULL);
+    }
 }
 
 /* ---- Running app ------------------------------------------------------- */
@@ -224,6 +267,9 @@ static void teardown_state(lua_State *L)
     app_timer_reset(L);
     app_button_reset(L);
     app_voice_reset(L);
+    app_audio_reset(L);
+    sim_wifi_reset();
+    sim_sensors_reset();
     launcher_lua_run_exit_cleanup(L);
     lua_close(L);
 }
@@ -288,6 +334,78 @@ static int app_run(const char *path)
     return 0;
 }
 
+/* ---- Launcher home render (the `home` command) ------------------------- */
+
+/* A fixed, deterministic app list so the launcher home screen -- the launcher's
+ * own UI, built by the shared launcher_home_build() -- can be rendered and
+ * golden-tested without a board or a real SD scan. */
+static const char *const s_fake_apps[] = {
+    "Counter", "Clock", "Faces", "Level", "Tone", "Stopwatch",
+    "Tally", "Dice", "Countdown", "Reaction", "Tip", "Flashlight",
+    /* Metronome/Calculator/Color exercise custom images; Settings hits the
+     * glyph-avatar fallback; Zebra maps to nothing and hits the letter-avatar
+     * fallback -- so the home views cover all three icon paths. */
+    "Metronome", "Settings", "Color", "Calculator", "Zebra",
+};
+#define SIM_FAKE_APP_COUNT ((int)(sizeof(s_fake_apps) / sizeof(s_fake_apps[0])))
+
+static bool sim_home_get_app(size_t index, launcher_home_app_t *out, void *ctx)
+{
+    (void)ctx;
+    if (index >= (size_t)SIM_FAKE_APP_COUNT) return false;
+    out->name = s_fake_apps[index];
+    out->basename = s_fake_apps[index];   /* callbacks are NULL in the sim */
+    out->icon = launcher_home_default_icon(s_fake_apps[index]);
+    return true;
+}
+
+/* Home render state, so the view toggle can rebuild in the other layout the
+ * way the device's view_toggle_clicked does. */
+static int             s_home_count = -1;
+static bool            s_home_sd = true;
+static launcher_view_t s_home_view = LAUNCHER_VIEW_LIST;
+
+static void sim_home_render(void);
+
+/* The sim's view toggle: flip list <-> grid and rebuild, so `home : tap <x> <y>`
+ * on the toggle actually switches the layout (the interaction is testable, not
+ * just the two static renders). */
+static void sim_home_toggle_cb(lv_event_t *e)
+{
+    (void)e;
+    s_home_view = (s_home_view == LAUNCHER_VIEW_LIST) ? LAUNCHER_VIEW_GRID
+                                                      : LAUNCHER_VIEW_LIST;
+    sim_home_render();
+}
+
+static void sim_home_render(void)
+{
+    int count = s_home_count;
+    if (count < 0) count = SIM_FAKE_APP_COUNT;
+    if (count > SIM_FAKE_APP_COUNT) count = SIM_FAKE_APP_COUNT;
+
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(scr, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(scr, 0, LV_PART_MAIN);
+
+    launcher_home_build(scr, (size_t)count, s_home_sd, 64, s_home_view,
+                        sim_home_get_app, NULL, NULL, NULL, NULL, sim_home_toggle_cb);
+    lv_screen_load(scr);
+    lv_timer_handler();   /* flush the render into the framebuffer */
+    lv_timer_handler();
+}
+
+/* Set up the home state and render it. `view`/`count`/`sd_mounted` come from
+ * the `home` command; 0 apps shows the empty state. */
+static void render_home(launcher_view_t view, int count, bool sd_mounted)
+{
+    s_home_view = view;
+    s_home_count = count;
+    s_home_sd = sd_mounted;
+    sim_home_render();
+}
+
 /* ---- Command interpreter ----------------------------------------------- */
 
 static int need(int have, int want, const char *cmd)
@@ -312,11 +430,20 @@ static void exec_cmd(int argc, char **argv)
         if (!need(argc, 2, "sleep")) return;
         double s = atof(argv[1]);
         if (s_app) pump_for(s_app, (int)(s * 1000));
+        else {                       /* settle a home-screen animation/scroll */
+            uint32_t start = sim_tick_ms();
+            do {
+                lv_timer_handler();
+                struct timespec ts = { .tv_sec = 0, .tv_nsec = 5 * 1000 * 1000 };
+                nanosleep(&ts, NULL);
+            } while ((int)(sim_tick_ms() - start) < (int)(s * 1000));
+        }
     } else if (!strcmp(cmd, "tap")) {
         if (!need(argc, 3, "tap")) return;
         int x = atoi(argv[1]), y = atoi(argv[2]);
         sim_input_inject(x, y, x, y, 80);
         if (s_app) pump_until_idle(s_app);
+        else pump_home_input();   /* launcher home has no app task */
     } else if (!strcmp(cmd, "swipe")) {
         if (!need(argc, 5, "swipe")) return;
         int x0 = atoi(argv[1]), y0 = atoi(argv[2]);
@@ -324,6 +451,7 @@ static void exec_cmd(int argc, char **argv)
         int ms = argc >= 6 ? atoi(argv[5]) : 250;
         sim_input_inject(x0, y0, x1, y1, ms);
         if (s_app) pump_until_idle(s_app);
+        else pump_home_input();   /* launcher home has no app task */
     } else if (!strcmp(cmd, "pwr")) {
         /* PWR (bottom-right button) belongs to apps via require("button").
          *   pwr            quick press+release  -> pressed, released
@@ -363,6 +491,62 @@ static void exec_cmd(int argc, char **argv)
         } else {
             printf("CHECK_OK %s (%d+ colors)\n", argv[1], colors);
         }
+    } else if (!strcmp(cmd, "accel")) {
+        /* accel <x> <y> <z> in g -- set the fake IMU reading (tilt tests). */
+        if (!need(argc, 4, "accel")) return;
+        sim_sensors_set_accel(atof(argv[1]), atof(argv[2]), atof(argv[3]));
+        printf("ACCEL_OK %s %s %s\n", argv[1], argv[2], argv[3]);
+    } else if (!strcmp(cmd, "gyro")) {
+        if (!need(argc, 4, "gyro")) return;
+        sim_sensors_set_gyro(atof(argv[1]), atof(argv[2]), atof(argv[3]));
+        printf("GYRO_OK %s %s %s\n", argv[1], argv[2], argv[3]);
+    } else if (!strcmp(cmd, "battery")) {
+        /* battery <pct|-1> [charging] [external] -- -1 => "gauge not ready". */
+        if (!need(argc, 2, "battery")) return;
+        int pct = atoi(argv[1]);
+        bool charging = argc >= 3 ? atoi(argv[2]) != 0 : false;
+        bool external = argc >= 4 ? atoi(argv[3]) != 0 : (pct >= 0 && charging);
+        sim_sensors_set_battery(pct, charging, external);
+        printf("BATTERY_OK %d\n", pct);
+    } else if (!strcmp(cmd, "rtc")) {
+        /* rtc unset | rtc set <y> <mo> <d> <h> <mi> <s> [wday] */
+        if (!need(argc, 2, "rtc")) return;
+        if (!strcmp(argv[1], "unset")) {
+            sim_sensors_set_rtc_unset();
+            printf("RTC_OK unset\n");
+        } else if (!strcmp(argv[1], "set") && need(argc, 8, "rtc set")) {
+            int wday = argc >= 9 ? atoi(argv[8]) : 0;
+            app_sensors_rtc_set_tm(atoi(argv[2]), atoi(argv[3]), atoi(argv[4]),
+                                   atoi(argv[5]), atoi(argv[6]), atoi(argv[7]), wday);
+            printf("RTC_OK set\n");
+        } else {
+            fprintf(stderr, "rtc: expected 'unset' or 'set <y> <mo> <d> <h> <mi> <s> [wday]'\n");
+        }
+    } else if (!strcmp(cmd, "wifi")) {
+        /* wifi ok | wifi fail -- how the next connect() resolves. */
+        if (!need(argc, 2, "wifi")) return;
+        if (!strcmp(argv[1], "ok")) {
+            sim_wifi_set_outcome(true);  printf("WIFI_OK ok\n");
+        } else if (!strcmp(argv[1], "fail")) {
+            sim_wifi_set_outcome(false); printf("WIFI_OK fail\n");
+        } else {
+            fprintf(stderr, "wifi: expected 'ok' or 'fail'\n");
+        }
+    } else if (!strcmp(cmd, "home")) {
+        /* Render the launcher's own home screen (the shared launcher_home_build)
+         * with a fake app list.
+         *   home                list view, full fake list
+         *   home grid | list    that view, full list
+         *   home [grid|list] N  N apps (0 = the empty/no-apps state)
+         * Stops any running app first; the toggle is live (tap it to switch). */
+        if (s_app) app_stop();
+        launcher_view_t view = LAUNCHER_VIEW_LIST;
+        int argi = 1;
+        if (argc >= 2 && !strcmp(argv[1], "grid")) { view = LAUNCHER_VIEW_GRID; argi = 2; }
+        else if (argc >= 2 && !strcmp(argv[1], "list")) { view = LAUNCHER_VIEW_LIST; argi = 2; }
+        int n = argc > argi ? atoi(argv[argi]) : -1;   /* -1 => full fake list */
+        render_home(view, n, /*sd_mounted=*/true);
+        printf("HOME_OK\n");
     } else {
         fprintf(stderr, "unknown command: %s\n", cmd);
     }
@@ -392,7 +576,9 @@ int main(int argc, char **argv)
         app_timer_register() != ESP_OK ||
         app_button_register() != ESP_OK ||
         app_voice_register() != ESP_OK ||
-        sim_sensors_register() != ESP_OK ||
+        app_audio_register() != ESP_OK ||
+        app_wifi_register() != ESP_OK ||
+        app_sensors_register() != ESP_OK ||
         lua_module_ui_register() != ESP_OK) {
         fprintf(stderr, "module registration failed\n");
         return 1;

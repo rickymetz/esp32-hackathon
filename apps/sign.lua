@@ -14,7 +14,9 @@ local scr = lvgl.create_screen()
 scr:set_style({ bg_color = "#000000" })
 
 local text = ""
-local sizes = { 32, 40, 48 }
+-- Hero sizes: a held-up sign is read from across a room, so use the hero faces
+-- (60/72), not body/heading. All letters, so 120 (digits-only) is out.
+local sizes = { 40, 60, 72 }
 local size_i = 3
 
 -- No fixed width: the label shrinks to its text so align="center" truly

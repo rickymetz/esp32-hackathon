@@ -10,7 +10,7 @@ local ui = require("ui")
 lvgl.init({ buffer_lines = 40 })
 
 local scr = lvgl.create_screen()
-scr:set_style({ bg_color = "#0d0d10" })
+scr:set_style({ bg_color = "#000000" })
 
 ui.title(scr, "Color")
 
@@ -30,21 +30,37 @@ local function update()
     hex:set_style({ text_color = lum > 140 and "#000000" or "#ffffff" })
 end
 
--- One labelled slider per channel.
-local function channel(i, y, name, color)
-    lvgl.label(scr, { text = name, x = 26, y = y - 4, text_color = color })
+-- One labelled slider per channel: a thin 8px track with a big round 32px knob
+-- (knob_pad grows the handle past the track; knob_radius rounds it). Channel
+-- letter, track and value share one vertical centre (cy), and the track stops
+-- short of the value column so the knob can't overrun the number even at 255.
+local TRACK_H = 8
+local function channel(i, cy, name, color)
+    lvgl.label(scr, {
+        text = name, align = "left_mid", x = 22, y = cy - 224,
+        text_color = color, font = lvgl.font(32),
+    })
+    local val = lvgl.label(scr, {
+        text = tostring(rgb[i]), align = "right_mid", x = -16, y = cy - 224,
+        text_color = "#A0A0AE", font = lvgl.font(32),
+    })
     local s = lvgl.slider(scr, {
-        min = 0, max = 255, value = rgb[i], x = 66, y = y, w = 268,
+        min = 0, max = 255, value = rgb[i],
+        x = 56, y = cy - TRACK_H // 2, w = 196, h = TRACK_H,
+        knob_pad = 12, knob_radius = 100, knob_color = "#FFFFFF",
     })
     s:on("value_changed", function()
         rgb[i] = s:get_value()
+        val:set_text(tostring(rgb[i]))
         update()
     end)
 end
 
-channel(1, 236, "R", "#ff6b6b")
-channel(2, 300, "G", "#51cf66")
-channel(3, 364, "B", "#4dabf7")
+-- cy is each channel's centreline; align="*_mid" places the labels there too
+-- (y is the offset from the screen's vertical centre, 224).
+channel(1, 250, "R", "#ff6b6b")
+channel(2, 322, "G", "#51cf66")
+channel(3, 394, "B", "#4dabf7")
 
 update()
 scr:load()

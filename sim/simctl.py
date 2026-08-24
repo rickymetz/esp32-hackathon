@@ -13,8 +13,24 @@ works here unchanged:
   sleep <seconds>                  wait (UI settle, timers, animations)
   shot <out.png>                   capture the screen to a PNG
   check <out.png>                  capture and assert the frame is non-blank
+  home [list|grid] [n]             render the launcher's own home screen with a
+                                   fake app list — list or 2x2 grid view; n apps
+                                   (0 = empty state). The header toggle is live:
+                                   `home : tap 324 48` switches list -> grid.
   type <text>                      drive require("keyboard") text entry, then OK
   typenum <digits>                 drive the number keypad, then OK
+
+Fake-sensor injection (there is no such thing on the real board -- these set
+the sim's stub readings so degraded/dynamic UI paths are testable). Issue them
+BEFORE `run` to affect an app's load-time read, or after `run` for apps that
+poll on a timer:
+
+  accel <x> <y> <z>                set the IMU accel (g); e.g. 0.5 0 0.866 = 30deg
+  gyro <x> <y> <z>                 set the IMU gyro (deg/s)
+  battery <pct> [charging] [ext]   set the gauge; pct -1 => "gauge not ready"
+  rtc unset                        make rtc.now() report "rtc not set"
+  rtc set <y> <mo> <d> <h> <mi> <s> [wday]   set the wall clock
+  wifi ok | wifi fail              how the next wifi.connect() resolves
 
 `type`/`typenum` are simctl-side macros that expand to taps on the on-screen
 keyboard (opened by the app first). They assume the sim's keyboard layout
@@ -24,6 +40,8 @@ YZ.,-' punctuation, following the keyboard's auto-capitalisation.
 Example:
   sim/simctl.py run apps/counter.lua : sleep 1 : tap 184 224 : shot out.png
   sim/simctl.py run apps/tip.lua : tap 184 130 : typenum 4250 : shot tip.png
+  sim/simctl.py run apps/level.lua : accel 0.5 0 0.866 : sleep 0.2 : shot tilt.png
+  sim/simctl.py rtc unset : run apps/clock.lua : shot noclock.png
 
 Options:
   --sdroot DIR   SD-card root that app/font paths resolve against
@@ -43,23 +61,26 @@ BINARY = os.path.join(HERE, "build", "sim")
 # --- keyboard geometry (require("keyboard"), a buttonmatrix at y=96, 4x88) ---
 # Row centres, and column centres for 2- and 3-button rows (buttons split the
 # 368px width evenly). Confirmed against rendered frames.
-_ROWS = [140, 228, 316, 404]
+_ROWS = [140, 228, 316, 404]          # 4-row views (groups, digits)
+_LROWS = [155, 272, 389]              # letters view is 3 rows (roomier keys)
 _C2 = [92, 276]
 _C3 = [61, 184, 307]
 _OK = (320, 48)                       # top-right confirm corner button
 _GROUPS = ["ABCDEF", "GHIJKL", "MNOPQR", "STUVWX", "YZ.,-'"]
-# group cell in the groups view (rows 0-2 are 2-col; "123" sits at C2[1],row2)
+# group cell in the groups view (rows 0-1 are 2-col; row2 is YZ.,-' + "123")
 _GROUP_XY = {
     "ABCDEF": (_C2[0], _ROWS[0]), "GHIJKL": (_C2[1], _ROWS[0]),
     "MNOPQR": (_C2[0], _ROWS[1]), "STUVWX": (_C2[1], _ROWS[1]),
     "YZ.,-'": (_C2[0], _ROWS[2]),
 }
-# letter cell within the letters view (6 letters, 2-col)
-_LETTER_XY = [(_C2[0], _ROWS[0]), (_C2[1], _ROWS[0]),
-              (_C2[0], _ROWS[1]), (_C2[1], _ROWS[1]),
-              (_C2[0], _ROWS[2]), (_C2[1], _ROWS[2])]
-_BACK = (_C3[0], _ROWS[3])            # "<" in the letters view
-_SPACE = (_C3[1], _ROWS[3])          # space, bottom-middle (voice key absent)
+# letter cell within the letters view (6 letters, 3-col x 2 rows)
+_LETTER_XY = [(_C3[0], _LROWS[0]), (_C3[1], _LROWS[0]), (_C3[2], _LROWS[0]),
+              (_C3[0], _LROWS[1]), (_C3[1], _LROWS[1]), (_C3[2], _LROWS[1])]
+_BACK = (_C3[0], _LROWS[2])           # "<" in the letters view
+# space sits bottom-middle in both views, but the groups view is 4 rows and the
+# letters view 3, so its y differs by view.
+_GSPACE = (_C3[1], _ROWS[3])          # space in the groups view
+_LSPACE = (_C3[1], _LROWS[2])         # space in the letters view
 _DIGIT_XY = {
     "1": (_C3[0], _ROWS[0]), "2": (_C3[1], _ROWS[0]), "3": (_C3[2], _ROWS[0]),
     "4": (_C3[0], _ROWS[1]), "5": (_C3[1], _ROWS[1]), "6": (_C3[2], _ROWS[1]),
@@ -87,8 +108,9 @@ def expand_type(text):
         if ch == " ":
             # Space stays in the current view (groups->groups, letters->letters
             # with the same group) -- see keyboard.lua -- so view/cur are left
-            # as they are; the space key sits bottom-middle in both.
-            out += _tap(_SPACE)
+            # as they are; the space key sits bottom-middle in both, at a
+            # view-dependent row (groups is 4 rows, letters 3).
+            out += _tap(_GSPACE if view == "groups" else _LSPACE)
             continue
         found = _find_letter(ch)
         if not found:

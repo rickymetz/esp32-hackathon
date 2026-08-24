@@ -19,7 +19,7 @@ local count = 0
 local count_label = lvgl.label(scr, {
     text = "0", align = "center", y = -70, text_color = "#ffffff",
 })
-count_label:set_style({ font = lvgl.font(48) })
+count_label:set_style({ font = lvgl.font(60) })   -- the count is the point: hero size
 
 local function render()
     count_label:set_text(tostring(count))

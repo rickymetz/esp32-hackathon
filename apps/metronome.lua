@@ -82,31 +82,32 @@ local function start_beat()
     schedule()
 end
 
--- Label is just the number: a 3-digit "%d bpm" is wide enough to collide with
--- the stepper's own +/- buttons, so the unit goes in a caption instead.
 local stepper
-stepper = ui.stepper(scr, { min = 40, max = 240, step = 5, value = bpm, label = "%d" },
+stepper = ui.stepper(scr, { min = 40, max = 240, step = 5, value = bpm, label = "%d bpm" },
     function(v)
+        -- Just record the tempo. schedule() recomputes the interval from bpm on
+        -- its next iteration, so the change takes effect on the next beat --
+        -- calling start_beat() here would re-flash and re-anchor on every step,
+        -- machine-gunning clicks under hold-to-repeat.
         bpm = v
-        if running then start_beat() end   -- retempo on the fly
     end)
 stepper.row:align("center", 0, 48)
 
 local start_btn = lvgl.button(scr, {
     text = "Start", align = "bottom_mid", y = -20, w = 320, h = 100,
-    bg_color = "#27ae60", text_color = "#ffffff",
+    bg_color = "#2F80ED", text_color = "#ffffff", radius = 16,
 })
 
 local function toggle()
     running = not running
     if running then
         start_btn:set_text("Stop")
-        start_btn:set_style({ bg_color = "#c0392b" })
+        start_btn:set_style({ bg_color = "#1E1E28" })   -- on-palette; red is confirm-only
         flash()
         start_beat()
     else
         start_btn:set_text("Start")
-        start_btn:set_style({ bg_color = "#27ae60" })
+        start_btn:set_style({ bg_color = "#2F80ED" })
         stop_beat()
     end
 end

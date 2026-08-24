@@ -38,7 +38,7 @@ end)
 
 local slider = lvgl.slider(scr, {
     min = 40, max = 255, value = level,
-    align = "bottom_mid", y = -34, w = 300, h = 26,
+    align = "bottom_mid", y = -34, w = 300, h = 40,
 })
 slider:on("value_changed", function()
     level = slider:get_value()

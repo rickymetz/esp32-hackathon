@@ -28,6 +28,8 @@ on:
       - 'apps/**'
       - 'launcher/components/lua_module_lvgl/**'
       - 'launcher/components/lua_module_ui/**'
+      - 'launcher/components/display_service/**'
+      - 'launcher/components/lua_module_voice/**'
       - 'launcher/components/cap_lua/**'
       - 'launcher/components/fonts_lexend/**'
       - 'launcher/main/app_timer.*'
@@ -77,6 +79,9 @@ jobs:
       - name: Scenario assertions
         run: ./sim/scenarios.py
 
+      - name: Golden-frame regression
+        run: ./sim/golden.py
+
       - name: Timer accuracy regression
         run: ./sim/timing_test.py
 
@@ -91,5 +96,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: app-screenshots
-          path: sim/build/shots/
+          # shots/ = test.sh frames; gold_*.png = golden.py's full-size renders,
+          # so a golden failure's actual frame is inspectable, not just its %.
+          path: |
+            sim/build/shots/
+            sim/build/gold_*.png
           if-no-files-found: ignore

@@ -36,6 +36,8 @@ contract — start from the one closest to what you're building.
 | `breathe.lua` | A paced size animation driven by a 50&nbsp;ms timer |
 | `sign.lua` | `require("keyboard")` text entry; auto-sizing centred display |
 | `settings.lua` | The user-controllable font scale, with a live preview |
+| `level.lua` | `require("imu")` — a bubble level from the accelerometer, polled on a timer |
+| `tone.lua` | `require("audio")` — a tone generator: a frequency slider driving `audio.tone`, PWR mirrors Play |
 | `hello_world.lua` | A gentle tour of widgets |
 
 Two gotchas these examples were written to avoid — both bite silently:

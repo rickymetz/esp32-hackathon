@@ -33,7 +33,8 @@ local bill_row, result
 local function recompute()
     local total = bill_cents * (100 + tip_pct) / 100
     local each = total / people
-    result:set_text(string.format("Total %s\nEach %s", dollars(total), dollars(each)))
+    -- "Each" first and larger -- the per-person amount is the answer.
+    result:set_text(string.format("Each %s\nTotal %s", dollars(each), dollars(total)))
 end
 
 bill_row = ui.row(list, {
@@ -59,8 +60,8 @@ ui.stepper(list, { min = 1, max = 12, step = 1, value = people, label = "%d ppl"
 -- Result is the last item in the scrollable list, so it never overlaps the
 -- steppers above it.
 result = lvgl.label(list, {
-    text = "Total $0.00\nEach $0.00", text_color = "#ffffff",
+    text = "Each $0.00\nTotal $0.00", text_color = "#ffffff",
 })
-result:set_style({ font = lvgl.font(32) })
+result:set_style({ font = lvgl.font(40) })
 
 scr:load()

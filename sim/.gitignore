@@ -4,3 +4,5 @@ external/
 build*/
 # Rendered frames.
 *.png
+# ...except the committed golden thumbnails (sim/golden.py references).
+!golden/*.png
