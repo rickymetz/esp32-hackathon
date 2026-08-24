@@ -83,6 +83,14 @@ static lv_point_precise_t polar(int r, float deg)
  * outlives the call. Hands get theirs from the handle. */
 typedef struct { lv_point_precise_t p[2]; } seg_t;
 
+/* LV_EVENT_DELETE handlers are lv_event_cb_t -- void(lv_event_t *). Casting
+ * lv_free to that type and letting LVGL call it passes the EVENT as the
+ * pointer to free, not the user data, which corrupts the heap. Unwrap it. */
+static void free_user_data_cb(lv_event_t *e)
+{
+    lv_free(lv_event_get_user_data(e));
+}
+
 static lv_obj_t *make_line(lv_obj_t *parent, lv_point_precise_t a, lv_point_precise_t b,
                            uint32_t colour, int width)
 {
@@ -102,7 +110,7 @@ static lv_obj_t *make_line(lv_obj_t *parent, lv_point_precise_t a, lv_point_prec
     lv_obj_remove_flag(ln, LV_OBJ_FLAG_CLICKABLE);
     /* Freed with the line: LVGL owns the user data pointer we attach. */
     lv_obj_set_user_data(ln, pts);
-    lv_obj_add_event_cb(ln, (lv_event_cb_t)lv_free, LV_EVENT_DELETE, pts);
+    lv_obj_add_event_cb(ln, free_user_data_cb, LV_EVENT_DELETE, pts);
     return ln;
 }
 
