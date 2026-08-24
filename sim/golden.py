@@ -52,7 +52,12 @@ FRAMES = [
     ("counter",      ["run", "apps/counter.lua", ":", "sleep", "0.4"]),
     ("clock",        ["run", "apps/clock.lua", ":", "sleep", "0.4"]),
     ("faces",        ["run", "apps/faces.lua", ":", "sleep", "0.4"]),
-    ("wifi_setup",   ["run", "apps/wifi_setup.lua", ":", "sleep", "0.4"]),
+    # 1.5s, not the usual 0.4: the scan stub resolves after 3 polls of the
+    # app's 250ms timer (~0.75s), so 0.4 captures "scanning..." -- the least
+    # informative state, and only ~2x from flipping to the populated list if
+    # timings ever shift. 1.5s is clear of both boundaries and captures the
+    # list itself.
+    ("wifi_setup",   ["run", "apps/wifi_setup.lua", ":", "sleep", "1.5"]),
     ("color",        ["run", "apps/color.lua", ":", "sleep", "0.4"]),
     ("flashlight",   ["run", "apps/flashlight.lua", ":", "sleep", "0.4"]),
     ("hello_world",  ["run", "apps/hello_world.lua", ":", "sleep", "0.4"]),

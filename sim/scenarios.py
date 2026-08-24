@@ -173,6 +173,66 @@ def home_back_to_list(w, rgb):
     return 16 <= m <= 90, f"not list after round-trip (left-edge max={m})"
 
 
+def _row_bands(w, rgb, y0=140, y1=340):
+    """Count ui.row cards in the list band.
+
+    Two things this has to survive, both found by measuring the real frame
+    rather than assuming:
+
+    - The card colour is (25, 28, 41), not the #1E1E28 the source sets --
+      LVGL composites it against the screen.
+    - A row's label is white text, so sampling a single column counts one row
+      as two bands where the text interrupts it. Instead a scanline counts as
+      "row" when MOST of its width is card-coloured, which text cannot break.
+
+    Counting rows and not raw pixels is what makes this discriminate: the
+    pre-scan app drew 2 rows and a scan list draws 4, but both produce "lots
+    of card pixels".
+    """
+    def is_row_line(y):
+        n = 0
+        for x in range(20, w - 20, 2):
+            r, g, b = px(w, rgb, x, y)
+            if abs(r - 25) < 10 and abs(g - 28) < 10 and abs(b - 41) < 10:
+                n += 1
+        # Measured: a full-width row samples 164, a row where the label's
+        # text interrupts drops to ~70, a gap is 0. 50 sits below the text
+        # minimum so a label cannot split one row into two bands, and far
+        # above zero so a gap cannot join two rows into one.
+        return n > 50
+
+    bands, run = 0, False
+    for y in range(y0, y1):
+        line = is_row_line(y)
+        if line and not run:
+            bands += 1
+        run = line
+    return bands
+
+
+# These two run as a PAIR and it is the difference between them that means
+# something. Only 2 rows fit on this panel (104px touch floor, 448px screen),
+# so a populated list and the old fixed two-row app both show 2 bands -- a
+# count alone cannot tell them apart. The empty case can: scan-driven
+# rendering collapses to the single manual-entry row, while a fixed list does
+# not change at all.
+def wifi_lists_networks(w, rgb):
+    """A resolved scan fills the visible list; the rest scrolls."""
+    n = _row_bands(w, rgb)
+    return n >= 2, f"only {n} row bands -- scan results never rendered as rows"
+
+
+def wifi_empty_state(w, rgb):
+    """`wifi scan 0` must collapse the list to just 'Other network...'.
+
+    This is the discriminating half: the pre-scan app drew 2 rows regardless
+    of any scan, so <=1 here is only reachable if the list really is built
+    from scan results.
+    """
+    n = _row_bands(w, rgb)
+    return n <= 1, f"{n} row bands -- expected only the manual-entry row"
+
+
 SCENARIOS = [
     ("flashlight-on",  ["run", "apps/flashlight.lua"], flashlight_on),
     ("flashlight-off", ["run", "apps/flashlight.lua", ":", "tap", "184", "224"], flashlight_off),
@@ -183,6 +243,11 @@ SCENARIOS = [
                        color_mixed_orange),
     ("reaction-green", ["run", "apps/reaction.lua",
                         ":", "tap", "184", "248", ":", "sleep", "4.5"], reaction_green),
+    ("wifi-lists-networks", ["run", "apps/wifi_setup.lua", ":", "sleep", "1.5"],
+     wifi_lists_networks),
+    ("wifi-empty-state",    ["wifi", "scan", "0",
+                             ":", "run", "apps/wifi_setup.lua", ":", "sleep", "1.5"],
+     wifi_empty_state),
     ("clock-shows-time", ["run", "apps/clock.lua", ":", "sleep", "0.3"], clock_shows_time),
     ("clock-unset-dim",  ["rtc", "unset", ":", "run", "apps/clock.lua", ":", "sleep", "0.3"], clock_unset_dim),
     ("level-centred",  ["run", "apps/level.lua", ":", "sleep", "0.3"], level_centred_green),
