@@ -161,3 +161,19 @@ esp_err_t lua_module_lvgl_register_with_data_root(const char *data_root)
     }
     return cap_lua_register_exit_cleanup(lua_lvgl_exit_cleanup);
 }
+
+esp_err_t lua_module_lvgl_register_fs(void)
+{
+    /* Normally the D: filesystem driver is registered inside lvgl.init() when
+     * an app starts. The launcher's own home screen builds before any app
+     * runs, so it needs the driver registered up front to load card icons
+     * (D:/apps/<id>/icon.bin). Idempotent: the per-app lvgl.init() then sees
+     * it already registered and does nothing. */
+    esp_err_t err = lua_lvgl_lock();
+    if (err != ESP_OK) {
+        return err;
+    }
+    err = lua_lvgl_register_fs_locked();
+    lua_lvgl_unlock();
+    return err;
+}

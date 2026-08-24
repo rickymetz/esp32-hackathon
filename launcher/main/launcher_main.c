@@ -743,12 +743,22 @@ static bool launcher_home_get_app(size_t index, launcher_home_app_t *out, void *
 {
     (void)ctx;
     static app_entry_t app;
+    static char icon_path[APP_PATH_MAX];
     if (!app_registry_get_copy(index, &app)) {
         return false;
     }
     out->name = app.name;
     out->basename = app.id;   /* the stable RUN/DELETE identity, folder or flat */
     out->icon = launcher_home_default_icon(app.id);
+    /* A folder app may ship its own icon at apps/<id>/icon.bin; point the home
+     * screen at it via the D: card FS. launcher_home only uses it if the file
+     * exists, so a folder app without an icon just falls back to a glyph. */
+    if (app.in_folder &&
+        snprintf(icon_path, sizeof(icon_path), "D:/apps/%s/icon.bin", app.id) < (int)sizeof(icon_path)) {
+        out->icon_path = icon_path;
+    } else {
+        out->icon_path = NULL;
+    }
     return true;
 }
 
@@ -927,6 +937,9 @@ void app_main(void)
     /* Hand the BSP display to the service the Lua LVGL binding talks to. */
     display_service_attach(disp);
     ESP_ERROR_CHECK(lua_module_lvgl_register_with_data_root(BSP_SD_MOUNT_POINT));
+    /* Register the D: card filesystem now so the home screen can load app
+     * icons (D:/apps/<id>/icon.bin) before any app runs its own lvgl.init(). */
+    ESP_ERROR_CHECK(lua_module_lvgl_register_fs());
     ESP_ERROR_CHECK(app_timer_register());
     ESP_ERROR_CHECK(app_button_register());
     /* Order matters: cap_lua opens modules in registration order, and

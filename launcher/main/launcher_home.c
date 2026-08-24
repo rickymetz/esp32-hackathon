@@ -35,6 +35,36 @@ static uint32_t letter_color(const char *name)
     return palette[h % (sizeof(palette) / sizeof(palette[0]))];
 }
 
+/* True if `path` names a file the LVGL filesystem can open (a card icon the
+ * app ships). Uses only the LVGL FS API so launcher_home stays pure LVGL; the
+ * D: driver is registered at startup on device and in the sim. Opening then
+ * closing is the cheapest existence probe -- an lv_image with a missing source
+ * would otherwise render as an empty box instead of falling back. */
+static bool card_icon_exists(const char *path)
+{
+    if (!path) {
+        return false;
+    }
+    lv_fs_file_t f;
+    if (lv_fs_open(&f, path, LV_FS_MODE_RD) != LV_FS_RES_OK) {
+        return false;
+    }
+    lv_fs_close(&f);
+    return true;
+}
+
+/* The image source to use for an app's tile: its shipped card icon when
+ * present, else a compiled-in bitmap for a known icon key, else NULL (the
+ * caller then draws a glyph or letter avatar). lv_image_set_src() accepts both
+ * a file-path string and an lv_image_dsc_t*, so one source drives both. */
+static const void *app_image_src(const launcher_home_app_t *app)
+{
+    if (card_icon_exists(app->icon_path)) {
+        return app->icon_path;
+    }
+    return launcher_app_image(app->icon);
+}
+
 /* ---- app icons: a glyph per app ---------------------------------------- */
 
 /* Resolve an icon-name key to a UTF-8 glyph string. Mixes the LVGL built-in
@@ -200,7 +230,7 @@ static void add_toggle(lv_obj_t *screen, launcher_view_t view, lv_event_cb_t on_
 
 static void row_icon(lv_obj_t *row, const launcher_home_app_t *app)
 {
-    const lv_image_dsc_t *img = launcher_app_image(app->icon);
+    const void *img = app_image_src(app);
     if (img) {
         /* The icon bitmap is a disc baked over black; on the true-black grid the
          * corners vanish, but on the navy rows they'd read as a dark square. A
@@ -363,10 +393,10 @@ static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
     lv_obj_set_style_shadow_width(icon, 0, LV_PART_MAIN);
     wire_launch(icon, app->basename, on_click, on_delete);
 
-    /* Icon fallback chain: a full-colour bitmap the app ships (which is the
-     * whole tile art, so the button sits transparent behind it), else a
-     * FontAwesome glyph on a colour-hashed tile, else a letter avatar. */
-    const lv_image_dsc_t *img = launcher_app_image(app->icon);
+    /* Icon fallback chain: a card icon the app ships or a full-colour bitmap
+     * (which is the whole tile art, so the button sits transparent behind it),
+     * else a FontAwesome glyph on a colour-hashed tile, else a letter avatar. */
+    const void *img = app_image_src(app);
     if (img) {
         lv_obj_set_style_bg_opa(icon, LV_OPA_TRANSP, LV_PART_MAIN);
         lv_obj_t *im = lv_image_create(icon);
