@@ -634,26 +634,32 @@ static void exec_cmd(int argc, char **argv)
         render_home(view, n, /*sd_mounted=*/true);
         printf("HOME_OK\n");
     } else if (!strcmp(cmd, "face")) {
-        /* Render the built-in watch face (the shared launcher_face_build) with
+        /* Render a watch face (the shared launcher_face_create/update) with
          * injected values, so the shell's home screen is golden-testable with
          * no board and no RTC.
-         *   face                      a fixed, deterministic default
-         *   face HH:MM [pct] [charging|unset]
-         * "unset" renders the no-trustworthy-time state. */
+         *   face [digital|analog|rings|words|minimal] [HH:MM[:SS]] [pct]
+         *        [charging|unset]
+         * Defaults to a fixed, deterministic digital face. */
         if (s_app) app_stop();
+        launcher_face_style_t style = LAUNCHER_FACE_DIGITAL;
         launcher_face_data_t d = {
-            .time_valid = true, .hour = 10, .min = 9,
+            .time_valid = true, .hour = 10, .min = 9, .sec = 30,
             .year = 2026, .month = 8, .day = 24, .wday = 1,
             .batt_valid = true, .batt_percent = 72, .charging = false,
         };
         for (int i = 1; i < argc; i++) {
-            int hh, mm;
-            if (sscanf(argv[i], "%d:%d", &hh, &mm) == 2) {
+            int hh, mm, ss;
+            if      (!strcmp(argv[i], "digital")) style = LAUNCHER_FACE_DIGITAL;
+            else if (!strcmp(argv[i], "analog"))  style = LAUNCHER_FACE_ANALOG;
+            else if (!strcmp(argv[i], "rings"))   style = LAUNCHER_FACE_RINGS;
+            else if (!strcmp(argv[i], "words"))   style = LAUNCHER_FACE_WORDS;
+            else if (!strcmp(argv[i], "minimal")) style = LAUNCHER_FACE_MINIMAL;
+            else if (!strcmp(argv[i], "charging")) d.charging = true;
+            else if (!strcmp(argv[i], "unset"))    d.time_valid = false;
+            else if (sscanf(argv[i], "%d:%d:%d", &hh, &mm, &ss) == 3) {
+                d.hour = hh; d.min = mm; d.sec = ss;
+            } else if (sscanf(argv[i], "%d:%d", &hh, &mm) == 2) {
                 d.hour = hh; d.min = mm;
-            } else if (!strcmp(argv[i], "charging")) {
-                d.charging = true;
-            } else if (!strcmp(argv[i], "unset")) {
-                d.time_valid = false;
             } else {
                 d.batt_percent = atoi(argv[i]);
                 d.batt_valid = d.batt_percent > 0;
@@ -663,9 +669,10 @@ static void exec_cmd(int argc, char **argv)
         lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
         lv_obj_set_style_pad_all(scr, 0, LV_PART_MAIN);
         lv_obj_set_style_border_width(scr, 0, LV_PART_MAIN);
-        launcher_face_build(scr, &d);
+        launcher_face_t *fc = launcher_face_create(scr, style);
+        launcher_face_update(fc, &d);
         lv_screen_load(scr);
-        printf("FACE_OK\n");
+        printf("FACE_OK %s\n", launcher_face_style_name(style));
     } else if (!strcmp(cmd, "sheet")) {
         /* Render the app-info sheet (long-press-to-delete) for a name.
          *   sheet [Name] [D:/card/icon.bin]

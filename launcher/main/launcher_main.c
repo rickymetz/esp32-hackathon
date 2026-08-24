@@ -31,6 +31,8 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_random.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "esp_io_expander.h"
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
@@ -888,13 +890,92 @@ static void app_row_long_pressed(lv_event_t *e)
 }
 
 /* ---- The face surface ---------------------------------------------------
- * Rebuilt rather than mutated on each tick: the face is a handful of labels,
- * a rebuild is far below a frame's budget, and it keeps launcher_face_build()
- * a pure "draw this data" function with no update path to keep in sync. */
+ * Built once and then mutated on each tick -- never rebuilt. The analog dial
+ * alone is 60+ tick lines plus three hands; recreating that four times a
+ * second to move a second hand would be absurd. The screen is only rebuilt
+ * when the STYLE changes (a swipe), which is a user action, not a tick.
+ *
+ * Style and timezone both live in NVS rather than on the card: home has to
+ * work with no card in it, and NVS is already initialised (the Wi-Fi stack
+ * does it) and cheaper than mounting a filesystem. */
+#define SHELL_NVS_NS      "shell"
+#define SHELL_NVS_FACE    "face"      /* launcher_face_style_t */
+#define SHELL_NVS_TZ_MIN  "tz_min"    /* minutes east of UTC */
 
-/* Sample the clock and gauge into the face's data. Never fails: an
- * unreachable sensor lands as invalid and the face draws its honest degraded
- * state rather than a fabricated reading. */
+static launcher_face_t *s_face;
+static launcher_face_style_t s_face_style = LAUNCHER_FACE_DIGITAL;
+
+static int32_t shell_nvs_get_i32(const char *key, int32_t fallback)
+{
+    nvs_handle_t h;
+    if (nvs_open(SHELL_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return fallback;
+    }
+    int32_t v = fallback;
+    if (nvs_get_i32(h, key, &v) != ESP_OK) {
+        v = fallback;
+    }
+    nvs_close(h);
+    return v;
+}
+
+static void shell_nvs_set_i32(const char *key, int32_t value)
+{
+    nvs_handle_t h;
+    if (nvs_open(SHELL_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    if (nvs_set_i32(h, key, value) == ESP_OK) {
+        nvs_commit(h);
+    }
+    nvs_close(h);
+}
+
+/* Days in `mon` (1-12) of `year`, for the timezone shift's date rollover. */
+static int days_in_month(int year, int mon)
+{
+    static const int len[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (mon < 1 || mon > 12) return 31;
+    if (mon == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)) return 29;
+    return len[mon - 1];
+}
+
+/* Shift a UTC reading by `minutes`, rolling the date properly.
+ *
+ * This matters and is easy to get wrong: NTP sets the RTC in UTC, so a naive
+ * face shows the right time nowhere except Greenwich -- and a shift that moves
+ * the clock but not the date shows tomorrow's time beside today's date across
+ * midnight. The former apps/faces.lua carried the same warning after exactly
+ * that bug; this is now the only copy on the device. */
+static void shift_local(launcher_face_data_t *d, int minutes)
+{
+    if (!d->time_valid || minutes == 0) return;
+
+    int total = d->hour * 60 + d->min + minutes;
+    int day_delta = 0;
+    while (total < 0)     { total += 24 * 60; day_delta--; }
+    while (total >= 1440) { total -= 24 * 60; day_delta++; }
+    d->hour = total / 60;
+    d->min  = total % 60;
+
+    if (day_delta == 0) return;
+
+    d->wday = ((d->wday + day_delta) % 7 + 7) % 7;
+    d->day += day_delta;
+    if (d->day < 1) {
+        d->month = (d->month == 1) ? 12 : d->month - 1;
+        if (d->month == 12) d->year--;
+        d->day = days_in_month(d->year, d->month);
+    } else if (d->day > days_in_month(d->year, d->month)) {
+        d->day = 1;
+        d->month = (d->month == 12) ? 1 : d->month + 1;
+        if (d->month == 1) d->year++;
+    }
+}
+
+/* Sample the clock and gauge, in local time. Never fails: an unreachable
+ * sensor lands as invalid and the face draws its honest degraded state
+ * rather than a fabricated reading. */
 static void read_face_data(launcher_face_data_t *d)
 {
     memset(d, 0, sizeof(*d));
@@ -902,8 +983,9 @@ static void read_face_data(launcher_face_data_t *d)
     int year, mon, mday, hour, min, sec, wday;
     if (app_sensors_rtc_get_tm(&year, &mon, &mday, &hour, &min, &sec, &wday) == ESP_OK) {
         d->time_valid = true;
-        d->hour = hour; d->min = min;
+        d->hour = hour; d->min = min; d->sec = sec;
         d->year = year; d->month = mon; d->day = mday; d->wday = wday;
+        shift_local(d, (int)shell_nvs_get_i32(SHELL_NVS_TZ_MIN, 0));
     }
 
     int pct; bool charging;
@@ -914,8 +996,10 @@ static void read_face_data(launcher_face_data_t *d)
     }
 }
 
-/* Build (or rebuild) the face screen and leave it loaded. Caller must NOT
- * hold the display lock -- this takes it. */
+static void face_gesture_cb(lv_event_t *e);
+
+/* Build (or rebuild) the face screen and leave it loaded. Only called on boot
+ * and on a style change. Caller must NOT hold the display lock. */
 static void build_face_ui(void)
 {
     launcher_face_data_t d;
@@ -924,12 +1008,19 @@ static void build_face_ui(void)
     bsp_display_lock(0);
 
     lv_obj_t *old = s_face_screen;
+    launcher_face_t *old_face = s_face;
 
     s_face_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_face_screen, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_face_screen, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_face_screen, 0, LV_PART_MAIN);
-    launcher_face_build(s_face_screen, &d);
+
+    s_face = launcher_face_create(s_face_screen, s_face_style);
+    launcher_face_update(s_face, &d);
+
+    /* Swipe to change face, the way the old faces app paged between them.
+     * Gestures are delivered to the screen, not to widgets. */
+    lv_obj_add_event_cb(s_face_screen, face_gesture_cb, LV_EVENT_GESTURE, NULL);
 
     lv_screen_load(s_face_screen);
 
@@ -940,20 +1031,28 @@ static void build_face_ui(void)
     if (old != NULL && old != s_face_screen) {
         lv_obj_delete(old);
     }
+    launcher_face_destroy(old_face);
 
     bsp_display_unlock();
 }
 
-/* Repaint the face while it is the visible surface. Sampling faster than the
- * minute it displays is deliberate -- a 60 s timer against a 1 Hz clock drifts
- * and skips whole minutes (the pattern APP_CONTRACT warns apps about); 5 s is
- * cheap and always lands within a few seconds of the true rollover. */
+/* Repaint the face in place while it is the visible surface.
+ *
+ * Sampling faster than the thing being sampled is deliberate: a periodic timer
+ * re-arms AFTER its callback, so a 1000 ms tick against the RTC's own 1 Hz
+ * edge is always a little over a second and some seconds are never observed --
+ * the second hand visibly jumps two ticks. 250 ms cannot skip one. Faces
+ * without a second hand only need to catch the minute, so they tick at 1 s and
+ * the update is gated on the value actually changing. */
 static void face_tick_cb(lv_timer_t *t)
 {
     (void)t;
-    if (s_shell_view == SHELL_VIEW_FACE && s_app_task == NULL) {
-        build_face_ui();
+    if (s_shell_view != SHELL_VIEW_FACE || s_app_task != NULL || s_face == NULL) {
+        return;
     }
+    launcher_face_data_t d;
+    read_face_data(&d);
+    launcher_face_update(s_face, &d);
 }
 
 static void show_face_screen(void)
@@ -962,18 +1061,44 @@ static void show_face_screen(void)
     build_face_ui();
 
     bsp_display_lock(0);
+    uint32_t period = launcher_face_wants_seconds(s_face_style) ? 250 : 1000;
     if (s_face_tick == NULL) {
-        s_face_tick = lv_timer_create(face_tick_cb, 5000, NULL);
+        s_face_tick = lv_timer_create(face_tick_cb, period, NULL);
+    } else {
+        lv_timer_set_period(s_face_tick, period);
     }
     lv_timer_resume(s_face_tick);
     bsp_display_unlock();
+}
+
+/* Swipe left/right cycles the face and remembers the choice, the way a watch
+ * does. Runs on the LVGL task, so it must not take the display lock that
+ * build_face_ui() takes -- LVGL's lock is recursive on this BSP, but the
+ * screen swap is done here rather than inline to keep one code path. */
+static void face_gesture_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+    if (dir != LV_DIR_LEFT && dir != LV_DIR_RIGHT) {
+        return;
+    }
+
+    int next = (int)s_face_style + (dir == LV_DIR_LEFT ? 1 : -1);
+    if (next < 0) next = LAUNCHER_FACE_COUNT - 1;
+    if (next >= LAUNCHER_FACE_COUNT) next = 0;
+    s_face_style = (launcher_face_style_t)next;
+
+    shell_nvs_set_i32(SHELL_NVS_FACE, next);
+    ESP_LOGI(TAG, "face -> %s", launcher_face_style_name(s_face_style));
+    show_face_screen();
 }
 
 static void show_apps_screen(void)
 {
     s_shell_view = SHELL_VIEW_APPS;
     /* Stop repainting the face while it is not visible -- the tick would
-     * otherwise rebuild a screen nobody is looking at every 5 s. */
+     * otherwise redraw a screen nobody is looking at, and on the analog face
+     * that is an I2C read four times a second. */
     bsp_display_lock(0);
     if (s_face_tick != NULL) {
         lv_timer_pause(s_face_tick);
@@ -1219,7 +1344,17 @@ void app_main(void)
     app_registry_scan();
     apply_persisted_font_scale(disp);   /* after SD mount, before UI build */
     /* Boot to the watch face, not the app list: home is the watch. The app
-     * list is one BOOT press away (see the shell navigation notes above). */
+     * list is one BOOT press away (see the shell navigation notes above).
+     * The style is whatever was last swiped to; an out-of-range or absent
+     * value falls back to the digital face, which is also the fallback for a
+     * failed home app. */
+    {
+        int32_t saved = shell_nvs_get_i32(SHELL_NVS_FACE, LAUNCHER_FACE_DIGITAL);
+        if (saved < 0 || saved >= LAUNCHER_FACE_COUNT) {
+            saved = LAUNCHER_FACE_DIGITAL;
+        }
+        s_face_style = (launcher_face_style_t)saved;
+    }
     show_face_screen();
     xTaskCreate(button_poll_task, "buttons", 3072, NULL, 6, NULL);
     serial_push_start();

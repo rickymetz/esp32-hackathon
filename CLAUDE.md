@@ -159,7 +159,8 @@ These cost an hour each if you don't know them. Most were hit for real in this r
 ## Architecture
 
 - `launcher/` — ESP-IDF app: BSP + LVGL 9.5 + Lua, scans and runs apps
-- `apps/` — Lua apps, installed to `/sdcard/apps/`. Each is either a flat
+- `apps/` — Lua apps, installed to `/sdcard/apps/`. (Watch faces are **not** here —
+  they are part of the shell, in `launcher/main/launcher_face.c`.) Each is either a flat
   `apps/<name>.lua` or a folder `apps/<name>/main.lua` that ships its own
   `icon.bin` (see `docs/SD_CARD_APPS.md`)
 - Runtime: `espressif/lua` (official component) + LVGL bindings from `espressif/esp-claw`
@@ -179,9 +180,22 @@ That pump needs **a positive timeout and a yield**. `process_events(0)` returns
 immediately when the queue is empty; looping on it starves the idle task and trips the
 task watchdog.
 
-**Home is the watch face, not the app list.** The device boots to a built-in face
-(`launcher_face.c` — pure LVGL, no card, no Lua VM, so it is always available and is
-the fallback if a Lua home app ever fails). The app list is a surface you navigate to.
+**Home is the watch face, not the app list.** The device boots to a face from
+`launcher_face.c` — pure LVGL, no card, no Lua VM, so it is always available and is the
+fallback if a user-configured home app ever fails. The app list is a surface you
+navigate to.
+
+**Five faces live in C**: Digital, Analog, Rings, Words, Minimal — ported from the former
+`apps/faces.lua` and `apps/clock.lua`, which between them were three competing copies of
+"the watch face". **Swipe left/right on home cycles them**; the choice is saved to NVS.
+Faces are built once and then *mutated* per tick — the analog dial alone is 60+ tick
+lines plus three hands, so rebuilding it to move a second hand is out of the question.
+The tick runs at 250 ms for faces with a second hand and 1 s otherwise.
+
+**Timezone lives in exactly one place.** NTP sets the RTC in **UTC**, so the shell
+applies an offset (minutes east, in NVS) when it reads the clock, rolling the date
+properly. `faces.lua` carried a warning about two copies of that logic disagreeing and
+showing the UTC date beside a local time; there is now one copy, in `shift_local()`.
 
 **BOOT (GPIO0, top right, active low) is the only navigation control**, and it is a
 three-way toggle:

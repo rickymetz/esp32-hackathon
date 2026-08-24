@@ -50,8 +50,6 @@ FRAC_TOL = 0.012
 # re-capture those two or mask the seconds region.
 FRAMES = [
     ("counter",      ["run", "apps/counter.lua", ":", "sleep", "0.4"]),
-    ("clock",        ["run", "apps/clock.lua", ":", "sleep", "0.4"]),
-    ("faces",        ["run", "apps/faces.lua", ":", "sleep", "0.4"]),
     ("wifi_setup",   ["run", "apps/wifi_setup.lua", ":", "sleep", "0.4"]),
     ("color",        ["run", "apps/color.lua", ":", "sleep", "0.4"]),
     ("flashlight",   ["run", "apps/flashlight.lua", ":", "sleep", "0.4"]),
@@ -76,10 +74,6 @@ FRAMES = [
                         ":", "tap", "184", "224", ":", "sleep", "0.2"]),
     ("error_screen", ["run", "apps/broken.lua", ":", "sleep", "0.3"]),
     ("keyboard",     ["run", "apps/sign.lua", ":", "tap", "184", "380", ":", "sleep", "0.3"]),
-    ("faces_rings",  ["run", "apps/faces.lua",
-                        ":", "swipe", "300", "224", "60", "224", "300", ":", "sleep", "0.4"]),
-    ("clock_unset",  ["rtc", "unset", ":", "run", "apps/clock.lua", ":", "sleep", "0.4"]),
-    ("clock_lowbat", ["battery", "8", "0", "0", ":", "run", "apps/clock.lua", ":", "sleep", "0.4"]),
     ("level_tilted", ["run", "apps/level.lua",
                         ":", "accel", "0.5", "0", "0.866", ":", "sleep", "0.3"]),
     # Calculator keypad + logic, three discriminating results so an operator
@@ -135,7 +129,11 @@ FRAMES = [
     # the placeholder is not drawn in the 120px face, whose charset is digits
     # and ".:" only -- a "--:--" there renders as empty boxes), and the low
     # battery case covers the warning colour and the stepped battery glyph.
-    ("face",         ["face"]),
+    ("face",         ["face", "digital", "10:09:30", "72"]),
+    ("face_analog",  ["face", "analog",  "10:09:30", "72"]),
+    ("face_rings",   ["face", "rings",   "10:09:30", "72"]),
+    ("face_words",   ["face", "words",   "10:09:30", "72"]),
+    ("face_minimal", ["face", "minimal", "10:09:30", "72"]),
     ("face_unset",   ["face", "unset"]),
     ("face_low",     ["face", "07:45", "12"]),
 ]

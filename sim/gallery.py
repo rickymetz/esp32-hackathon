@@ -58,12 +58,8 @@ SCENES = [
                    "Shared ui helpers: rows, toggle, page dots."),
     # The watch faces and the clock read the RTC, so they could not be
     # rendered at all until the simulator gained hardware stand-ins.
-    ("faces",      ["sleep","1.2"],
-                   "Analog face: hands, minute track, complications."),
     ("faces_rings",["@faces","swipe","300","224","60","224","260",":","sleep","1.2"],
                    "Rings face: hours, minutes, seconds as arcs."),
-    ("clock",      ["sleep","1.2"],
-                   "Digital clock with a city-picked timezone."),
     ("hello_world",["sleep","0.3"],
                    "A tour of the widget set."),
 ]

@@ -99,23 +99,6 @@ def reaction_green(w, rgb):
     return (g > 120 and g > r and g > b), f"pad not green: {r},{g},{b}"
 
 
-# The rtc stub feeds a fixed 14:30; clock.lua renders it as big white digits.
-# If the stub regressed to nil ("rtc not set"), the app degrades to a small
-# message and the big-digit band goes nearly dark -- so a bright-pixel floor
-# in that band proves the clock got a real time.
-def clock_shows_time(w, rgb):
-    n = bright_count(w, rgb, 110, 155, 260, 225)
-    return n > 300, f"time band too dark ({n} bright px) -- rtc not feeding clock"
-
-
-# The mirror of clock_shows_time: with `rtc unset` the hero HH:MM is replaced by
-# a small "--:--", so the big-digit band's ink drops sharply (measured ~630 px
-# vs ~2477 for a real time). Proves the rtc injection reaches the degraded path.
-def clock_unset_dim(w, rgb):
-    n = bright_count(w, rgb, 110, 155, 260, 225)
-    return n < 1400, f"time band still lit ({n} bright px) -- rtc unset not honoured"
-
-
 # The sim IMU reads flat, so level.lua's bubble sits centred and green. A
 # regression (imu returns nil, or the level threshold breaks) would leave the
 # centre amber or empty. Probe the vial centre (CX=184, CY=214).
@@ -183,8 +166,6 @@ SCENARIOS = [
                        color_mixed_orange),
     ("reaction-green", ["run", "apps/reaction.lua",
                         ":", "tap", "184", "248", ":", "sleep", "4.5"], reaction_green),
-    ("clock-shows-time", ["run", "apps/clock.lua", ":", "sleep", "0.3"], clock_shows_time),
-    ("clock-unset-dim",  ["rtc", "unset", ":", "run", "apps/clock.lua", ":", "sleep", "0.3"], clock_unset_dim),
     ("level-centred",  ["run", "apps/level.lua", ":", "sleep", "0.3"], level_centred_green),
     ("level-tilted",   ["run", "apps/level.lua", ":", "accel", "0.5", "0", "0.866",
                         ":", "sleep", "0.3"], level_tilted_off_centre),
