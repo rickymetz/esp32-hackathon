@@ -33,9 +33,23 @@ mkdir -p "$SHOTS"
 #   headless / trim_check          -- no UI by design (timers/print only)
 SKIP=" broken cb_error deep_error hook_bypass runaway_bare runaway_coro runaway_pcall headless trim_check "
 
-pass=0; fail=0; skip=0; failed_apps=""
+# Every app is either a flat apps/<name>.lua or a folder apps/<name>/main.lua.
+# List both as "<name>=<path>" so the loop renders folder apps (the self-
+# contained demos) exactly like flat ones.
+apps=()
 for app in apps/*.lua; do
-    name="$(basename "$app" .lua)"
+    [ -e "$app" ] || continue
+    apps+=("$(basename "$app" .lua)=$app")
+done
+for main in apps/*/main.lua; do
+    [ -e "$main" ] || continue
+    apps+=("$(basename "$(dirname "$main")")=$main")
+done
+
+pass=0; fail=0; skip=0; failed_apps=""
+for entry in "${apps[@]}"; do
+    name="${entry%%=*}"
+    app="${entry#*=}"
     if [[ "$SKIP" == *" $name "* ]]; then
         printf "  SKIP  %s\n" "$name"; skip=$((skip+1)); continue
     fi
