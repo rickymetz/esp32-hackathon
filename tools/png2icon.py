@@ -5,17 +5,23 @@ The launcher has no PNG decoder compiled in (that would cost PSRAM and only
 works on the device), so a folder app ships its icon pre-converted to LVGL's
 native binary image format, which the launcher streams straight off the card.
 
-    tools/png2icon.py apps/mygame/icon.png            # -> apps/mygame/icon.bin
-    tools/png2icon.py logo.png icon.bin --size 120    # resize to 120x120
+    tools/png2icon.py apps/mygame/icon.png            # -> apps/mygame/icon.bin (128x128)
+    tools/png2icon.py logo.png icon.bin --size 96     # a different size
 
 The output is a 12-byte lv_image_header_t (magic 0x19, RGB565 cf 0x12) followed
 by width*height RGB565 little-endian pixels. Transparency is flattened onto a
 background colour (--bg, default black) because RGB565 has no alpha channel and
 the launcher's tiles sit on true black anyway.
 
+The default size is 128 -- the launcher's grid tile size. That matters: LVGL's
+file-image *upscale* clips a circle flat on its right and bottom edges, so an
+icon smaller than the tile (e.g. 120) comes out visibly cut. Emitting at the
+tile size means the launcher only ever downscales (in the list), which is clean.
+Author the source PNG larger still (240-480) for the smoothest downscale.
+
 PNG decoding uses Pillow when it is installed (any format, nice resampling) and
 otherwise a small built-in decoder that handles 8-bit PNGs (grayscale, RGB,
-palette, and their alpha variants) with a nearest-neighbour resize.
+palette, and their alpha variants); resizing is an antialiased box filter.
 """
 import sys
 import os
@@ -193,7 +199,7 @@ def resample_rgb(w, h, rgb, size):
 
 def main():
     args = [a for a in sys.argv[1:]]
-    size = None
+    size = 128           # the launcher's grid tile size; see the module docstring
     bg = (0, 0, 0)
     positional = []
     i = 0

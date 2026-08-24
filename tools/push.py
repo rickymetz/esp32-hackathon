@@ -83,7 +83,7 @@ def maybe_build_icon(folder):
     if os.path.isfile(binp) and os.path.getmtime(binp) >= os.path.getmtime(png):
         return
     conv = os.path.join(os.path.dirname(os.path.abspath(__file__)), "png2icon.py")
-    subprocess.run([sys.executable, conv, png, binp, "--size", "120"], check=True)
+    subprocess.run([sys.executable, conv, png, binp], check=True)   # default 128px tile
 
 
 # Build the list of (local_path, remote_name) files to send. A directory is a
