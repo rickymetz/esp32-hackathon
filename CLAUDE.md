@@ -158,7 +158,9 @@ These cost an hour each if you don't know them. Most were hit for real in this r
 ## Architecture
 
 - `launcher/` — ESP-IDF app: BSP + LVGL 9.5 + Lua, scans and runs apps
-- `apps/` — Lua apps, one file each, installed to `/sdcard/apps/`
+- `apps/` — Lua apps, installed to `/sdcard/apps/`. Each is either a flat
+  `apps/<name>.lua` or a folder `apps/<name>/main.lua` that ships its own
+  `icon.bin` (see `docs/SD_CARD_APPS.md`)
 - Runtime: `espressif/lua` (official component) + LVGL bindings from `espressif/esp-claw`
   (`components/lua_modules/lua_module_lvgl`)
 

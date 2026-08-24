@@ -134,6 +134,16 @@ folder. The launcher scans it at boot and after every push, and lists every `.lu
 finds. **The filename becomes the name in the list**: `weather_clock.lua` shows as
 "Weather clock".
 
+### Or ship a folder, with its own icon
+
+An app can also be a **folder** — `apps/<name>/main.lua` — so it can carry its
+own launcher icon and other assets. `tools/push.py apps/<name>` pushes the whole
+folder and builds the icon; the launcher lists it by the folder name. Its code,
+its icon, and its saved state then all live on the card together. See
+**[SD_CARD_APPS.md](SD_CARD_APPS.md)** for the layout, the icon pipeline, and
+installing/uninstalling. Everything in *this* document applies unchanged whether
+your app is one file or a folder.
+
 ---
 
 ## Lua version, the standard library, and the trust model
