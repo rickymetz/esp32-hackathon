@@ -104,26 +104,46 @@ local function page_time()
 
     local list = ui.list(scr, { y = 96, h = 250, pad_row = 12 })
 
-    -- The offset, not the city, is what the shell stores: the C watch face
-    -- applies minutes-east directly and has no city table. The city is only
-    -- how a human picks one.
-    local off = prefs.get("tz_min", 0)
-    local city = "Custom"
-    for _, z in ipairs(ui.ZONES) do
-        if z[2] == off then city = z[1]; break end
+    -- Three keys, one writer. The C watch face consumes only tz_min and
+    -- applies minutes-east directly -- it has no city table and no DST rules,
+    -- so tz_min must already be the EFFECTIVE offset. City and DST are stored
+    -- alongside it purely so this page can show what was chosen: tz_min alone
+    -- cannot be reversed into a city once DST is folded in (New York in summer
+    -- is -240, which is also Santiago).
+    local zone_idx = prefs.get("tz_city", 11)          -- 11 = London = UTC
+    if zone_idx < 1 or zone_idx > #ui.ZONES then zone_idx = 11 end
+    local dst = prefs.get("tz_dst", 0) == 1
+
+    local function write_zone(idx, on)
+        prefs.set("tz_city", idx)
+        prefs.set("tz_dst", on and 1 or 0)
+        prefs.set("tz_min", ui.ZONES[idx][2] + (on and 60 or 0))
     end
 
-    local row_zone = ui.row(list, { text = "Zone: " .. city, kind = "nav" })
+    local row_zone = ui.row(list, { text = "Zone: " .. ui.ZONES[zone_idx][1], kind = "nav" })
     row_zone.row:on("clicked", function()
         local names = {}
         for i, z in ipairs(ui.ZONES) do names[i] = z[1] end
-        ui.picker({ title = "Time zone", options = names, size = 26 }, function(i)
+        ui.picker({ title = "Time zone", options = names, selected = zone_idx, size = 26 }, function(i)
             if i then
-                prefs.set("tz_min", ui.ZONES[i][2])
+                write_zone(i, dst)
             end
             page_time()
         end)
     end)
+
+    -- Summer time is a manual toggle, not a rules table: DST boundaries differ
+    -- per country and change by legislation, so a baked-in table would go
+    -- quietly wrong. One switch the user flips twice a year is honest.
+    local row_dst
+    row_dst = ui.row(list, {
+        text = "Summer time", kind = "toggle", checked = dst,
+        on_change = function()
+            local on = row_dst.get()
+            write_zone(zone_idx, on and on ~= 0)
+            page_time()
+        end,
+    })
 
     -- Read-only status: NTP is the intended way to set the clock, so say
     -- plainly whether it has happened rather than offering a manual entry
