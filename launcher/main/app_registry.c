@@ -70,6 +70,19 @@ static bool has_lua_suffix(const char *name)
     return len > 4 && strcasecmp(name + len - 4, ".lua") == 0;
 }
 
+/* Remove a stray <dir>/.push.tmp left by a failed push. app_registry_write_app
+ * co-locates its temp file with the destination (apps/.push.tmp for a flat
+ * push, apps/<folder>/.push.tmp for a folder push), so a power loss between
+ * fwrite and rename can strand one; scan_locked() sweeps both the apps root
+ * and each app folder through here. ENOENT is the normal case. */
+static void sweep_push_tmp(const char *dir)
+{
+    char tmp[APP_PATH_MAX];
+    if (snprintf(tmp, sizeof(tmp), "%s/.push.tmp", dir) < (int)sizeof(tmp)) {
+        remove(tmp);
+    }
+}
+
 /* Body of app_registry_scan(), without the lock. Callers that already hold
  * registry_lock() (namely app_registry_write_app()) must call this directly
  * -- s_lock is a plain mutex, not a recursive one, so taking it twice from
@@ -100,24 +113,52 @@ static esp_err_t scan_locked(void)
         return ESP_OK;
     }
 
-    /* A failed push's rename leaves .push.tmp behind; sweep it here so
-     * the card never accumulates them (open issue 3 from the handoff). */
-    {
-        char tmp[APP_PATH_MAX];
-        if (snprintf(tmp, sizeof(tmp), "%s/.push.tmp", APPS_DIR) < (int)sizeof(tmp)) {
-            remove(tmp);   /* ENOENT is the normal case */
-        }
-    }
+    sweep_push_tmp(APPS_DIR);   /* clear a stray temp from a failed flat push */
 
     struct dirent *ent;
     while ((ent = readdir(dir)) != NULL && s_count < APP_MAX_COUNT) {
-        if (ent->d_name[0] == '.' || !has_lua_suffix(ent->d_name)) {
+        if (ent->d_name[0] == '.') {
+            continue;   /* dotfiles, ".", ".." */
+        }
+
+        char entry_path[APP_PATH_MAX];
+        int n = snprintf(entry_path, sizeof(entry_path), "%s/%s", APPS_DIR, ent->d_name);
+        if (n < 0 || n >= (int)sizeof(entry_path)) {
+            ESP_LOGW(TAG, "skipping '%s': path too long", ent->d_name);
             continue;
         }
+
+        /* d_type is unreliable on FATFS, so stat() to tell a folder app
+         * (apps/<name>/main.lua) from a flat one (apps/<name>.lua). */
+        struct stat st;
+        bool is_dir = (stat(entry_path, &st) == 0 && S_ISDIR(st.st_mode));
+
         app_entry_t *app = &s_apps[s_count];
-        int n = snprintf(app->path, sizeof(app->path), "%s/%s", APPS_DIR, ent->d_name);
-        if (n < 0 || n >= (int)sizeof(app->path)) {
-            ESP_LOGW(TAG, "skipping '%s': path too long", ent->d_name);
+
+        if (is_dir) {
+            sweep_push_tmp(entry_path);   /* stray temp from a failed folder push */
+
+            char main_path[APP_PATH_MAX];
+            n = snprintf(main_path, sizeof(main_path), "%s/main.lua", entry_path);
+            if (n < 0 || n >= (int)sizeof(main_path)) {
+                ESP_LOGW(TAG, "skipping folder '%s': path too long", ent->d_name);
+                continue;
+            }
+            if (stat(main_path, &st) != 0 || !S_ISREG(st.st_mode)) {
+                continue;   /* a plain directory, not an app folder */
+            }
+            memcpy(app->path, main_path, sizeof(app->path));
+            app->in_folder = true;
+        } else {
+            if (!has_lua_suffix(ent->d_name)) {
+                continue;
+            }
+            memcpy(app->path, entry_path, sizeof(app->path));
+            app->in_folder = false;
+        }
+
+        if (snprintf(app->id, sizeof(app->id), "%s", ent->d_name) >= (int)sizeof(app->id)) {
+            ESP_LOGW(TAG, "skipping '%s': id too long", ent->d_name);
             continue;
         }
         pretty_name(ent->d_name, app->name, sizeof(app->name));
@@ -157,19 +198,12 @@ bool app_registry_get_copy(size_t index, app_entry_t *out)
     return ok;
 }
 
-/* "/sdcard/apps/counter.lua" -> "counter.lua" */
-static const char *entry_basename(const char *path)
-{
-    const char *slash = strrchr(path, '/');
-    return slash ? slash + 1 : path;
-}
-
-bool app_registry_find_by_basename(const char *basename, app_entry_t *out)
+bool app_registry_find_by_id(const char *id, app_entry_t *out)
 {
     registry_lock();
     bool found = false;
     for (size_t i = 0; i < s_count; i++) {
-        if (strcmp(entry_basename(s_apps[i].path), basename) == 0) {
+        if (strcmp(s_apps[i].id, id) == 0) {
             *out = s_apps[i];
             found = true;
             break;
@@ -207,7 +241,7 @@ void app_registry_invalidate(void)
     registry_unlock();
 }
 
-bool app_registry_write_app(const char *basename, const void *data, size_t len)
+bool app_registry_write_app(const char *rel_path, const void *data, size_t len)
 {
     registry_lock();
     int64_t lock_start_us = esp_timer_get_time();
@@ -222,13 +256,29 @@ bool app_registry_write_app(const char *basename, const void *data, size_t len)
     char tmp_path[APP_PATH_MAX], final_path[APP_PATH_MAX];
     int n;
 
-    n = snprintf(tmp_path, sizeof(tmp_path), "%s/apps/.push.tmp", BSP_SD_MOUNT_POINT);
-    if (n < 0 || n >= (int)sizeof(tmp_path)) {
+    n = snprintf(final_path, sizeof(final_path), "%s/apps/%s", BSP_SD_MOUNT_POINT, rel_path);
+    if (n < 0 || n >= (int)sizeof(final_path)) {
         registry_unlock();
         return false;
     }
-    n = snprintf(final_path, sizeof(final_path), "%s/apps/%s", BSP_SD_MOUNT_POINT, basename);
-    if (n < 0 || n >= (int)sizeof(final_path)) {
+
+    /* A folder-app file ("mygame/main.lua") writes into apps/mygame/, which
+     * may not exist yet -- create it, and put the temp file in the same
+     * directory so the rename stays within one directory. A flat file
+     * ("counter.lua") keeps the old apps/.push.tmp temp path. */
+    const char *last_slash = strrchr(final_path, '/');
+    char dir_path[APP_PATH_MAX];
+    size_t dir_len = last_slash ? (size_t)(last_slash - final_path) : 0;
+    if (dir_len == 0 || dir_len >= sizeof(dir_path)) {
+        registry_unlock();
+        return false;
+    }
+    memcpy(dir_path, final_path, dir_len);
+    dir_path[dir_len] = '\0';
+    mkdir(dir_path, 0777);   /* harmless if it already exists (e.g. apps/) */
+
+    n = snprintf(tmp_path, sizeof(tmp_path), "%s/.push.tmp", dir_path);
+    if (n < 0 || n >= (int)sizeof(tmp_path)) {
         registry_unlock();
         return false;
     }
@@ -254,7 +304,7 @@ bool app_registry_write_app(const char *basename, const void *data, size_t len)
         return false;
     }
 
-    ESP_LOGI(TAG, "wrote %s (%u bytes)", basename, (unsigned)len);
+    ESP_LOGI(TAG, "wrote %s (%u bytes)", rel_path, (unsigned)len);
 
     /* Pick up the freshly-written app now, still under the lock, so a RUN
      * sent the instant the host sees PUSH_OK cannot race the rescan and see
@@ -268,7 +318,32 @@ bool app_registry_write_app(const char *basename, const void *data, size_t len)
     return true;
 }
 
-bool app_registry_delete_app(const char *basename)
+/* Remove apps/<id>/ and everything in it (main.lua, icon, generated files).
+ * One level deep is all a folder app is: apps/<id>/*, with no nested
+ * subdirectories, so a flat readdir+unlink then rmdir is enough. Returns 0
+ * on success, like remove(). */
+static int remove_app_folder(const char *dir_path)
+{
+    DIR *d = opendir(dir_path);
+    if (d == NULL) {
+        return -1;
+    }
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+            continue;
+        }
+        char child[APP_PATH_MAX];
+        if (snprintf(child, sizeof(child), "%s/%s", dir_path, ent->d_name) >= (int)sizeof(child)) {
+            continue;   /* skip an un-nameable child; rmdir below then fails cleanly */
+        }
+        remove(child);   /* files, and any (unexpected) empty subdir */
+    }
+    closedir(d);
+    return rmdir(dir_path);
+}
+
+bool app_registry_delete_app(const char *id)
 {
     registry_lock();
 
@@ -278,22 +353,28 @@ bool app_registry_delete_app(const char *basename)
     }
 
     char path[APP_PATH_MAX];
-    int n = snprintf(path, sizeof(path), "%s/apps/%s", BSP_SD_MOUNT_POINT, basename);
+    int n = snprintf(path, sizeof(path), "%s/apps/%s", BSP_SD_MOUNT_POINT, id);
     if (n < 0 || n >= (int)sizeof(path)) {
         registry_unlock();
         return false;
     }
 
-    /* Under the same lock as write/unmount for the same reason: a Refresh
-     * tap must not pull the filesystem out from under the unlink. remove()
-     * failing covers both "no such file" and an I/O error; the caller only
-     * needs "it is not on the card afterwards" vs "it may still be". */
-    if (remove(path) != 0) {
+    /* A folder app's id names its directory; a flat app's id is its file. Pick
+     * the removal that fits so DELETE works for both. Under the same lock as
+     * write/unmount for the same reason: a Refresh tap must not pull the
+     * filesystem out from under the unlink. Either failing covers "no such
+     * file" and an I/O error alike; the caller only needs "it is not on the
+     * card afterwards" vs "it may still be". */
+    struct stat st;
+    int rc = (stat(path, &st) == 0 && S_ISDIR(st.st_mode))
+                 ? remove_app_folder(path)
+                 : remove(path);
+    if (rc != 0) {
         registry_unlock();
         return false;
     }
 
-    ESP_LOGI(TAG, "deleted %s", basename);
+    ESP_LOGI(TAG, "deleted %s", id);
     scan_locked();
     registry_unlock();
     return true;

@@ -16,12 +16,17 @@ extern "C" {
 #endif
 
 #define APP_NAME_MAX  48
+#define APP_ID_MAX    128   /* a folder name or file basename -- LFN can be long */
 #define APP_PATH_MAX  320   /* mount point + '/apps/' + a 255-char LFN */
 #define APP_MAX_COUNT 32
 
 typedef struct {
-    char name[APP_NAME_MAX];   /**< display name, from the filename */
-    char path[APP_PATH_MAX];   /**< absolute path to the .lua file */
+    char name[APP_NAME_MAX];   /**< display name, from the filename/folder name */
+    char path[APP_PATH_MAX];   /**< absolute path to the .lua file to load */
+    char id[APP_ID_MAX];       /**< stable identity used by RUN/DELETE/rows:
+                                *   a flat app's file basename ("counter.lua"),
+                                *   or a folder app's directory name ("counter") */
+    bool in_folder;            /**< true when the app is apps/<id>/main.lua */
 } app_entry_t;
 
 /**
@@ -59,14 +64,16 @@ bool app_registry_sd_mounted(void);
 void app_registry_invalidate(void);
 
 /**
- * @brief Find an app by its file basename and copy it out.
+ * @brief Find an app by its stable id and copy it out.
  *
- * Returns a copy rather than a pointer because the caller may hold it while
- * a concurrent PUSH rescans and rewrites the shared array.
+ * The id is the app's file basename ("counter.lua") for a flat app, or its
+ * folder name ("counter") for a folder app -- the same string LIST prints and
+ * RUN/DELETE accept. Returns a copy rather than a pointer because the caller
+ * may hold it while a concurrent PUSH rescans and rewrites the shared array.
  *
  * @return true if found and copied into *out.
  */
-bool app_registry_find_by_basename(const char *basename, app_entry_t *out);
+bool app_registry_find_by_id(const char *id, app_entry_t *out);
 
 /**
  * @brief Write an app file to the SD card, atomically and under the registry lock.
@@ -78,9 +85,13 @@ bool app_registry_find_by_basename(const char *basename, app_entry_t *out);
  * Writes to a temp file and renames, so a power loss cannot leave a
  * half-written app that the launcher would then try to run.
  *
+ * @param rel_path  destination under apps/: a bare filename ("counter.lua")
+ *                  for a flat app, or one subdirectory deep ("mygame/main.lua",
+ *                  "mygame/icon.bin") for a folder app. The parent folder is
+ *                  created if needed. Callers validate the path first.
  * @return false if the card is not mounted or the write failed.
  */
-bool app_registry_write_app(const char *basename, const void *data, size_t len);
+bool app_registry_write_app(const char *rel_path, const void *data, size_t len);
 
 /**
  * @brief Delete an app file from the SD card, under the registry lock.
@@ -90,10 +101,13 @@ bool app_registry_write_app(const char *basename, const void *data, size_t len);
  * Rescans before returning so the deleted app is gone from the list the
  * moment the caller sees success.
  *
+ * @param id  the app id: a flat app's file basename ("counter.lua") is
+ *            unlinked; a folder app's directory name ("mygame") has the whole
+ *            apps/<id>/ folder removed recursively.
  * @return false if the card is not mounted or the unlink failed (which
  *         includes "no such file").
  */
-bool app_registry_delete_app(const char *basename);
+bool app_registry_delete_app(const char *id);
 
 #ifdef __cplusplus
 }

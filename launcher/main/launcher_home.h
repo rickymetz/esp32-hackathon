@@ -24,6 +24,10 @@ typedef struct {
     const char *icon;      /* icon-name key for the grid glyph, or NULL -> letter
                             * avatar. launcher_home_default_icon() derives one
                             * from the basename; both callers use it. */
+    const char *icon_path; /* optional LVGL path to a card icon the app ships
+                            * ("D:/apps/<id>/icon.bin"). Tried first when set and
+                            * the file exists; otherwise the icon/letter fallback
+                            * chain below runs. NULL for apps without one. */
 } launcher_home_app_t;
 
 /* Curated default icon for a known app basename (case-insensitive substring

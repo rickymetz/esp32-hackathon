@@ -69,6 +69,8 @@ add_library(bindings STATIC
     src/sim_wifi.c
     src/sim_sensors.c
     src/sim_module_ui.c
+    src/sim_module_store.c
+    src/sim_embedded_lua.c
     shim/esp_shim.c
 )
 target_include_directories(bindings PUBLIC
@@ -84,9 +86,11 @@ target_include_directories(bindings PUBLIC
     ${LAUNCHER}/components/lua_module_wifi/include
     ${LAUNCHER}/components/lua_module_sensors/include
     ${LAUNCHER}/components/lua_module_ui/include
+    ${LAUNCHER}/components/lua_module_store/include
 )
 target_compile_definitions(bindings PUBLIC
     UI_LUA_DIR="${LAUNCHER}/components/lua_module_ui"
+    STORE_LUA_DIR="${LAUNCHER}/components/lua_module_store"
 )
 # The device forces LUA_32BITS build-wide; on host we keep native 64-bit Lua,
 # and both the core and these bindings agree because neither defines it.

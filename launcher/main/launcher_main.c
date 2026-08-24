@@ -49,6 +49,8 @@
 #include "app_button.h"
 #include "lv_font_lexend.h"
 #include "lua_module_ui.h"
+#include "lua_module_store.h"
+#include <sys/stat.h>
 #include "app_voice.h"
 #include "app_sensors.h"
 #include "app_audio.h"
@@ -185,7 +187,7 @@ static esp_io_expander_handle_t s_expander;
 static SemaphoreHandle_t s_app_mutex;
 
 /* Single-app-at-a-time means a single static copy is enough: the launch
- * path fills this in (under s_app_mutex) from app_registry_find_by_basename()
+ * path fills this in (under s_app_mutex) from app_registry_find_by_id()
  * just before starting the task, and lua_app_task reads only from this copy
  * for its whole run. That avoids holding a pointer into s_apps[] across a
  * run, which app_registry_scan() can rewrite at any time now that a serial
@@ -459,6 +461,30 @@ static void lua_app_task(void *arg)
     lua_pushcfunction(L, traceback_handler);
     int errfunc = lua_gettop(L);
 
+    /* Per-app persistent store: point require("store") at this app's state
+     * file (<sd>/state/<key>.json). get/set work in memory; store.save()
+     * writes here. mkdir is harmless if the dir already exists.
+     *
+     * Key on the app id (a flat app's basename minus ".lua", a folder app's
+     * folder name), NOT the pretty display name -- that is what the simulator
+     * (sim_main.c app_store_key) and the apps' own docs use, so store data
+     * lines up across device, sim, and card. */
+    {
+        char key[APP_ID_MAX];
+        snprintf(key, sizeof(key), "%s", app->id);
+        size_t kl = strlen(key);
+        if (kl > 4 && strcmp(key + kl - 4, ".lua") == 0) {
+            key[kl - 4] = '\0';
+        }
+        char dir[APP_PATH_MAX];
+        snprintf(dir, sizeof(dir), "%s/state", BSP_SD_MOUNT_POINT);
+        mkdir(dir, 0777);
+        char store_path[APP_PATH_MAX];
+        snprintf(store_path, sizeof(store_path), "%s/%s.json", dir, key);
+        lua_pushstring(L, store_path);
+        lua_setglobal(L, "__APP_STORE__");
+    }
+
     if (luaL_loadfile(L, app->path) != LUA_OK ||
         lua_pcall(L, 0, 0, errfunc) != LUA_OK) {
         const char *msg = lua_tostring(L, -1);
@@ -562,13 +588,6 @@ out:
     vTaskDelete(NULL);
 }
 
-/* "/sdcard/apps/counter.lua" -> "counter.lua" */
-static const char *path_basename(const char *path)
-{
-    const char *slash = strrchr(path, '/');
-    return slash ? slash + 1 : path;
-}
-
 /* Frees the heap copy of a row's basename (see build_launcher_ui) when LVGL
  * deletes the row -- on Refresh's full rebuild and on ordinary screen
  * teardown alike. */
@@ -582,7 +601,7 @@ static void row_data_delete_cb(lv_event_t *e)
  * place by every rescan -- Refresh, and (since PUSH also rescans at runtime)
  * an ordinary file push too -- so a raw pointer captured when the row was
  * built could point at a different app, or garbage, by the time it is
- * tapped. Resolving by name at click time via app_registry_find_by_basename()
+ * tapped. Resolving by name at click time via app_registry_find_by_id()
  * makes a stale row a no-op instead of a wrong-app launch or a crash: the
  * lookup and the copy-out happen under the registry's own lock, so a PUSH
  * rescanning concurrently on the serial task cannot be observed half-done. */
@@ -601,7 +620,7 @@ static void app_row_clicked(lv_event_t *e)
     }
 
     app_entry_t match;
-    if (!app_registry_find_by_basename(basename, &match)) {
+    if (!app_registry_find_by_id(basename, &match)) {
         xSemaphoreGive(s_app_mutex);
         ESP_LOGW(TAG, "tapped row '%s' is no longer in the registry", basename);
         return;
@@ -632,7 +651,7 @@ bool launcher_run_app_by_name(const char *basename)
     }
 
     app_entry_t match;
-    if (!app_registry_find_by_basename(basename, &match)) {
+    if (!app_registry_find_by_id(basename, &match)) {
         xSemaphoreGive(s_app_mutex);
         ESP_LOGW(TAG, "RUN '%s': not found", basename);
         return false;
@@ -735,12 +754,22 @@ static bool launcher_home_get_app(size_t index, launcher_home_app_t *out, void *
 {
     (void)ctx;
     static app_entry_t app;
+    static char icon_path[APP_PATH_MAX];
     if (!app_registry_get_copy(index, &app)) {
         return false;
     }
     out->name = app.name;
-    out->basename = path_basename(app.path);
-    out->icon = launcher_home_default_icon(out->basename);
+    out->basename = app.id;   /* the stable RUN/DELETE identity, folder or flat */
+    out->icon = launcher_home_default_icon(app.id);
+    /* A folder app may ship its own icon at apps/<id>/icon.bin; point the home
+     * screen at it via the D: card FS. launcher_home only uses it if the file
+     * exists, so a folder app without an icon just falls back to a glyph. */
+    if (app.in_folder &&
+        snprintf(icon_path, sizeof(icon_path), "D:/apps/%s/icon.bin", app.id) < (int)sizeof(icon_path)) {
+        out->icon_path = icon_path;
+    } else {
+        out->icon_path = NULL;
+    }
     return true;
 }
 
@@ -919,6 +948,9 @@ void app_main(void)
     /* Hand the BSP display to the service the Lua LVGL binding talks to. */
     display_service_attach(disp);
     ESP_ERROR_CHECK(lua_module_lvgl_register_with_data_root(BSP_SD_MOUNT_POINT));
+    /* Register the D: card filesystem now so the home screen can load app
+     * icons (D:/apps/<id>/icon.bin) before any app runs its own lvgl.init(). */
+    ESP_ERROR_CHECK(lua_module_lvgl_register_fs());
     ESP_ERROR_CHECK(app_timer_register());
     ESP_ERROR_CHECK(app_button_register());
     /* Order matters: cap_lua opens modules in registration order, and
@@ -928,6 +960,7 @@ void app_main(void)
     ESP_ERROR_CHECK(app_voice_register());
     ESP_ERROR_CHECK(app_sensors_register());
     ESP_ERROR_CHECK(app_wifi_register());
+    ESP_ERROR_CHECK(lua_module_store_register());   /* no deps; order is free */
     ESP_ERROR_CHECK(lua_module_ui_register());
 
     /* BOOT (GPIO0) is the Home button. Input + pull-up matches its idle

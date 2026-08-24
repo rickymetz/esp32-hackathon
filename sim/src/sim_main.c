@@ -22,6 +22,7 @@
 #include "app_sensors.h"
 #include "app_sandbox.h"
 #include "lua_module_ui.h"
+#include "lua_module_store.h"
 #include "launcher_home.h"
 
 /* Sim-only reset hooks (the device wifi/sensors modules are event/register
@@ -48,6 +49,7 @@ void sim_wifi_set_outcome(bool succeed);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <signal.h>
 #include <unistd.h>
@@ -244,15 +246,60 @@ static void render_error_screen(const char *app_name, const char *msg)
 
 /* Resolve an app path: use it as given if it exists, else try it under the
  * SD-card root (so `run apps/foo.lua` works from any directory, and bare
- * `run foo.lua` finds apps/foo.lua the way the device resolves app names). */
+ * `run foo.lua` finds apps/foo.lua the way the device resolves app names).
+ *
+ * A folder app is apps/<name>/main.lua: when a candidate resolves to a
+ * directory, append /main.lua, so `run apps/mygame`, `run mygame`, and the
+ * full `run apps/mygame/main.lua` all launch it the way the device does. */
 static const char *resolve_app_path(const char *path, char *buf, size_t bufsz)
 {
-    if (access(path, R_OK) == 0) return path;
-    snprintf(buf, bufsz, "%s/%s", s_sdroot, path);
-    if (access(buf, R_OK) == 0) return buf;
-    snprintf(buf, bufsz, "%s/apps/%s", s_sdroot, path);
-    if (access(buf, R_OK) == 0) return buf;
+    char c1[1024], c2[1024];
+    snprintf(c1, sizeof(c1), "%s/%s", s_sdroot, path);
+    snprintf(c2, sizeof(c2), "%s/apps/%s", s_sdroot, path);
+    const char *cands[] = { path, c1, c2 };
+
+    for (size_t i = 0; i < sizeof(cands) / sizeof(cands[0]); i++) {
+        struct stat st;
+        if (stat(cands[i], &st) != 0) {
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            snprintf(buf, bufsz, "%s/main.lua", cands[i]);
+            if (access(buf, R_OK) == 0) {
+                return buf;
+            }
+            continue;
+        }
+        if (access(cands[i], R_OK) == 0) {
+            snprintf(buf, bufsz, "%s", cands[i]);
+            return buf;
+        }
+    }
     return path;   /* let luaL_loadfile report the original path */
+}
+
+/* The store/display key for an app, derived from its resolved path the way the
+ * device registry names it: a folder app (apps/<name>/main.lua) keys on its
+ * folder name, a flat app (apps/<name>.lua) on its basename minus ".lua". */
+static void app_store_key(const char *rpath, char *out, size_t out_size)
+{
+    char rp[1024];
+    snprintf(rp, sizeof(rp), "%s", rpath);
+
+    char *base = strrchr(rp, '/');
+    const char *fname = base ? base + 1 : rp;
+
+    if (base != NULL && strcmp(fname, "main.lua") == 0) {
+        *base = '\0';                       /* rp is now the folder path */
+        char *pbase = strrchr(rp, '/');
+        snprintf(out, out_size, "%s", pbase ? pbase + 1 : rp);
+        return;
+    }
+    snprintf(out, out_size, "%s", fname);
+    char *dot = strrchr(out, '.');
+    if (dot && strcmp(dot, ".lua") == 0) {
+        *dot = '\0';
+    }
 }
 
 /* Tear a Lua app state down the way the launcher's lua_app_task does on exit:
@@ -298,6 +345,22 @@ static int app_run(const char *path)
 
     char pathbuf[1024];
     const char *rpath = resolve_app_path(path, pathbuf, sizeof(pathbuf));
+
+    /* Per-app store path, mirroring the device (launcher_main.c): point
+     * require("store") at <sdroot>/state/<name>.json, keyed the same way the
+     * registry names the app (folder name for a folder app, basename for a
+     * flat one). */
+    {
+        char name[1024];
+        app_store_key(rpath, name, sizeof(name));
+        char dir[1024];
+        snprintf(dir, sizeof(dir), "%s/state", s_sdroot);
+        mkdir(dir, 0777);
+        char store_path[1300];
+        snprintf(store_path, sizeof(store_path), "%s/%s.json", dir, name);
+        lua_pushstring(L, store_path);
+        lua_setglobal(L, "__APP_STORE__");
+    }
 
     lua_pushcfunction(L, traceback_handler);
     int errfunc = lua_gettop(L);
@@ -353,9 +416,12 @@ static bool sim_home_get_app(size_t index, launcher_home_app_t *out, void *ctx)
 {
     (void)ctx;
     if (index >= (size_t)SIM_FAKE_APP_COUNT) return false;
-    out->name = s_fake_apps[index];
-    out->basename = s_fake_apps[index];   /* callbacks are NULL in the sim */
-    out->icon = launcher_home_default_icon(s_fake_apps[index]);
+    const char *name = s_fake_apps[index];
+    out->name = name;
+    out->basename = name;   /* callbacks are NULL in the sim */
+    out->icon = launcher_home_default_icon(name);
+    out->icon_path = NULL;  /* the fixed fake list ships no card icons, so the
+                             * home render stays a pure function of the fixture */
     return true;
 }
 
@@ -573,12 +639,14 @@ int main(int argc, char **argv)
     /* Registration order matters: ui/keyboard require() lvgl+timer+voice at
      * load, so those come first -- exactly the launcher's app_main() order. */
     if (lua_module_lvgl_register_with_data_root(sdroot) != ESP_OK ||
+        lua_module_lvgl_register_fs() != ESP_OK ||
         app_timer_register() != ESP_OK ||
         app_button_register() != ESP_OK ||
         app_voice_register() != ESP_OK ||
         app_audio_register() != ESP_OK ||
         app_wifi_register() != ESP_OK ||
         app_sensors_register() != ESP_OK ||
+        lua_module_store_register() != ESP_OK ||
         lua_module_ui_register() != ESP_OK) {
         fprintf(stderr, "module registration failed\n");
         return 1;

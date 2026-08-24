@@ -1008,8 +1008,11 @@
 /** GStreamer library */
 #define LV_USE_GSTREAMER 0
 
-/** Decode bin images to RAM */
-#define LV_BIN_DECODER_RAM_LOAD 0
+/** Decode bin images to RAM. On for card-loaded app icons: the streaming
+ *  decoder scales file images without antialiasing (jagged edges + a bottom
+ *  "nub"), RAM-load scales them as smoothly as the built-in in-RAM icons.
+ *  Mirrors CONFIG_LV_BIN_DECODER_RAM_LOAD=y in launcher/sdkconfig.defaults. */
+#define LV_BIN_DECODER_RAM_LOAD 1
 
 /** RLE decompress library */
 #define LV_USE_RLE 0

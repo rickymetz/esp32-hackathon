@@ -16,34 +16,65 @@
 
 static const char *TAG = "serial_push";
 
-#define LINE_MAX     128
-#define NAME_MAX      64
+/* NAME_MAX covers a full app id (APP_ID_MAX is 128): a shorter cap would let
+ * the registry list and launch an app by tap that RUN/DELETE then reject as
+ * "bad_name". LINE_MAX must hold the longest command line ("DELETE " + id). */
+#define LINE_MAX     256
+#define NAME_MAX     128
 #define PAYLOAD_MAX (64 * 1024)
 
-/* Reject anything that is not a bare .lua basename. Not a security boundary --
- * anyone with USB can already reflash the board -- but it stops a stray path
- * from writing somewhere surprising and turning into a confusing afternoon.
- * Shared by PUSH (write target) and RUN (registry lookup key). */
-static bool name_is_safe(const char *name)
+/* Stringify NAME_MAX for the sscanf field width, so the width can never drift
+ * from the buffer size (name[NAME_MAX + 1]). */
+#define STR2(x) #x
+#define STR(x)  STR2(x)
+
+/* None of these are a security boundary -- anyone with USB can already reflash
+ * the board -- but they stop a stray path from writing somewhere surprising and
+ * turning into a confusing afternoon. `..` and a leading '/' are always out. */
+static bool has_dotdot_or_absolute(const char *name)
+{
+    return name[0] == '/' || strstr(name, "..") != NULL;
+}
+
+/* A RUN/DELETE target: an app id. A flat app's id is its "counter.lua" file
+ * basename; a folder app's is its bare "mygame" directory name. Either way it
+ * names one entry directly under apps/, so no '/' and no '..'. */
+static bool id_is_safe(const char *name)
 {
     size_t len = strlen(name);
     if (len == 0 || len > NAME_MAX) {
         return false;
     }
-    if (strchr(name, '/') || strstr(name, "..")) {
-        return false;
-    }
-    return len > 4 && strcmp(name + len - 4, ".lua") == 0;
+    return !has_dotdot_or_absolute(name) && strchr(name, '/') == NULL;
 }
 
-/* Whether `basename` matches an app currently known to the registry. Used by
+/* A PUSH target: a path under apps/. Either a flat "counter.lua", or one
+ * directory deep for a folder app ("mygame/main.lua", "mygame/icon.bin").
+ * At most one '/', and it must have a non-empty folder and file on each side. */
+static bool push_path_is_safe(const char *name)
+{
+    size_t len = strlen(name);
+    if (len == 0 || len > NAME_MAX || has_dotdot_or_absolute(name)) {
+        return false;
+    }
+    const char *slash = strchr(name, '/');
+    if (slash == NULL) {
+        return true;   /* flat file directly under apps/ */
+    }
+    if (slash == name || slash[1] == '\0') {
+        return false;  /* "/foo" or "foo/" -- need dir and file both */
+    }
+    return strchr(slash + 1, '/') == NULL;   /* only one level deep */
+}
+
+/* Whether `id` matches an app currently known to the registry. Used by
  * RUN to tell "not_found" apart from "already_running" without either
  * duplicating launcher_main's task-state tracking or widening the
  * launcher_run_app_by_name() API beyond the bool it was specified as. */
-static bool registry_has_basename(const char *basename)
+static bool registry_has_id(const char *id)
 {
     app_entry_t app;
-    return app_registry_find_by_basename(basename, &app);
+    return app_registry_find_by_id(id, &app);
 }
 
 static bool read_line(char *out, size_t cap)
@@ -88,11 +119,11 @@ static void handle_push(const char *header)
     char name[NAME_MAX + 1];
     unsigned expect_len = 0, expect_crc = 0;
 
-    if (sscanf(header, "PUSH %64s %u %x", name, &expect_len, &expect_crc) != 3) {
+    if (sscanf(header, "PUSH %" STR(NAME_MAX) "s %u %x", name, &expect_len, &expect_crc) != 3) {
         printf("PUSH_ERR bad_header\n");
         return;
     }
-    if (!name_is_safe(name)) {
+    if (!push_path_is_safe(name)) {
         printf("PUSH_ERR bad_name\n");
         return;
     }
@@ -160,15 +191,15 @@ static void handle_run(const char *header)
 {
     char name[NAME_MAX + 1];
 
-    if (sscanf(header, "RUN %64s", name) != 1) {
+    if (sscanf(header, "RUN %" STR(NAME_MAX) "s", name) != 1) {
         printf("RUN_ERR bad_name\n");
         return;
     }
-    if (!name_is_safe(name)) {
+    if (!id_is_safe(name)) {
         printf("RUN_ERR bad_name\n");
         return;
     }
-    if (!registry_has_basename(name)) {
+    if (!registry_has_id(name)) {
         printf("RUN_ERR not_found\n");
         return;
     }
@@ -193,8 +224,7 @@ static void handle_list(void)
         if (!app_registry_get_copy(i, &app)) {
             break;
         }
-        const char *base = strrchr(app.path, '/');
-        printf("APP %s\n", base ? base + 1 : app.path);
+        printf("APP %s\n", app.id);   /* the id RUN/DELETE accept, folder or flat */
         n++;
     }
     printf("LIST_OK %u\n", (unsigned)n);
@@ -208,11 +238,11 @@ static void handle_delete(const char *header)
 {
     char name[NAME_MAX + 1];
 
-    if (sscanf(header, "DELETE %64s", name) != 1 || !name_is_safe(name)) {
+    if (sscanf(header, "DELETE %" STR(NAME_MAX) "s", name) != 1 || !id_is_safe(name)) {
         printf("DELETE_ERR bad_name\n");
         return;
     }
-    if (!registry_has_basename(name)) {
+    if (!registry_has_id(name)) {
         printf("DELETE_ERR not_found\n");
         return;
     }
