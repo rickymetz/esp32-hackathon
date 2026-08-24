@@ -27,6 +27,14 @@ CONFIG_LV_USE_SNAPSHOT=y
 CONFIG_LV_USE_TINY_TTF=y
 CONFIG_LV_TINY_TTF_FILE_SUPPORT=y
 
+# Card-loaded app icons (apps/<id>/icon.bin) are file-sourced RGB565 images.
+# The launcher scales them to the tile (120 -> 128 in the grid), and the
+# streaming bin decoder scales without antialiasing -- jagged edges plus a
+# scaler artifact ("nub") at the bottom. RAM-load decodes each icon fully
+# into a buffer first, so it scales as smoothly as the built-in in-RAM icons.
+# Costs ~28.8 KB PSRAM per visible card icon while it's on screen.
+CONFIG_LV_BIN_DECODER_RAM_LOAD=y
+
 # I4: raising the fixed pool (I3, 64->128 KB) stopped LVGL's rebuild-before-
 # delete refresh from exhausting it, but that pool comes out of internal
 # DRAM -- the scarcest resource on this board -- and the extra 64 KB broke
