@@ -471,12 +471,20 @@ static void lua_app_task(void *arg)
      * lines up across device, sim, and card. */
     {
         char key[APP_ID_MAX];
-        snprintf(key, sizeof(key), "%s", app->id);
+        /* Explicit precision, not a bare "%s": app->id is a char[APP_ID_MAX]
+         * buffer, so GCC 14 cannot prove the copy fits and -Werror=
+         * format-truncation rejects it. Bounding it to sizeof(key)-1 states
+         * the invariant the id already satisfies. */
+        snprintf(key, sizeof(key), "%.*s", (int)(sizeof(key) - 1), app->id);
         size_t kl = strlen(key);
         if (kl > 4 && strcmp(key + kl - 4, ".lua") == 0) {
             key[kl - 4] = '\0';
         }
-        char dir[APP_PATH_MAX];
+        /* Sized for what it actually holds -- BSP_SD_MOUNT_POINT "/state",
+         * 13 bytes -- rather than APP_PATH_MAX. At APP_PATH_MAX the compiler
+         * had to assume dir could be 319 bytes and so could not prove
+         * store_path below fits either. */
+        char dir[64];
         snprintf(dir, sizeof(dir), "%s/state", BSP_SD_MOUNT_POINT);
         mkdir(dir, 0777);
         char store_path[APP_PATH_MAX];

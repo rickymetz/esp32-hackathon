@@ -89,19 +89,94 @@ else
   echo "Using esptool $VENV_VER from $HERE/.venv (freshly installed)"
 fi
 
-if [ -f "$HERE/bin/BUILD_INFO" ]; then
-  # shellcheck disable=SC1090
-  . "$HERE/bin/BUILD_INFO"
-  echo "Flashing build ${commit:-unknown} from ${date:-unknown}"
+# The binaries are no longer committed to the repo -- they are a release
+# asset. Inside an extracted release, bin/ is already here and this is a
+# no-op. Run from a git checkout, it fetches the release instead.
+RELEASE_REPO="${LAUNCHER_REPO:-rickymetz/esp32-hackathon}"
+RELEASE_TAG="${LAUNCHER_VERSION:-latest}"
+
+if [ ! -d "$HERE/bin" ]; then
+  echo "No local bin/ -- fetching the $RELEASE_TAG release from $RELEASE_REPO ..."
+  CACHE="$HERE/.cache"
+  mkdir -p "$CACHE"
+
+  if [ "$RELEASE_TAG" = "latest" ]; then
+    API="https://api.github.com/repos/$RELEASE_REPO/releases/latest"
+  else
+    API="https://api.github.com/repos/$RELEASE_REPO/releases/tags/$RELEASE_TAG"
+  fi
+
+  ASSET=$(curl -fsSL "$API" 2>/dev/null | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+for a in d.get('assets', []):
+    if a['name'].endswith('.zip'):
+        print(a['browser_download_url']); break
+" || true)
+
+  if [ -z "$ASSET" ]; then
+    cat >&2 <<NOREL
+
+Could not find a release asset.
+
+Either no release has been published yet, or this machine cannot reach
+GitHub. To flash from a local build instead:
+
+  cd launcher && idf.py build
+  tools/package_firmware.sh v0.0.0-local
+  cd dist/esp32-launcher-v0.0.0-local && ./flash.sh
+
+NOREL
+    exit 1
+  fi
+
+  echo "Downloading $(basename "$ASSET") ..."
+  curl -fSL --progress-bar -o "$CACHE/release.zip" "$ASSET"
+  rm -rf "$CACHE/extract" && mkdir -p "$CACHE/extract"
+  unzip -q "$CACHE/release.zip" -d "$CACHE/extract"
+  # The archive holds a single top-level directory.
+  SRC=$(find "$CACHE/extract" -maxdepth 2 -type d -name bin | head -1)
+  [ -n "$SRC" ] || { echo "release archive has no bin/ directory" >&2; exit 1; }
+  ln -sfn "$SRC" "$HERE/bin"
+  [ -f "$(dirname "$SRC")/MANIFEST" ] && cp "$(dirname "$SRC")/MANIFEST" "$HERE/MANIFEST"
 fi
 
+if [ -f "$HERE/MANIFEST" ]; then
+  # Parsed, never sourced: MANIFEST is data, and its values contain spaces
+  # ("idf=ESP-IDF v5.5.5"). Sourcing it made the shell try to execute the
+  # version string as a command.
+  manifest_get() { sed -n "s/^$1=//p" "$HERE/MANIFEST" | head -1; }
+  echo "Flashing $(manifest_get version) (commit $(manifest_get commit), built $(manifest_get built_utc))"
+  if [ "$(manifest_get dirty)" = "yes" ]; then
+    echo "  note: built from a dirty working tree" >&2
+  fi
+fi
+
+# Offsets and write_flash flags come from the build (bin/OFFSETS,
+# bin/FLASH_ARGS), not from this script. Hardcoding them is what let the
+# previous version ship without srmodels.bin -- three of the four required
+# images -- leaving voice silently non-functional.
+if [ ! -f "$HERE/bin/OFFSETS" ]; then
+  echo "bin/OFFSETS missing -- this bin/ predates the release format." >&2
+  exit 1
+fi
+
+FLASH_ARGS=$(cat "$HERE/bin/FLASH_ARGS")
+IMAGES=()
+while read -r off file; do
+  [ -n "$off" ] || continue
+  [ -f "$HERE/bin/$file" ] || { echo "missing image: $file" >&2; exit 1; }
+  IMAGES+=("$off" "$HERE/bin/$file")
+done < "$HERE/bin/OFFSETS"
+
 echo "Flashing $PORT ..."
+# shellcheck disable=SC2086
 if ! $ESPTOOL --chip esp32s3 --port "$PORT" -b 460800 \
     --before default_reset --after hard_reset write_flash \
-    --flash_mode dio --flash_size 16MB --flash_freq 80m \
-    0x0     "$HERE/bin/bootloader.bin" \
-    0x8000  "$HERE/bin/partition-table.bin" \
-    0x10000 "$HERE/bin/launcher.bin"; then
+    $FLASH_ARGS "${IMAGES[@]}"; then
   cat >&2 <<'RECOVERY'
 
 Flashing failed.

@@ -3,6 +3,7 @@
 #include <strings.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>   /* rmdir(), used by remove_app_folder() below */
 
 #include "app_registry.h"
 #include "esp_log.h"
@@ -319,7 +320,7 @@ bool app_registry_write_app(const char *rel_path, const void *data, size_t len)
 }
 
 /* Remove apps/<id>/ and everything in it (main.lua, icon, generated files).
- * One level deep is all a folder app is: apps/<id>/*, with no nested
+ * One level deep is all a folder app is: apps/<id>/ entries, with no nested
  * subdirectories, so a flat readdir+unlink then rmdir is enough. Returns 0
  * on success, like remove(). */
 static int remove_app_folder(const char *dir_path)

@@ -112,7 +112,8 @@ hands:
 ```
 
 `RUN` / `STOP` / `LIST` / `DELETE` / `TAP x y` / `SWIPE x0 y0 x1 y1 [ms]` /
-`PWR` (synthetic button press) / `SHOT` (screenshot → PNG via
+`PWR` (synthetic button press) / `MEM` / `STATS` (heap low-water, per-task
+CPU and stack headroom — see `tools/stats.py`) / `SHOT` (screenshot → PNG via
 `tools/screenshot.py`). Taps inject through a real LVGL input device, so
 widgets can't tell them from a finger. This is how the UI and even the voice
 module get verified — macOS `say` through the speakers reaches the mic.

@@ -115,3 +115,37 @@ CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 # stack from PSRAM before raising "stack overflow" -- meaning the out-of-memory
 # lands on some unrelated allocation first and the real cause is invisible.
 CONFIG_LUA_MAXSTACK=65536
+
+# ---- Performance instrumentation -------------------------------------
+# Per-task CPU accounting for the STATS serial command (serial_push.c).
+# Without these, uxTaskGetSystemState() reports no run-time counters and
+# STATS says "cpu unavailable" rather than failing to build.
+#
+# Costs internal DRAM: TRACE_FACILITY widens every TCB, and internal DRAM
+# is the scarcest resource on this board (measured 72 KB largest
+# contiguous block at idle, 42 KB with an app running). Compare MEM
+# before and after -- if the largest block moves materially, that is a
+# real budget decision, not noise.
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
+# vTaskList()/vTaskGetRunTimeStats() string helpers. STATS does not need
+# them (it walks uxTaskGetSystemState directly), but they make a one-off
+# dump from a debugger or a console hook possible without a rebuild.
+CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
+
+# LVGL's own frame-rate / CPU overlay. Symbol names verified against
+# launcher/managed_components/lvgl__lvgl/Kconfig (LV_USE_SYSMON at line
+# 1626, LV_USE_PERF_MONITOR at 1630) rather than guessed -- the same
+# check that CONFIG_LV_USE_CLIB_MALLOC above needed.
+#
+# PERF_MONITOR draws FPS and CPU into the corner of the live screen, so
+# SHOT captures it automatically: every screenshot the harness takes
+# carries the frame rate with it, with no extra plumbing.
+# Set CONFIG_LV_USE_PERF_MONITOR_LOG_MODE=y instead to send it to the log
+# rather than paint it, if the overlay ever gets in the way of UI review.
+CONFIG_LV_USE_SYSMON=y
+CONFIG_LV_USE_PERF_MONITOR=y
+# Deliberately NOT enabling CONFIG_LV_USE_MEM_MONITOR: it reports
+# lv_mem_monitor(), whose core is a no-op under CONFIG_LV_USE_CLIB_MALLOC
+# (set above), so it would paint a permanent 0/0 on screen. STATS reports
+# the real heap instead.

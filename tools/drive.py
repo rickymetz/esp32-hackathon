@@ -9,6 +9,7 @@ Usage: drive.py CMD [args] [: CMD [args]]...
   swipe <x0> <y0> <x1> <y1> [ms]   synthetic swipe/drag
   sleep <seconds>          wait (UI settle, animations)
   shot <out.png>           capture the screen
+  stats                    heap low-water, per-task CPU and stack headroom
 
 Example -- open the keyboard and look at it:
   drive.py run ui_test.lua : sleep 1 : tap 184 390 : sleep 0.6 : shot kb.png
@@ -62,6 +63,15 @@ for c in chains(args):
         print("swipe:", cmd_and_wait(s, "SWIPE " + " ".join(c[1:]), "SWIPE_OK", "SWIPE_ERR"))
     elif op == "sleep":
         time.sleep(float(c[1]))
+    elif op == "stats":
+        # CPU is a delta between consecutive STATS calls, so a chain wants
+        # this twice around the thing being measured:
+        #   drive.py run x.lua : stats : sleep 5 : stats
+        # The first call primes; the second reports the interval.
+        s.close()
+        subprocess.run([sys.executable, __file__.replace("drive.py", "stats.py")],
+                       check=False)
+        s = serial.Serial(PORT, 115200, timeout=2)
     elif op == "shot":
         s.close()
         subprocess.run([sys.executable, __file__.replace("drive.py", "screenshot.py"), c[1], PORT], check=False)
