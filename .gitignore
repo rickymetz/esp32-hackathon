@@ -28,3 +28,11 @@ secrets*
 # Sim app state written by the store module at runtime
 /state/
 sim/state/
+
+# Prebuilt firmware is a release asset, not repo content. flash.sh fetches
+# it into firmware/bin (a symlink into firmware/.cache) on first run;
+# tools/package_firmware.sh builds the archive into dist/.
+firmware/bin
+firmware/.cache/
+firmware/MANIFEST
+dist/
