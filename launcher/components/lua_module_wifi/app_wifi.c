@@ -10,6 +10,7 @@
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_event.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -26,6 +27,7 @@ typedef enum {
     WIFI_OFF,
     WIFI_CONNECTING,
     WIFI_CONNECTED,
+    WIFI_RETRYING,
     WIFI_FAILED,
 } wifi_state_t;
 
@@ -53,6 +55,14 @@ typedef struct {
 static volatile int s_scan_state = -1;
 static scan_rec_t   s_scan[SCAN_MAX];
 static int          s_scan_n;
+
+/* Backoff after the fast retries are spent. Capped at the last entry. */
+static const int s_backoff_s[] = { 30, 60, 120, 300 };
+#define BACKOFF_N ((int)(sizeof(s_backoff_s) / sizeof(s_backoff_s[0])))
+
+static esp_timer_handle_t s_retry_timer;
+static int                s_backoff_idx;
+static const char        *s_error;      /* why we are FAILED or RETRYING */
 
 /* ---- credentials ---- */
 
@@ -132,6 +142,56 @@ static void start_ntp(void)
 
 /* ---- events ---- */
 
+static void retry_timer_cb(void *arg);
+
+/* Every state change goes through here. The retry timer is armed ONLY on
+ * entry to WIFI_RETRYING and cancelled on entry to anything else; that is
+ * the whole reason this is a function rather than scattered assignments,
+ * because the timer interacts with both scan_start() and connect(). */
+static void wifi_set_state(wifi_state_t next, const char *err)
+{
+    if (next != WIFI_RETRYING && s_retry_timer) {
+        esp_timer_stop(s_retry_timer);            /* harmless if not running */
+    }
+    if (next == WIFI_CONNECTING || next == WIFI_CONNECTED) {
+        err = NULL;                               /* never report a stale reason */
+    }
+    s_error = err;
+    s_state = next;
+
+    if (next == WIFI_RETRYING) {
+        int secs = s_backoff_s[s_backoff_idx];
+        if (s_backoff_idx < BACKOFF_N - 1) {
+            s_backoff_idx++;
+        }
+        if (!s_retry_timer) {
+            const esp_timer_create_args_t a = {
+                .callback = retry_timer_cb, .name = "wifi_retry",
+            };
+            if (esp_timer_create(&a, &s_retry_timer) != ESP_OK) {
+                ESP_LOGE(TAG, "retry timer create failed; staying failed");
+                s_state = WIFI_FAILED;
+                return;
+            }
+        }
+        esp_timer_start_once(s_retry_timer, (int64_t)secs * 1000000);
+        ESP_LOGI(TAG, "retrying in %ds (%s)", secs, err ? err : "?");
+    }
+}
+
+static void retry_timer_cb(void *arg)
+{
+    (void)arg;
+    char ssid[SSID_MAX], pass[PASS_MAX];
+    if (!creds_load(ssid, pass)) {
+        wifi_set_state(WIFI_FAILED, "no saved network");
+        return;
+    }
+    s_retries = 0;
+    wifi_set_state(WIFI_CONNECTING, NULL);
+    esp_wifi_connect();
+}
+
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg; (void)data;
@@ -139,16 +199,28 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
         s_ip[0] = '\0';
-        if (s_retries < MAX_RETRIES) {
+
+        /* A wrong password will never succeed, so retrying it forever just
+         * keeps the radio busy -- that is why this used to give up. But an
+         * absent AP is the opposite case: it may well come back, and giving
+         * up meant the board never reconnected after a router reboot or a
+         * walk back into range. The reason code separates them. */
+        bool auth = (d->reason == WIFI_REASON_AUTH_FAIL ||
+                     d->reason == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT ||
+                     d->reason == WIFI_REASON_HANDSHAKE_TIMEOUT);
+        if (auth) {
+            ESP_LOGW(TAG, "auth failed (reason %d) -- not retrying", d->reason);
+            wifi_set_state(WIFI_FAILED, "wrong password");
+        } else if (s_retries < MAX_RETRIES) {
             s_retries++;
-            s_state = WIFI_CONNECTING;
+            wifi_set_state(WIFI_CONNECTING, NULL);
             esp_wifi_connect();
         } else {
-            /* Give up rather than retry forever: a wrong password would
-             * otherwise keep the radio busy for the life of the board. */
-            s_state = WIFI_FAILED;
-            ESP_LOGW(TAG, "giving up after %d attempts", MAX_RETRIES);
+            wifi_set_state(WIFI_RETRYING,
+                           d->reason == WIFI_REASON_NO_AP_FOUND
+                               ? "network not found" : "connection lost");
         }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
         uint16_t n = SCAN_MAX;
@@ -201,7 +273,8 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&e->ip_info.ip));
         s_retries = 0;
-        s_state = WIFI_CONNECTED;
+        s_backoff_idx = 0;
+        wifi_set_state(WIFI_CONNECTED, NULL);
         ESP_LOGI(TAG, "connected, ip=%s", s_ip);
         start_ntp();
     }
@@ -244,7 +317,7 @@ static bool stack_start(void)
 static bool connect_with(const char *ssid, const char *pass)
 {
     if (!stack_start()) {
-        s_state = WIFI_FAILED;
+        wifi_set_state(WIFI_FAILED, "wifi stack failed");
         return false;
     }
 
@@ -256,13 +329,14 @@ static bool connect_with(const char *ssid, const char *pass)
 
     esp_wifi_stop();
     if (esp_wifi_set_config(WIFI_IF_STA, &wc) != ESP_OK) {
-        s_state = WIFI_FAILED;
+        wifi_set_state(WIFI_FAILED, "config failed");
         return false;
     }
     s_retries = 0;
-    s_state = WIFI_CONNECTING;
+    s_backoff_idx = 0;                  /* a manual connect restarts the ladder */
+    wifi_set_state(WIFI_CONNECTING, NULL);
     if (esp_wifi_start() != ESP_OK) {   /* STA_START triggers connect */
-        s_state = WIFI_FAILED;
+        wifi_set_state(WIFI_FAILED, "wifi start failed");
         return false;
     }
     return true;
@@ -309,6 +383,7 @@ static int l_wifi_status(lua_State *L)
     switch (s_state) {
     case WIFI_CONNECTING: lua_pushliteral(L, "connecting"); break;
     case WIFI_CONNECTED:  lua_pushliteral(L, "connected");  break;
+    case WIFI_RETRYING:   lua_pushliteral(L, "retrying");   break;
     case WIFI_FAILED:     lua_pushliteral(L, "failed");     break;
     default:              lua_pushliteral(L, "off");        break;
     }
@@ -332,7 +407,7 @@ static int l_wifi_disconnect(lua_State *L)
         esp_wifi_disconnect();
         esp_wifi_stop();
     }
-    s_state = WIFI_OFF;
+    wifi_set_state(WIFI_OFF, NULL);     /* also cancels any pending retry */
     s_ip[0] = '\0';
     lua_pushboolean(L, 1);
     return 1;
@@ -406,6 +481,15 @@ static int l_wifi_scan_results(lua_State *L)
     return 1;
 }
 
+/* Why the current failed/retrying state exists; nil otherwise. Cleared on
+ * any transition into connecting or connected, so it never reports a stale
+ * reason from an earlier attempt. */
+static int l_wifi_error(lua_State *L)
+{
+    if (s_error) lua_pushstring(L, s_error); else lua_pushnil(L);
+    return 1;
+}
+
 static const luaL_Reg wifi_funcs[] = {
     {"connect", l_wifi_connect},
     {"status", l_wifi_status},
@@ -415,6 +499,7 @@ static const luaL_Reg wifi_funcs[] = {
     {"forget", l_wifi_forget},
     {"scan_start", l_wifi_scan_start},
     {"scan_results", l_wifi_scan_results},
+    {"error", l_wifi_error},
     {NULL, NULL},
 };
 
