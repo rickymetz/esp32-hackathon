@@ -85,6 +85,9 @@ jobs:
       - name: Timer accuracy regression
         run: ./sim/timing_test.py
 
+      - name: Timer catch-up guard (callback overruns its period)
+        run: ./sim/overrun_test.py
+
       - name: Documented widget API still matches the bindings
         run: ./sim/widget_api_test.py
 
