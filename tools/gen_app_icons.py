@@ -19,7 +19,7 @@ supersampled RGBA buffer, box-downsampled for anti-aliasing.
 import math
 import os
 
-SIZE = 120
+SIZE = 128
 SS = 3
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_C = os.path.join(HERE, "..", "launcher", "main", "launcher_icons.c")
