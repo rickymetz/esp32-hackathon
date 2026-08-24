@@ -5,6 +5,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A shared app launcher for the Waveshare ESP32-S3-Touch-AMOLED-1.8. Apps are Lua scripts
 loaded from the SD card at runtime — installing one is a file copy, not a reflash.
 
+**Architecture lives in `codemaps/`** — regenerated, loaded at session start, and the
+place to look for *what exists where*:
+
+| Map | Covers |
+| --- | --- |
+| `codemaps/architecture.md` | task model, lock order, module graph, app lifecycle, build |
+| `codemaps/firmware.md` | per-file breakdown of `launcher/main` and `components/` |
+| `codemaps/data.md` | structs, every limit, the pin map, measured figures |
+| `codemaps/tooling.md` | `tools/` and `sim/`, and the verification recipes |
+
+This file is the other half: the **rules and constraints** that are not derivable from
+reading the code, and that cost an hour each when rediscovered. Regenerate the maps with
+`/cc-codemaps:update-codemaps`; they are generated, so edit this file instead.
+
 ## Hardware
 
 **Board revision is V2** — confirmed on hardware, not assumed:
@@ -20,25 +34,15 @@ binds the right one at runtime. Writing directly against CO5300/CST816 hardcodes
 revision and breaks on V1 boards.
 
 - ESP32-S3R8, rev v0.2 — dual core, **8 MB octal PSRAM**, **16 MB** flash
-- Display **368 × 448** portrait, QSPI. Brightness = register `0x51`, `0x00`–`0xFF`
+- Display **368 × 448** portrait, QSPI
 - QMI8658 IMU · PCF85063A RTC · AXP2101 PMU · ES8311 audio · microSD (SDMMC)
 - Buttons: BOOT = GPIO0 active-low · PWR = EXIO4 on the TCA9554 expander, active-high
 
-Pin map (from the vendor's `pin_config.h`; I²C and SD confirmed by the BSP at runtime):
-
-```
-QSPI AMOLED : SDIO0=4  SDIO1=5  SDIO2=6  SDIO3=7  SCLK=11  CS=12
-I2C bus     : SDA=15   SCL=14   touch INT=21
-ES8311 audio: MCLK=16  BCLK=9   WS=45    DI=10   DO=8    PA=46
-SD (SDMMC)  : CLK=2    CMD=1    D0=3
-```
-
-`pin_config.h` names the audio pins twice, and the two sets **disagree**:
-`I2S_DI_IO=10 / I2S_DO_IO=8` vs `DOPIN=10 / DIPIN=8`. They are named from opposite ends of
-the link. Pick one convention; never mix them.
-
-Other I²C addresses: AXP2101 `0x34`, PCF85063 `0x51`, QMI8658 `0x6A`/`0x6B`,
-TCA9554 `0x20`, ES8311 `0x18`.
+**Pin map, I²C addresses and expander lines: `codemaps/data.md`.** One warning worth
+repeating here, because mixing them silently produces a dead microphone:
+`pin_config.h` names the audio pins twice and the two sets **disagree**
+(`I2S_DI_IO=10 / I2S_DO_IO=8` vs `DOPIN=10 / DIPIN=8`). They are named from opposite ends
+of the link. Pick one convention; never mix them.
 
 ## Build and flash
 
@@ -156,18 +160,14 @@ These cost an hour each if you don't know them. Most were hit for real in this r
 - **The default 1 MB app partition is too small.** LVGL + Lua + the bindings leave 4%
   free. `partitions.csv` gives the app 4 MB.
 
-## Architecture
+## Architecture — the rules
 
-- `launcher/` — ESP-IDF app: BSP + LVGL 9.5 + Lua, scans and runs apps
-- `apps/` — Lua apps, installed to `/sdcard/apps/`. Each is either a flat
-  `apps/<name>.lua` or a folder `apps/<name>/main.lua` that ships its own
-  `icon.bin` (see `docs/SD_CARD_APPS.md`)
-- Runtime: `espressif/lua` (official component) + LVGL bindings from `espressif/esp-claw`
-  (`components/lua_modules/lua_module_lvgl`)
+Structure, module graph and lifecycle are in `codemaps/architecture.md` and
+`codemaps/firmware.md`. What follows is only what you can get *wrong*.
 
-Each app runs in **its own Lua VM on its own task**, created with the allocator pointed at
-PSRAM. The launcher keeps its own LVGL screen and restores it when an app stops, so a
-crashed or exited app cannot leave the device unusable.
+Each app runs in **its own Lua VM on its own task**, allocator pointed at PSRAM. The
+launcher keeps its own LVGL screen and restores it when an app stops, so a crashed or
+exited app cannot leave the device unusable.
 
 **Lua event callbacks only queue — they do not fire on their own.** The LVGL event
 trampoline in `lua_module_lvgl` enqueues the callback; something must call
@@ -178,6 +178,14 @@ writes its own `while true` loop freezes the device.
 That pump needs **a positive timeout and a yield**. `process_events(0)` returns
 immediately when the queue is empty; looping on it starves the idle task and trips the
 task watchdog.
+
+**LOCK ORDER: the display lock is always outermost.** esp_lvgl_port holds it across the
+whole of `lv_timer_handler()`, so every LVGL event callback runs inside it and then takes
+`s_app_mutex`. Any other task that needs both must use that same order — or take neither
+and post the work to the LVGL task with `lv_async_call()`. Taking `s_app_mutex` first and
+then blocking on the display lock is an AB-BA deadlock with any concurrent tap, and
+because both tasks block *cleanly* no watchdog fires: the board just stops, and recovery
+is the physical PWR/BOOT dance. This shipped once. Do not reintroduce it.
 
 **Back to the launcher is the BOOT button** (GPIO0, top right, active low — a direct
 GPIO read, so unlike the old PWR path it has no I²C dependency and survives a wedged bus).
@@ -193,11 +201,9 @@ AXP2101 below us, which is also why the contract bans destructive actions on it.
 Verified on hardware: launching and exiting an app repeatedly returns PSRAM to exactly
 the same free figure, so the launch/exit cycle does not leak.
 
-Verified on hardware: **Lua 5.5.0 runs**. A bare VM (no modules loaded) costs ~15.5 KB of
-PSRAM; a real app — `lvgl` module loaded, a screen created — costs ~40 KB. Its allocator is
-pointed at `MALLOC_CAP_SPIRAM` so apps cannot starve internal DRAM.
+Lua 5.5 note: `lua_newstate()` takes a third `seed` argument, unlike 5.4.
 
-Two dead ends, both checked — do not spend time re-discovering them:
+Three dead ends, all checked — do not spend time re-discovering them:
 
 - **`lv_binding_lua` does not exist.** No repo, not in the LVGL org, no archived snapshots.
 - **`esp-brookesia` cannot be used.** It is Espressif's app OS — launcher, `.bpk` packages,
@@ -205,8 +211,10 @@ Two dead ends, both checked — do not spend time re-discovering them:
   `master` requires **ESP-IDF 6.2 for ESP32-S3, which is unreleased** (newest is
   `v6.1-rc1`), and the IDF-5.5-compatible `release/v0.7` branch has **no `runtime/`
   directory at all**. Revisit after IDF 6.2 ships.
-
-Lua 5.5 note: `lua_newstate()` takes a third `seed` argument, unlike 5.4.
+- **The usb_serial_jtag driver does not speed up `SHOT`.** Installing it and calling
+  `usb_serial_jtag_vfs_use_driver()` looks like the obvious fix for the per-byte console
+  write. Measured on hardware: **4–5× worse** (1.5 s → 7–10 s). Do not re-attempt without
+  measuring.
 
 ## The app contract
 
