@@ -68,6 +68,7 @@ serial next to RUN/STOP; `tools/drive.py` chains them and `tools/screenshot.py`
 decodes SHOT to a PNG (~1.6 s per frame):
 
 ```bash
+./.venv/bin/python tools/push.py tests/fixtures/ui_test.lua      # fixtures live here
 ./.venv/bin/python tools/drive.py run ui_test.lua : sleep 1 : tap 184 224 : shot out.png
 ```
 

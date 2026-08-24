@@ -388,8 +388,7 @@ end)
 ```
 
 Worked examples of all three: `apps/stopwatch.lua` and `apps/reaction.lua` (1),
-`apps/metronome.lua` and `apps/countdown.lua` (2), `apps/level.lua` and
-`apps/sensors_test.lua` (3).
+`apps/metronome.lua` and `apps/countdown.lua` (2), and `apps/level.lua` (3).
 
 **One limit on `timer.now_ms()`:** apps run with 32-bit Lua integers, so it wraps back to
 negative after **2³¹ ms — about 24.9 days** of uptime. *Differences* survive that

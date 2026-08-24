@@ -318,13 +318,9 @@ static int traceback_handler(lua_State *L)
     return 1;
 }
 
-/* Body label sits between the title (Montserrat 40, line_height 44, top ~8px)
- * and the "press the top button" hint (default font is Montserrat 32, line_height
- * 35, bottom ~8px) on the 368x448 panel. Capped and scrollable so a deep
- * traceback stays reachable instead of overlapping the hint or being
- * silently clipped. */
-#define ERROR_BODY_TOP     60
-#define ERROR_BODY_HEIGHT  300
+/* The body sits between the title and the hint, and its box is now measured
+ * from those two at build time rather than assumed -- see show_error_screen().
+ * It stays scrollable so a deep traceback is reachable rather than clipped. */
 
 /* Show a failure on the panel. Five people debugging through one USB cable is
  * miserable; the error belongs where they are already looking. Returns the
@@ -342,8 +338,15 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_pad_all(scr, 12, LV_PART_MAIN);
 
+    /* Width-limited and wrapping, like the body below. A centred label with no
+     * width shrinks to its content and then loses characters off BOTH ends, so
+     * a long app name turned "weather_clock.lua failed" into "ther_clock.lua
+     * fail" -- least readable exactly when something has gone wrong. */
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text_fmt(title, "%s failed", app_name);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(title, LV_PCT(96));
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
     lv_obj_set_style_text_font(title, lua_module_lvgl_scaled_builtin_font(40), LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
@@ -351,18 +354,36 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     lv_obj_t *body = lv_label_create(scr);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(body, LV_PCT(96));
-    lv_obj_set_height(body, ERROR_BODY_HEIGHT);
     lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
     lv_label_set_text(body, msg ? msg : "(no message)");
     lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
     lv_obj_set_style_text_font(body, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
-    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, ERROR_BODY_TOP);
 
+    /* Same treatment, and it mattered more here: on the theme font this string
+     * is about 500px wide on a 368px panel, so the one line telling you how to
+     * get out of the error screen was clipped at BOTH ends at every font scale.
+     * Dropped to 26 as well, so it wraps to two lines rather than three. */
     lv_obj_t *hint = lv_label_create(scr);
     lv_label_set_text(hint, "press the top button to go back");
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, LV_PCT(96));
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x9A9AA5), LV_PART_MAIN);
+    lv_obj_set_style_text_font(hint, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    /* The body is placed between the title and the hint by MEASURING them
+     * rather than assuming each is one line. Both wrap now, and a long app
+     * name or a large font scale makes the title two lines -- with a fixed
+     * top the traceback was drawn straight over it. lv_obj_update_layout()
+     * forces the sizes to be computed before they are read. */
+    lv_obj_update_layout(scr);
+    int32_t top = 8 + lv_obj_get_height(title) + 8;
+    int32_t avail = 448 - top - lv_obj_get_height(hint) - 24;
+    if (avail < 80) avail = 80;
+    lv_obj_set_height(body, avail);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, top);
 
     lv_screen_load(scr);
     bsp_display_unlock();

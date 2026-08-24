@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Render-test every app through the simulator.
 #
-# For each app in apps/ (except the intentional fixtures below) this runs the
+# For each app in apps/ AND each fixture in tests/fixtures/ (except the
+# intentional ones below) this runs the
 # app, lets it settle, and asserts the frame is non-blank -- i.e. the app loads
 # and actually draws something. Exits non-zero if any app fails, so CI can gate
 # on it. PNGs are written under sim/build/shots/ for inspection.
@@ -34,10 +35,11 @@ mkdir -p "$SHOTS"
 SKIP=" broken cb_error deep_error hook_bypass runaway_bare runaway_coro runaway_pcall headless trim_check "
 
 # Every app is either a flat apps/<name>.lua or a folder apps/<name>/main.lua.
+# Fixtures are always flat, under tests/fixtures/.
 # List both as "<name>=<path>" so the loop renders folder apps (the self-
 # contained demos) exactly like flat ones.
 apps=()
-for app in apps/*.lua; do
+for app in apps/*.lua tests/fixtures/*.lua; do
     [ -e "$app" ] || continue
     apps+=("$(basename "$app" .lua)=$app")
 done

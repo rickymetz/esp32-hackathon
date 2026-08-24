@@ -215,7 +215,11 @@ static int s_exit_code = 0;     /* nonzero if any command failed (for CI) */
 #define BLANK_COLOR_THRESHOLD 4 /* < this many distinct colors == "didn't draw" */
 
 /* Render the launcher's error screen so a SHOT after a failed RUN shows the
- * failure, not a stale frame. Mirrors show_error_screen() in launcher_main.c:
+ * failure, not a stale frame. A hand-kept MIRROR of show_error_screen() in
+ * launcher_main.c -- the sim does not compile that file, so this copy is what
+ * the error_screen golden actually tests. Any change to one must be made to
+ * the other, or the golden vouches for a screen the device never shows.
+ * Mirrors it as:
  * black field, red title, scrollable wrapped traceback. Built in C on the sim's
  * display, independent of any Lua state (the app VM is already gone). */
 static void render_error_screen(const char *app_name, const char *msg)
@@ -226,6 +230,9 @@ static void render_error_screen(const char *app_name, const char *msg)
 
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text_fmt(title, "%s failed", app_name);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(title, LV_PCT(96));
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
     lv_obj_set_style_text_font(title, &lv_font_lexend_40, LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
@@ -233,16 +240,30 @@ static void render_error_screen(const char *app_name, const char *msg)
     lv_obj_t *body = lv_label_create(scr);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(body, LV_PCT(96));
-    lv_obj_set_height(body, 320);
     lv_label_set_text(body, msg ? msg : "(no message)");
     lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
     lv_obj_set_style_text_font(body, &lv_font_lexend_26, LV_PART_MAIN);
-    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, 64);
 
     lv_obj_t *hint = lv_label_create(scr);
     lv_label_set_text(hint, "press the top button to go back");
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, LV_PCT(96));
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x9A9AA5), LV_PART_MAIN);
+    lv_obj_set_style_text_font(hint, &lv_font_lexend_26, LV_PART_MAIN);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    /* The body is placed between the title and the hint by MEASURING them
+     * rather than assuming each is one line. Both wrap now, and a long app
+     * name or a large font scale makes the title two lines -- with a fixed
+     * top the traceback was drawn straight over it. lv_obj_update_layout()
+     * forces the sizes to be computed before they are read. */
+    lv_obj_update_layout(scr);
+    int32_t top = 8 + lv_obj_get_height(title) + 8;
+    int32_t avail = 448 - top - lv_obj_get_height(hint) - 24;
+    if (avail < 80) avail = 80;
+    lv_obj_set_height(body, avail);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, top);
 
     lv_screen_load(scr);
 }
