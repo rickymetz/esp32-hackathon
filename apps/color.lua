@@ -34,7 +34,7 @@ end
 -- easy drag (sliders are dragged, not tapped); channel letter, track and value
 -- share one vertical centre (cy), and the track stops well short of the value
 -- column so the knob can't overrun the number even at 255.
-local SLIDER_H = 26
+local SLIDER_H = 16
 local function channel(i, cy, name, color)
     lvgl.label(scr, {
         text = name, align = "left_mid", x = 22, y = cy - 224,
