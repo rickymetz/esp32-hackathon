@@ -817,9 +817,21 @@ A float is rounded to an integer, so `get` returns what `set` stored.
 
 Most apps do not need this — it is how **`apps/settings.lua`** stores things the
 shell must know about with no card present: `face` (the watch face style),
-`tz_min` (minutes east of UTC), `font_pct`, `volume`, and the Wi-Fi credentials.
-Writing those keys from your own app changes the device's settings, so treat
-them as the Settings app's.
+`tz_min` (minutes east of UTC), `tz_city` and `tz_dst` (which zone was picked
+and whether summer time is on), `font_pct`, `volume`, and the Wi-Fi
+credentials. Writing those keys from your own app changes the device's
+settings, so treat them as the Settings app's.
+
+The three timezone keys are one value in three parts, and the watch face reads
+only `tz_min`:
+
+```
+tz_min == ui.ZONES[tz_city][2] + (tz_dst and 60 or 0)
+```
+
+So `tz_min` is the **effective** offset, already including summer time. Writing
+it on its own leaves `tz_city`/`tz_dst` describing a different zone than the
+face is showing — which is why this is Settings' job, not an app's.
 
 ### More on widgets
 
