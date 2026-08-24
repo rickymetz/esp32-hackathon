@@ -155,9 +155,10 @@ local function page_time()
     ui.row(list, { text = wifi.time_synced() and "Synced over Wi-Fi this boot"
                                              or "Not synced - connect Wi-Fi", dim = true })
 
-    -- Explicit line break: ui.note does not set a width, so a single long
-    -- line runs off both edges of the 368px panel rather than wrapping.
-    ui.note(scr, "Clock keeps UTC.\nThe zone shifts the display.",
+    -- ui.note wraps to its own width now, so the line break that used to be
+    -- hand-placed here (it did not, and a long line ran off both edges) would
+    -- only force an awkward break at a larger font scale.
+    ui.note(scr, "Clock keeps UTC. The zone shifts the display.",
             { y = 172, size = 26 })
 end
 

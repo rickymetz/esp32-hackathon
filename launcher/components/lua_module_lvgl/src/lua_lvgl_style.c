@@ -43,6 +43,36 @@ static void lua_lvgl_apply_color_style_field(lua_State *L, int index, lv_obj_t *
     lua_pop(L, 1);
 }
 
+/* text_align: how wrapped text sits inside a width-limited widget. Without
+ * this a label given an explicit `w` renders left-aligned however the widget
+ * itself is positioned, so a centred note reads as centred only while its
+ * text is short enough not to wrap. */
+static void lua_lvgl_apply_text_align_field(lua_State *L, int index, lv_obj_t *obj)
+{
+    const char *name;
+
+    lua_getfield(L, index, "text_align");
+    if (lua_isnil(L, -1)) {
+        lua_pop(L, 1);
+        return;
+    }
+    name = luaL_checkstring(L, -1);
+    if (strcmp(name, "left") == 0) {
+        lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_LEFT, 0);
+    } else if (strcmp(name, "center") == 0) {
+        lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_CENTER, 0);
+    } else if (strcmp(name, "right") == 0) {
+        lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_RIGHT, 0);
+    } else if (strcmp(name, "auto") == 0) {
+        lv_obj_set_style_text_align(obj, LV_TEXT_ALIGN_AUTO, 0);
+    } else {
+        lua_pop(L, 1);
+        luaL_error(L, "lvgl style 'text_align' must be "
+                      "'left', 'center', 'right' or 'auto'");
+    }
+    lua_pop(L, 1);
+}
+
 static void lua_lvgl_apply_style_int_field(lua_State *L, int index, lv_obj_t *obj, const char *field)
 {
     int value;
@@ -110,6 +140,7 @@ void lua_lvgl_apply_style_opts_locked(lua_State *L, int index, lv_obj_t *obj)
     lua_lvgl_apply_style_int_field(L, index, obj, "arc_width");
     lua_lvgl_apply_style_int_field(L, index, obj, "knob_pad");
     lua_lvgl_apply_style_int_field(L, index, obj, "knob_radius");
+    lua_lvgl_apply_text_align_field(L, index, obj);
     lua_lvgl_apply_font_style_field(L, index, obj);
 }
 int lua_lvgl_set_style(lua_State *L)

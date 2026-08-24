@@ -760,11 +760,18 @@ end
 -- "Tap + to start"). Returns the label so you can hide/replace it.
 function M.note(scr, text, opts)
     opts = opts or {}
+    -- Width-limited so the text wraps inside the panel. Without it a label
+    -- shrinks to its content and a long line runs off BOTH edges (centred, so
+    -- it loses characters at each end) -- which is what happened to the
+    -- "Clock keeps UTC." note at the 130% font scale, where even a hand-broken
+    -- line no longer fits. 336 = 368 minus the 16px margin each side.
     return lvgl.label(scr, {
         text = text or "",
         align = "center", y = opts.y or 0,
         text_color = opts.color or "#A0A0AE",
         font = lvgl.font(opts.size or 32),
+        w = opts.w or 336,
+        text_align = "center",
     })
 end
 
