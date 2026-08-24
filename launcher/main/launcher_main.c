@@ -187,7 +187,7 @@ static esp_io_expander_handle_t s_expander;
 static SemaphoreHandle_t s_app_mutex;
 
 /* Single-app-at-a-time means a single static copy is enough: the launch
- * path fills this in (under s_app_mutex) from app_registry_find_by_basename()
+ * path fills this in (under s_app_mutex) from app_registry_find_by_id()
  * just before starting the task, and lua_app_task reads only from this copy
  * for its whole run. That avoids holding a pointer into s_apps[] across a
  * run, which app_registry_scan() can rewrite at any time now that a serial
@@ -577,13 +577,6 @@ out:
     vTaskDelete(NULL);
 }
 
-/* "/sdcard/apps/counter.lua" -> "counter.lua" */
-static const char *path_basename(const char *path)
-{
-    const char *slash = strrchr(path, '/');
-    return slash ? slash + 1 : path;
-}
-
 /* Frees the heap copy of a row's basename (see build_launcher_ui) when LVGL
  * deletes the row -- on Refresh's full rebuild and on ordinary screen
  * teardown alike. */
@@ -597,7 +590,7 @@ static void row_data_delete_cb(lv_event_t *e)
  * place by every rescan -- Refresh, and (since PUSH also rescans at runtime)
  * an ordinary file push too -- so a raw pointer captured when the row was
  * built could point at a different app, or garbage, by the time it is
- * tapped. Resolving by name at click time via app_registry_find_by_basename()
+ * tapped. Resolving by name at click time via app_registry_find_by_id()
  * makes a stale row a no-op instead of a wrong-app launch or a crash: the
  * lookup and the copy-out happen under the registry's own lock, so a PUSH
  * rescanning concurrently on the serial task cannot be observed half-done. */
@@ -616,7 +609,7 @@ static void app_row_clicked(lv_event_t *e)
     }
 
     app_entry_t match;
-    if (!app_registry_find_by_basename(basename, &match)) {
+    if (!app_registry_find_by_id(basename, &match)) {
         xSemaphoreGive(s_app_mutex);
         ESP_LOGW(TAG, "tapped row '%s' is no longer in the registry", basename);
         return;
@@ -647,7 +640,7 @@ bool launcher_run_app_by_name(const char *basename)
     }
 
     app_entry_t match;
-    if (!app_registry_find_by_basename(basename, &match)) {
+    if (!app_registry_find_by_id(basename, &match)) {
         xSemaphoreGive(s_app_mutex);
         ESP_LOGW(TAG, "RUN '%s': not found", basename);
         return false;
@@ -754,8 +747,8 @@ static bool launcher_home_get_app(size_t index, launcher_home_app_t *out, void *
         return false;
     }
     out->name = app.name;
-    out->basename = path_basename(app.path);
-    out->icon = launcher_home_default_icon(out->basename);
+    out->basename = app.id;   /* the stable RUN/DELETE identity, folder or flat */
+    out->icon = launcher_home_default_icon(app.id);
     return true;
 }
 

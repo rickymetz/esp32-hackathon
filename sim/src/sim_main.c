@@ -246,15 +246,60 @@ static void render_error_screen(const char *app_name, const char *msg)
 
 /* Resolve an app path: use it as given if it exists, else try it under the
  * SD-card root (so `run apps/foo.lua` works from any directory, and bare
- * `run foo.lua` finds apps/foo.lua the way the device resolves app names). */
+ * `run foo.lua` finds apps/foo.lua the way the device resolves app names).
+ *
+ * A folder app is apps/<name>/main.lua: when a candidate resolves to a
+ * directory, append /main.lua, so `run apps/mygame`, `run mygame`, and the
+ * full `run apps/mygame/main.lua` all launch it the way the device does. */
 static const char *resolve_app_path(const char *path, char *buf, size_t bufsz)
 {
-    if (access(path, R_OK) == 0) return path;
-    snprintf(buf, bufsz, "%s/%s", s_sdroot, path);
-    if (access(buf, R_OK) == 0) return buf;
-    snprintf(buf, bufsz, "%s/apps/%s", s_sdroot, path);
-    if (access(buf, R_OK) == 0) return buf;
+    char c1[1024], c2[1024];
+    snprintf(c1, sizeof(c1), "%s/%s", s_sdroot, path);
+    snprintf(c2, sizeof(c2), "%s/apps/%s", s_sdroot, path);
+    const char *cands[] = { path, c1, c2 };
+
+    for (size_t i = 0; i < sizeof(cands) / sizeof(cands[0]); i++) {
+        struct stat st;
+        if (stat(cands[i], &st) != 0) {
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            snprintf(buf, bufsz, "%s/main.lua", cands[i]);
+            if (access(buf, R_OK) == 0) {
+                return buf;
+            }
+            continue;
+        }
+        if (access(cands[i], R_OK) == 0) {
+            snprintf(buf, bufsz, "%s", cands[i]);
+            return buf;
+        }
+    }
     return path;   /* let luaL_loadfile report the original path */
+}
+
+/* The store/display key for an app, derived from its resolved path the way the
+ * device registry names it: a folder app (apps/<name>/main.lua) keys on its
+ * folder name, a flat app (apps/<name>.lua) on its basename minus ".lua". */
+static void app_store_key(const char *rpath, char *out, size_t out_size)
+{
+    char rp[1024];
+    snprintf(rp, sizeof(rp), "%s", rpath);
+
+    char *base = strrchr(rp, '/');
+    const char *fname = base ? base + 1 : rp;
+
+    if (base != NULL && strcmp(fname, "main.lua") == 0) {
+        *base = '\0';                       /* rp is now the folder path */
+        char *pbase = strrchr(rp, '/');
+        snprintf(out, out_size, "%s", pbase ? pbase + 1 : rp);
+        return;
+    }
+    snprintf(out, out_size, "%s", fname);
+    char *dot = strrchr(out, '.');
+    if (dot && strcmp(dot, ".lua") == 0) {
+        *dot = '\0';
+    }
 }
 
 /* Tear a Lua app state down the way the launcher's lua_app_task does on exit:
@@ -302,14 +347,12 @@ static int app_run(const char *path)
     const char *rpath = resolve_app_path(path, pathbuf, sizeof(pathbuf));
 
     /* Per-app store path, mirroring the device (launcher_main.c): point
-     * require("store") at <sdroot>/state/<name>.json. */
+     * require("store") at <sdroot>/state/<name>.json, keyed the same way the
+     * registry names the app (folder name for a folder app, basename for a
+     * flat one). */
     {
-        const char *base = strrchr(path, '/');
-        base = base ? base + 1 : path;
-        char name[256];
-        snprintf(name, sizeof(name), "%s", base);
-        char *dot = strrchr(name, '.');
-        if (dot && strcmp(dot, ".lua") == 0) *dot = '\0';
+        char name[1024];
+        app_store_key(rpath, name, sizeof(name));
         char dir[1024];
         snprintf(dir, sizeof(dir), "%s/state", s_sdroot);
         mkdir(dir, 0777);

@@ -45,12 +45,40 @@ if sys.argv[1] == "--delete":
     sys.exit("timed out")
 
 path = sys.argv[1]
-if not path.endswith(".lua"):
-    sys.exit("only .lua files can be pushed")
 
-name = os.path.basename(path)
-data = open(path, "rb").read()
-crc = zlib.crc32(data) & 0xFFFFFFFF
+
+def remote_name_for(file_path):
+    """The name to PUSH a single file under, mirroring how the launcher scans
+    apps/: a file directly in apps/ (or anywhere else) is flat and keeps its
+    basename; a file inside apps/<folder>/ is a folder-app file and is sent as
+    <folder>/<basename> so it lands in that folder on the card."""
+    ap = os.path.abspath(file_path)
+    parent = os.path.dirname(ap)
+    grandparent = os.path.dirname(parent)
+    if os.path.basename(parent) != "apps" and os.path.basename(grandparent) == "apps":
+        return f"{os.path.basename(parent)}/{os.path.basename(ap)}"
+    return os.path.basename(ap)
+
+
+# Build the list of (local_path, remote_name) files to send. A directory is a
+# folder app: push every regular file in it as <folder>/<file>. A single file
+# is pushed on its own (flat, or as a folder-app file when it sits in apps/<x>/).
+jobs = []
+if os.path.isdir(path):
+    folder = os.path.basename(os.path.abspath(path))
+    for entry in sorted(os.listdir(path)):
+        fp = os.path.join(path, entry)
+        if entry.startswith(".") or not os.path.isfile(fp):
+            continue
+        jobs.append((fp, f"{folder}/{entry}"))
+    if not jobs:
+        sys.exit(f"{path}: no files to push")
+    if not any(r.endswith("/main.lua") for _, r in jobs):
+        print(f"warning: {path} has no main.lua — the launcher won't list it as an app")
+else:
+    if not (path.endswith(".lua") or path.endswith(".bin")):
+        sys.exit("only .lua and .bin files (or a folder app) can be pushed")
+    jobs.append((path, remote_name_for(path)))
 
 ports = [sys.argv[2]] if len(sys.argv) > 2 else sorted(glob.glob("/dev/cu.usbmodem*"))
 if not ports:
@@ -61,19 +89,28 @@ try:
 except serial.SerialException as e:
     sys.exit(f"cannot open {ports[0]}: {e}\nIs a serial monitor holding the port?")
 
-s.write(f"PUSH {name} {len(data)} {crc:08x}\n".encode())
-for i in range(0, len(data), 57):          # 57 bytes -> 76 base64 chars
-    s.write(base64.b64encode(data[i:i + 57]) + b"\n")
-    s.flush()
-s.write(b"ENDPUSH\n")
 
-deadline = time.time() + 10
-while time.time() < deadline:
-    line = s.readline().decode("utf-8", "replace").strip()
-    if line.startswith("PUSH_OK"):
-        print(f"pushed {name} ({len(data)} bytes) — tap Refresh on the device")
-        sys.exit(0)
-    if line.startswith("PUSH_ERR"):
-        sys.exit(f"device rejected: {line}")
+def push_one(local_path, remote):
+    data = open(local_path, "rb").read()
+    crc = zlib.crc32(data) & 0xFFFFFFFF
+    s.write(f"PUSH {remote} {len(data)} {crc:08x}\n".encode())
+    for i in range(0, len(data), 57):          # 57 bytes -> 76 base64 chars
+        s.write(base64.b64encode(data[i:i + 57]) + b"\n")
+        s.flush()
+    s.write(b"ENDPUSH\n")
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        line = s.readline().decode("utf-8", "replace").strip()
+        if line.startswith("PUSH_OK"):
+            print(f"pushed {remote} ({len(data)} bytes)")
+            return
+        if line.startswith("PUSH_ERR"):
+            sys.exit(f"device rejected {remote}: {line}")
+    sys.exit(f"timed out waiting for the device on {remote}")
+
+
+for local_path, remote in jobs:
+    push_one(local_path, remote)
 s.close()
-sys.exit("timed out waiting for the device")
+print("done — tap Refresh on the device")
