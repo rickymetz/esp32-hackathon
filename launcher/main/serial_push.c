@@ -10,6 +10,7 @@
 #include "bsp/esp-bsp.h"
 #include "esp_log.h"
 #include "esp_crc.h"
+#include "esp_timer.h"
 #include "mbedtls/base64.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -312,6 +313,124 @@ static void handle_mem(void)
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 }
 
+/* ---- STATS: the performance snapshot MEM cannot give ------------------
+ *
+ * MEM above is deliberately left exactly as it was -- tools/soak.py and
+ * tools/chaos.py parse its three fields positionally, and widening the
+ * reply would break both. STATS is additive.
+ *
+ * Three things MEM cannot tell you, all of which perf work needs:
+ *
+ *   1. The heap LOW-WATER mark. MEM samples the instant you ask, so a run
+ *      that came within a few KB of the floor and recovered reads exactly
+ *      like one that never got close. heap_caps_get_minimum_free_size()
+ *      is the number that actually bounds headroom.
+ *   2. Per-task CPU. Reported as permille of the interval SINCE THE LAST
+ *      STATS CALL, not since boot -- a since-boot average buries exactly
+ *      the spike you are hunting. Call it twice around the thing you want
+ *      to measure.
+ *   3. Per-task stack headroom, which is the only evidence for whether
+ *      APP_TASK_STACK (32 KB) is right rather than merely untested.
+ *
+ * One field per line so a parser never counts columns:
+ *
+ *   STATS_BEGIN
+ *   STAT uptime_ms <n>
+ *   STAT psram free <n> min <n>
+ *   STAT internal free <n> min <n> largest <n>
+ *   STAT task <name> cpu_permille <n> stack_free <n>
+ *   STATS_END
+ */
+
+#if defined(CONFIG_FREERTOS_USE_TRACE_FACILITY) && \
+    defined(CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS)
+#define STATS_HAVE_CPU 1
+#else
+#define STATS_HAVE_CPU 0
+#endif
+
+#if STATS_HAVE_CPU
+/* Bounded so the snapshot never allocates unboundedly from a serial
+ * command. The launcher runs well under 30 tasks; extra ones are dropped
+ * from the report rather than growing the buffer. */
+#define STATS_MAX_TASKS 40
+
+typedef struct {
+    TaskHandle_t handle;
+    uint32_t     run_time;
+} stats_prev_t;
+
+static stats_prev_t s_stats_prev[STATS_MAX_TASKS];
+static int          s_stats_prev_n;
+static uint32_t     s_stats_prev_total;
+#endif
+
+static void handle_stats(void)
+{
+    printf("STATS_BEGIN\n");
+    printf("STAT uptime_ms %llu\n",
+           (unsigned long long)(esp_timer_get_time() / 1000));
+
+    printf("STAT psram free %u min %u\n",
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+    printf("STAT internal free %u min %u largest %u\n",
+           (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+           (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+
+#if STATS_HAVE_CPU
+    UBaseType_t want = uxTaskGetNumberOfTasks();
+    if (want > STATS_MAX_TASKS) {
+        want = STATS_MAX_TASKS;
+    }
+    TaskStatus_t *st = calloc(want, sizeof(TaskStatus_t));
+    if (st == NULL) {
+        printf("STAT cpu alloc_failed\n");
+    } else {
+        uint32_t total = 0;
+        UBaseType_t n = uxTaskGetSystemState(st, want, &total);
+
+        /* Both cores contribute to the total, so the permille column sums
+         * to ~2000 across a dual-core snapshot (idle tasks included), not
+         * 1000. Per-task values are still directly comparable. */
+        uint32_t dtotal = total - s_stats_prev_total;
+
+        for (UBaseType_t i = 0; i < n; i++) {
+            uint32_t prev = 0;
+            for (int j = 0; j < s_stats_prev_n; j++) {
+                if (s_stats_prev[j].handle == st[i].xHandle) {
+                    prev = s_stats_prev[j].run_time;
+                    break;
+                }
+            }
+            uint32_t delta = st[i].ulRunTimeCounter - prev;
+            unsigned permille = dtotal ?
+                (unsigned)((uint64_t)delta * 1000u / dtotal) : 0u;
+            /* usStackHighWaterMark is in StackType_t units, and ESP-IDF
+             * defines StackType_t as uint8_t -- so this is bytes, not
+             * words as on stock FreeRTOS. */
+            printf("STAT task %s cpu_permille %u stack_free %u\n",
+                   st[i].pcTaskName, permille,
+                   (unsigned)st[i].usStackHighWaterMark);
+        }
+
+        s_stats_prev_n = (int)n;
+        for (int i = 0; i < s_stats_prev_n; i++) {
+            s_stats_prev[i].handle   = st[i].xHandle;
+            s_stats_prev[i].run_time = st[i].ulRunTimeCounter;
+        }
+        s_stats_prev_total = total;
+        free(st);
+    }
+#else
+    printf("STAT cpu unavailable "
+           "(rebuild with CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS)\n");
+#endif
+
+    printf("STATS_END\n");
+}
+
 /* PWR -- inject a synthetic PWR press+release through the same edge
  * recorder the poller uses, so app button flows are drivable from the
  * harness (the physical button obviously is not). */
@@ -391,6 +510,8 @@ static void serial_push_task(void *arg)
             handle_pwr();
         } else if (strcmp(line, "MEM") == 0) {
             handle_mem();
+        } else if (strcmp(line, "STATS") == 0) {
+            handle_stats();
         }
     }
 }

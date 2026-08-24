@@ -1081,6 +1081,9 @@ DELETE myapp.lua     ->  DELETE_OK          (or DELETE_ERR not_found|delete_fail
 SHOT                 ->  screenshot of the live screen (see tools/screenshot.py)
 TAP <x> <y>          ->  synthetic tap, same event pipeline as a finger
 SWIPE x0 y0 x1 y1 [ms] -> synthetic swipe/drag
+MEM                  ->  MEM <psram_free> <internal_free> <largest_internal>
+STATS                ->  heap low-water marks, per-task CPU and stack
+                         headroom (tools/stats.py decodes it)
 ```
 
 `tools/push.py --list` and `--delete name.lua` wrap LIST/DELETE. For driving
