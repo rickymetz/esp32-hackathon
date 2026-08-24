@@ -10,6 +10,41 @@ local M = {}
 local ROW_H = 104          -- design guide: preferred row height
 local TARGET = 88          -- design guide: minimum tappable square
 
+-- The eight faces lvgl.font() will accept. Anything else raises.
+local FONT_SIZES = { 24, 26, 32, 40, 48, 60, 72, 120 }
+
+-- Chrome vs content.
+--
+-- A user-set font scale multiplies every lvgl.font() request, which is right
+-- for content -- the number on a stopwatch, the body of a note -- and wrong
+-- for the text that labels a FIXED-SIZE box. A header title, a row label and a
+-- stepper readout all sit in a container whose height the design guide pins
+-- (ROW_H is 104 because that is the tap target, not because of the text), so
+-- when they grow the text leaves the box: at 1.3 the "Date & time" title
+-- wrapped and was clipped by the list under it, row labels overflowed their
+-- 104px card, and "Volume 70%" was eaten at both ends by its own +/- slabs.
+--
+-- So chrome caps its RENDERED size at the unscaled nominal. Below 1.0 the user
+-- asked for smaller and nothing can overflow, so it is honoured as-is; above
+-- 1.0 we step down to the largest face that still renders no larger than the
+-- nominal did at 1.0. At exactly 1.0 this is the identity, so no existing
+-- layout moves.
+--
+-- Content keeps using lvgl.font() directly and scales all the way to 1.3.
+local function chrome_font(nominal)
+    local scale = lvgl.font_scale() or 1.0
+    if scale <= 1.0 then
+        return lvgl.font(nominal)
+    end
+    local pick = FONT_SIZES[1]
+    for _, size in ipairs(FONT_SIZES) do
+        if size * scale <= nominal and size <= nominal then pick = size end
+    end
+    return lvgl.font(pick)
+end
+
+M.chrome_font = chrome_font
+
 -- A corner control drawn at watch scale but hit at ours: watchOS corner
 -- buttons read ~60px on this panel, and Apple can hit them -- our
 -- digitizer cannot. Two stacked widgets do the split: a 60px visual
@@ -154,7 +189,7 @@ function M.title(scr, text)
         text = text,
         align = "top_mid", y = 26,
         text_color = "#FFFFFF",
-        font = lvgl.font(40),
+        font = chrome_font(40),
     })
 end
 
@@ -184,7 +219,7 @@ function M.header(scr, opts)
                 text = opts.title,
                 x = 104, y = 26,
                 text_color = "#FFFFFF",
-                font = lvgl.font(40),
+                font = chrome_font(40),
                 -- Clamp so a long title can't run under a top-right action.
                 w = 368 - 104 - (opts.action and 112 or 8),
             })
@@ -290,8 +325,12 @@ function M.row(parent, opts)
         w = 344 - 16 - trailing,
     })
     -- opts.size lets a dense list (a 35-city timezone picker) drop to 26 so
-    -- entries fit on one line instead of wrapping to two.
-    if opts.size then h.label:set_style({ font = lvgl.font(opts.size) }) end
+    -- entries fit on one line instead of wrapping to two. Set unconditionally
+    -- rather than only when asked: leaving it to the theme let the label track
+    -- the full font scale, which is exactly what overflows a fixed-height row.
+    -- chrome_font is the identity at scale <= 1.0, so this changes nothing for
+    -- a caller that was already happy.
+    h.label:set_style({ font = chrome_font(opts.size or 32) })
 
     if opts.kind == "toggle" then
         h.switch = lvgl.switch(h.row, { checked = opts.checked and true or false })
@@ -535,7 +574,7 @@ function M.stepper(parent, opts, cb)
         text = string.format(fmt, value),
         align = "center",
         text_color = "#FFFFFF",
-        font = lvgl.font(40),
+        font = chrome_font(40),
     })
 
     local function apply(v)
@@ -765,9 +804,15 @@ function M.note(scr, text, opts)
     -- it loses characters at each end) -- which is what happened to the
     -- "Clock keeps UTC." note at the 130% font scale, where even a hand-broken
     -- line no longer fits. 336 = 368 minus the 16px margin each side.
+    -- opts.align lets a page pin the note to an edge instead of offsetting it
+    -- from the centre. A centred note grows in BOTH directions as it wraps, so
+    -- at a large font scale a hint that fits at 1.0 walks off the bottom of the
+    -- screen; "bottom_mid" grows upward into the page instead, which is what a
+    -- footer hint wants. Default stays "center" so existing callers are
+    -- unaffected.
     return lvgl.label(scr, {
         text = text or "",
-        align = "center", y = opts.y or 0,
+        align = opts.align or "center", y = opts.y or 0,
         text_color = opts.color or "#A0A0AE",
         font = lvgl.font(opts.size or 32),
         w = opts.w or 336,

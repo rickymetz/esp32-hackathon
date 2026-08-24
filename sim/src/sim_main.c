@@ -5,7 +5,8 @@
  *
  *   sim run apps/counter.lua : sleep 1 : tap 184 224 : shot out.png
  *
- * Global options (before the first command): --sdroot DIR  (SD-card root that
+ * Global options (before the first command): --scale N  (font scale, 0.6-1.3,
+ * matching the device's user setting; default 1.0), --sdroot DIR  (SD-card root that
  * font_load / file paths resolve against; default: current directory).
  */
 #include "lua.h"
@@ -692,10 +693,19 @@ int main(int argc, char **argv)
     const char *sdroot = ".";
 
     /* Leading global options. */
+    /* The device carries a user-set font scale (0.6-1.3, NVS "font_pct") that
+     * the simulator had no way to reproduce -- it always ran at 1.0. That gap
+     * is why a whole class of overflow bugs shipped: at 1.3 header titles wrap
+     * and are clipped, row labels leave their fixed-height cards, and stepper
+     * readouts are eaten by their own +/- slabs. None of it is visible at 1.0,
+     * so no golden could catch it. --scale makes those states renderable and
+     * therefore golden-testable. */
+    float font_scale = 1.0f;
     int i = 1;
     while (i < argc && !strncmp(argv[i], "--", 2)) {
         if (!strcmp(argv[i], "--sdroot") && i + 1 < argc) { sdroot = argv[i + 1]; i += 2; }
         else if (!strcmp(argv[i], "--timeout") && i + 1 < argc) { s_watchdog_s = atoi(argv[i + 1]); i += 2; }
+        else if (!strcmp(argv[i], "--scale") && i + 1 < argc) { font_scale = (float)atof(argv[i + 1]); i += 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); i++; }
     }
 
@@ -721,6 +731,11 @@ int main(int argc, char **argv)
         fprintf(stderr, "module registration failed\n");
         return 1;
     }
+
+    /* After registration: the module owns the scale, and setting it before it
+     * exists is a no-op. Matches app_main(), which applies the persisted scale
+     * once the modules are up. */
+    lua_module_lvgl_set_font_scale(font_scale);
 
     /* Walk the ':'-separated command pipeline. */
     int start = i;

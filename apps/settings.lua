@@ -159,7 +159,7 @@ local function page_time()
     -- hand-placed here (it did not, and a long line ran off both edges) would
     -- only force an awkward break at a larger font scale.
     ui.note(scr, "Clock keeps UTC. The zone shifts the display.",
-            { y = 172, size = 26 })
+            { align = "bottom_mid", y = -8, size = 26 })
 end
 
 -- ----------------------------------------------------------- display & sound

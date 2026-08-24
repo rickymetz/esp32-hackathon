@@ -137,6 +137,22 @@ FRAMES = [
     ("settings_wifi", ["run", "apps/settings.lua", ":", "sleep", "0.3",
                        ":", "tap", "184", "268", ":", "sleep", "0.4"]),
 
+    # The same two pages at the 1.3 font scale -- the accessibility ceiling, and
+    # the state the simulator could not reach until --scale existed. Everything
+    # here rendered correctly at 1.0 while being broken at 1.3: the header title
+    # wrapped and was clipped by the list, row labels left their 104px cards,
+    # the stepper readouts were eaten by their own +/- slabs, and the footer
+    # note ran off the bottom of the screen. Cheap to keep, and the only thing
+    # standing between that class of bug and a release.
+    ("settings_time_13", ["--scale", "1.3",
+                          "run", "apps/settings.lua", ":", "sleep", "0.3",
+                          ":", "tap", "184", "384", ":", "sleep", "0.4"]),
+    ("settings_disp_13", ["--scale", "1.3",
+                          "run", "apps/settings.lua", ":", "sleep", "0.3",
+                          ":", "swipe", "184", "380", "184", "120", "400",
+                          ":", "sleep", "0.4",
+                          ":", "tap", "184", "265", ":", "sleep", "0.4"]),
+
     ("face",         ["face", "digital", "10:09:30", "72"]),
     ("face_analog",  ["face", "analog",  "10:09:30", "72"]),
     ("face_rings",   ["face", "rings",   "10:09:30", "72"]),
