@@ -23,6 +23,7 @@
 #include "app_sandbox.h"
 #include "lua_module_ui.h"
 #include "lua_module_store.h"
+#include "lua_module_prefs.h"
 #include "launcher_home.h"
 #include "launcher_face.h"
 
@@ -715,6 +716,7 @@ int main(int argc, char **argv)
         app_wifi_register() != ESP_OK ||
         app_sensors_register() != ESP_OK ||
         lua_module_store_register() != ESP_OK ||
+        lua_module_prefs_register() != ESP_OK ||
         lua_module_ui_register() != ESP_OK) {
         fprintf(stderr, "module registration failed\n");
         return 1;

@@ -71,6 +71,7 @@ add_library(bindings STATIC
     src/sim_sensors.c
     src/sim_module_ui.c
     src/sim_module_store.c
+    src/sim_module_prefs.c
     src/sim_embedded_lua.c
     shim/esp_shim.c
 )
@@ -88,6 +89,7 @@ target_include_directories(bindings PUBLIC
     ${LAUNCHER}/components/lua_module_sensors/include
     ${LAUNCHER}/components/lua_module_ui/include
     ${LAUNCHER}/components/lua_module_store/include
+    ${LAUNCHER}/components/lua_module_prefs/include
 )
 target_compile_definitions(bindings PUBLIC
     UI_LUA_DIR="${LAUNCHER}/components/lua_module_ui"

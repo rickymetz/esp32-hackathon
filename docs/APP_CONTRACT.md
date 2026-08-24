@@ -171,6 +171,7 @@ others, and you cannot `require` a `.lua` file of your own (see the trust model 
 | `button` | The PWR button |
 | `keyboard` | Text entry |
 | `store` | Per-app persistent key/value, saved on the card |
+| `prefs` | Device settings (NVS) — survive a missing card, shared with the shell |
 | `voice` | Offline speech — gate on `voice.available()` |
 | `audio` | Tones and beeps |
 | `rtc` | Wall-clock date and time |
@@ -722,7 +723,7 @@ over NTP and writes it to the RTC, so `rtc.now()` is correct after a reboot
 with nobody typing a date. This is the intended way to set the clock;
 `rtc.set` is the manual fallback.
 
-Credentials are entered **on the device** with `apps/wifi_setup.lua` and stored
+Credentials are entered **on the device** in `apps/settings.lua` (Wi-Fi) and stored
 on the card. Do not ask a user to type a password into a host terminal.
 
 **Captive portals do not work.** Hotel, café and conference networks intercept
@@ -789,6 +790,36 @@ end
 once at a natural moment (game over, item added). Values must be JSON-friendly —
 strings, numbers, booleans, and tables of those; a function or userdata will not
 round-trip. The file is human-readable JSON, so you can inspect it on the card.
+
+### Device settings: `require("prefs")`
+
+`store` is for **your app's** state and lives on the card. `prefs` is for
+**device** settings: small values in NVS that survive with no card in the slot,
+and that the launcher's own C shell reads.
+
+```lua
+local prefs = require("prefs")
+
+prefs.get("volume", 70)     -- the saved value, or the default
+prefs.set("volume", 80)     -- written immediately; no save() step
+prefs.clear("volume")       -- forget it
+```
+
+| Call | What |
+| --- | --- |
+| `prefs.get(key, default)` | The saved value, or `default` if never set |
+| `prefs.set(key, value)` | Integers and strings. Commits straight away |
+| `prefs.clear(key)` | Forget one key |
+
+Keys are **1-15 characters** (an NVS limit) and values are integers or strings
+— there is no table support, deliberately: this is for scalars, not documents.
+A float is rounded to an integer, so `get` returns what `set` stored.
+
+Most apps do not need this — it is how **`apps/settings.lua`** stores things the
+shell must know about with no card present: `face` (the watch face style),
+`tz_min` (minutes east of UTC), `font_pct`, `volume`, and the Wi-Fi credentials.
+Writing those keys from your own app changes the device's settings, so treat
+them as the Settings app's.
 
 ### More on widgets
 

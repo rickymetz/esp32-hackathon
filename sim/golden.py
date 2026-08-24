@@ -50,7 +50,6 @@ FRAC_TOL = 0.012
 # re-capture those two or mask the seconds region.
 FRAMES = [
     ("counter",      ["run", "apps/counter.lua", ":", "sleep", "0.4"]),
-    ("wifi_setup",   ["run", "apps/wifi_setup.lua", ":", "sleep", "0.4"]),
     ("color",        ["run", "apps/color.lua", ":", "sleep", "0.4"]),
     ("flashlight",   ["run", "apps/flashlight.lua", ":", "sleep", "0.4"]),
     ("hello_world",  ["run", "apps/hello_world.lua", ":", "sleep", "0.4"]),
@@ -129,6 +128,15 @@ FRAMES = [
     # the placeholder is not drawn in the 120px face, whose charset is digits
     # and ".:" only -- a "--:--" there renders as empty boxes), and the low
     # battery case covers the warning colour and the stepped battery glyph.
+    # Settings: the menu plus the two pages most likely to regress -- the
+    # timezone page (which writes the NVS offset the C face reads) and Wi-Fi
+    # (the absorbed wifi_setup).
+    ("settings",      ["run", "apps/settings.lua", ":", "sleep", "0.4"]),
+    ("settings_time", ["run", "apps/settings.lua", ":", "sleep", "0.3",
+                       ":", "tap", "184", "384", ":", "sleep", "0.4"]),
+    ("settings_wifi", ["run", "apps/settings.lua", ":", "sleep", "0.3",
+                       ":", "tap", "184", "268", ":", "sleep", "0.4"]),
+
     ("face",         ["face", "digital", "10:09:30", "72"]),
     ("face_analog",  ["face", "analog",  "10:09:30", "72"]),
     ("face_rings",   ["face", "rings",   "10:09:30", "72"]),
