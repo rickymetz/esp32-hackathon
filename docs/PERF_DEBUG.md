@@ -69,9 +69,13 @@ Two consequences worth knowing:
 - If you want frame rate the harness can *read*, the overlay is the wrong
   mechanism. `CONFIG_LV_USE_PERF_MONITOR_LOG_MODE=y` emits it to the log
   instead, in a parseable form (`sysmon: N FPS (refr_cnt ...) ... CPU N%%`)
-  — but it goes through `LV_LOG`, so it also needs `CONFIG_LV_USE_LOG=y`,
-  which is currently off. That is a two-symbol change plus a rebuild, and
-  it turns LVGL logging on globally.
+  — but it goes through **bare `LV_LOG()`**, which compiles to nothing unless
+  `CONFIG_LV_USE_LOG=y`, and that is currently off. Setting LOG_MODE **alone**
+  therefore removes the on-screen overlay and prints nothing at all — strictly
+  worse than either state. The full change is four symbols (LOG_MODE,
+  `LV_USE_LOG`, `LV_LOG_LEVEL_WARN` so bare `LV_LOG` is below `NONE`, and
+  `LV_LOG_PRINTF` to reach the console), it turns LVGL logging on globally, and
+  it is unmeasured — see the note in `launcher/sdkconfig.defaults`.
 
 The simulator has its own `lv_conf.h` with sysmon off, so CI is unaffected
 either way.

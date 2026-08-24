@@ -126,19 +126,27 @@ layer. These still need the board:
 - **Watchdog reboots** from runaway loops / blocking C calls; timing of the
   10 s TWDT; PSRAM budgets.
 `sim/timing_test.py` guards the timer-accuracy bug class (see
-`sim/fixtures/timing.lua`): it paces the same duration with both the wrong
-pattern and the right one and asserts they are still distinguishable. Runs in
-CI.
+`sim/fixtures/timing.lua`): it paces the same duration two ways -- counting
+ticks, and chaining against an absolute target -- and asserts BOTH stay within
+tolerance. It used to assert they were still *distinguishable*, back when
+`timer.every` re-armed from dispatch time and tick-counting was reliably worse;
+that assertion fired, as designed, when the launcher was fixed. Runs in CI.
 
-- **Timer dispatch latency, to scale.** Timers are inaccurate in the same
-  *direction* here as on the board -- a periodic timer re-arms after its
-  callback, so it always runs slow -- but not to the same *degree*. Measured
-  with a 100 bpm metronome: the simulator overshoots by ~2.7 ms per tick, the
-  board by ~24 ms. So a timing bug is roughly an order of magnitude quieter
-  here, and one that looks like harmless jitter in the sim can be plainly
-  wrong on hardware. The sim is still the right place to *find* these -- add a
-  `print(timer.now_ms())` and read the intervals off stdout -- just don't read
-  its margins as the real ones.
+`sim/overrun_test.py` covers the other half: a periodic callback that takes
+LONGER than its own period. The launcher skips the missed slots rather than
+replaying them, snapping forward on the original grid, and this asserts both
+(no catch-up burst, and gaps that land on the grid). Its tolerances were
+calibrated by deleting the guard and re-running, not guessed. Runs in CI.
+
+- **Timer dispatch latency.** This entry used to warn that periodic timers
+  re-arm after their callback and so always run slow, ~2.7 ms/tick in the sim
+  against ~24 ms on the board. That is history: `app_timer.c` now advances a
+  periodic deadline by the period instead of rebasing it on dispatch time, and
+  both sides measure ~0 ms/tick of systematic drift (hardware: 5.0 -> 0.0 on a
+  1000 ms timer). What the sim still cannot show you is a callback that
+  overruns its period -- the catch-up guard then SKIPS ticks, and how often
+  that happens depends on real hardware timing. Verify anything that must keep
+  a beat under load on the board.
 - Exact **color** — the panel is RGB565 and the sim matches that, but real
   AMOLED brightness/gamma differ.
 - **Filesystem paths.** `--sdroot` resolves the app and `font_load` paths

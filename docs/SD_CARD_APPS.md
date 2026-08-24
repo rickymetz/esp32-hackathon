@@ -61,7 +61,7 @@ cp apps/counter.lua apps/myapp/main.lua     # start from the template
 #    sends every file into /sdcard/apps/myapp/ on the card.
 ./.venv/bin/python tools/push.py apps/myapp
 
-# 3. Launch it -- tap Refresh then the row on the device, or over serial:
+# 3. Launch it -- tap its row (push already refreshed the list), or over serial:
 ./.venv/bin/python tools/drive.py run myapp
 ```
 

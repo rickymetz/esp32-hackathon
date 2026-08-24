@@ -36,3 +36,6 @@ firmware/bin
 firmware/.cache/
 firmware/MANIFEST
 dist/
+
+# Scratch: debate/review work dirs (.tmp/ai-review-*), never part of a change.
+.tmp/

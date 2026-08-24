@@ -85,11 +85,15 @@ cp apps/counter.lua apps/myapp.lua
 # 3. Install it over USB (no card shuffling, no reboot).
 ./.venv/bin/python tools/push.py apps/myapp.lua
 
-# 4. Launch it -- either tap Refresh then the row on the device, or:
+# 4. Launch it -- tap its row on the device (it is already in the list), or:
 ./.venv/bin/python tools/drive.py run myapp.lua
 ```
 
-Edit, re-run steps 3 and 4, repeat. That is the whole loop.
+Edit, re-run steps 3 and 4, repeat. That is the whole loop — or chain it in one command:
+
+```bash
+./.venv/bin/python tools/drive.py push apps/myapp.lua : run myapp.lua : sleep 1 : shot out.png
+```
 
 ## Develop without the board
 
@@ -123,9 +127,19 @@ The fast path, no SD card shuffling:
 ./.venv/bin/python tools/push.py apps/myapp.lua
 ```
 
-This sends the file to the board over USB and rescans the app list. Tap **Refresh** on the
-device, or send `RUN myapp.lua` over serial (see Debugging) to launch it immediately —
-either way finds it right away, no reboot needed.
+This sends the file to the board over USB, rescans the app list, and asks the launcher to
+rebuild its home screen — so the app normally appears on the device without a Refresh tap
+or a reboot.
+
+"Normally", because the rebuild is deferred when the launcher is not the thing on screen:
+if an app is running, or the app-info sheet is open, the screen is rebuilt when you next
+return to the launcher rather than underneath what you are looking at. That is the common
+case in a `push : run` loop, where every push after the first lands while the previous app
+is still up. Either way the change is never lost, and Refresh remains for a card you
+swapped rather than pushed to.
+
+Tap the app's row, or send `RUN myapp.lua` over serial (see Debugging) to launch it without
+touching the panel.
 
 You can still do it by hand: copy the `.lua` file to `/apps/` on the microSD card. That is
 the same folder as `/sdcard/apps` on the device — one name is how you see it when the card
@@ -321,17 +335,43 @@ Both return a handle with `:cancel()`. **You get 16 timer slots**; a 17th raises
 one while they're on screen (`ui.toast`). Every timer an app creates is cancelled
 automatically when the app exits — you never need to track them down yourself.
 
-#### `timer.every` is not accurate. Plan for that.
+#### `timer.every` keeps a schedule now. Read this if you saw the old advice.
 
-**A periodic timer re-arms *after* your callback returns.** So `timer.every(1000, …)`
-does not fire every 1000 ms — it fires every 1000 ms *plus* however long your callback
-took *plus* the pump's dispatch latency. That overhead was measured on this board at
-roughly **24 ms per tick**, and it never averages out: it accumulates in one direction,
-always slow.
+**This section used to say `timer.every` was inaccurate and told you to work around it.
+That was true, and it is no longer true.** The launcher re-armed a periodic timer from
+the moment your callback *returned*, so every cycle silently absorbed the callback's
+runtime plus dispatch latency and the error accumulated in one direction forever. It is
+fixed: the deadline now advances by the period, so ticks sit on an absolute grid and a
+late tick does not push the next one out.
 
-This is the single most common bug in the apps written so far — five of the shipped
-examples had it. It is invisible on screen, which is what makes it dangerous: the app
-looks right and the numbers are wrong.
+Measured on hardware, before and after:
+
+| | before | after |
+| --- | --- | --- |
+| `timer.every(1000, …)` | 5.0 ms/tick slow | **0.0 ms/tick** |
+| `timer.every(100, …)` | 4.1 ms/tick slow | **0.0 ms/tick** |
+
+(The figure this document carried for a long time — "roughly 24 ms per tick" — was stale
+even before the fix.)
+
+Two things follow, and the second one still bites:
+
+**Counting ticks to measure elapsed time is now approximately right.** It was linearly
+wrong before. `sim/timing_test.py` holds it to ±40 ms over a 4 s run and fails loudly if
+anyone reintroduces the old re-arm.
+
+**A slow callback still costs you ticks.** The grid does not create time. If your
+callback takes longer than the period, the deadline is already in the past when it
+returns and the launcher resynchronises to the next whole period rather than firing
+repeatedly to catch up — so you *skip* ticks instead of drifting. A tick counter is
+then an undercount, and no schedule can fix that. Which means:
+
+**`timer.now_ms()` is still the right way to measure time, and the patterns below are
+still the right way to write anything that must keep a beat.** They are robust whatever
+the launcher does underneath, they cost nothing, and pattern 2 is what you need anyway
+as soon as you pace against something other than a fixed period. What has changed is
+the consequence of getting it wrong: an unnoticed steady drift before, a skipped tick
+under load now.
 
 `timer.now_ms()` returns monotonic milliseconds since boot, and it is the fix for all
 three shapes of the problem:
@@ -339,11 +379,12 @@ three shapes of the problem:
 **1. Measuring how long something took** — take two stamps and subtract. Never accumulate.
 
 ```lua
--- WRONG: reports less time than actually passed
+-- FRAGILE: accurate only while every callback finishes inside 10 ms.
+-- Under load this undercounts, because missed ticks are skipped, not replayed.
 local ms = 0
 timer.every(10, function() ms = ms + 10 end)
 
--- RIGHT
+-- RIGHT: true regardless of what the callbacks did
 local started = timer.now_ms()
 -- ...later...
 local ms = timer.now_ms() - started
@@ -370,9 +411,10 @@ Keep `next_at` a float if `interval` is fractional, but floor what you hand to
 `timer.after` — it takes an integer and raises on a fraction.
 
 **3. Watching something that changes on its own** (the RTC's seconds, a sensor) — do
-**not** match its rate; sample *faster* and repaint only on change. A 1000 ms timer
-sampling a 1 Hz clock is slightly slower than the clock, so it misses whole seconds and
-your display visibly jumps two at a time:
+**not** match its rate; sample *faster* and repaint only on change. Two independent
+1 Hz clocks drift against each other no matter how accurate each one is, so a 1000 ms
+timer sampling the RTC will eventually sit right on its second boundary and your display
+jumps two at a time. Oversampling removes the problem instead of racing it:
 
 ```lua
 local last
@@ -1082,6 +1124,10 @@ SHOT                 ->  screenshot of the live screen (see tools/screenshot.py)
 TAP <x> <y>          ->  synthetic tap, same event pipeline as a finger
 SWIPE x0 y0 x1 y1 [ms] -> synthetic swipe/drag
 MEM                  ->  MEM <psram_free> <internal_free> <largest_internal>
+PING                 ->  PONG launcher <proto> lvgl <x.y.z>  (confirm the port
+                         really is the launcher before driving it)
+<anything else>      ->  ERR unknown_command <verb>  (so a typo answers at once
+                         instead of timing out silently)
 STATS                ->  heap low-water marks, per-task CPU and stack
                          headroom (tools/stats.py decodes it)
 ```
