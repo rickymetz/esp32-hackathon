@@ -724,7 +724,10 @@ with nobody typing a date. This is the intended way to set the clock;
 `rtc.set` is the manual fallback.
 
 Credentials are entered **on the device** in `apps/settings.lua` (Wi-Fi) and stored
-on the card. Do not ask a user to type a password into a host terminal.
+in NVS (`wifi_ssid` / `wifi_pass`), so a board with no card still remembers its
+network. A network saved by an older build from `/sdcard/wifi.txt` is imported
+once, automatically, on the first boot after the change. Do not ask a user to
+type a password into a host terminal.
 
 **Captive portals do not work.** Hotel, café and conference networks intercept
 traffic until you authenticate in a browser, and the device has no browser. The
