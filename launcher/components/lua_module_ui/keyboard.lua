@@ -118,17 +118,29 @@ function M.open(opts, cb)
     })
 
     -- The space key carries a drawn ⎵ (space-bar) glyph rather than the word
-    -- "space" -- the compiled font has no such codepoint. It's a plain line
-    -- laid over the (blank-labelled) space cell; a line is non-clickable, so
-    -- taps fall through to the buttonmatrix. place_space() moves it onto the
-    -- space cell per view; hide_space() parks it off-screen in the digit pad.
-    local space_icon = lvgl.line(scr, {
-        w = 56, h = 20,
-        points = { { x = 0, y = 0 }, { x = 0, y = 16 },
-                   { x = 54, y = 16 }, { x = 54, y = 0 } },
-        line_color = "#A0A0AE", line_width = 6,
+    -- "space" -- the compiled font has no such codepoint. Built from three
+    -- overlapping rounded bars (a polyline leaves gaps at the right-angle
+    -- joints), in white to match the key text. The container has no fill and
+    -- nothing here is clickable, so taps fall through to the buttonmatrix.
+    -- place_space() moves it onto the space cell per view; hide_space() parks
+    -- it off-screen in the digit pad.
+    local SPB = "#FFFFFF"
+    local space_icon = lvgl.container(scr, {
+        w = 56, h = 22, bg_opa = 0, border_width = 0, pad = 0,
     })
-    local function place_space(cx, cy) space_icon:set_pos(cx - 28, cy - 8) end
+    space_icon:set_clickable(false)   -- taps must fall through to the space cell
+    local function bar(opts)
+        local b = lvgl.container(space_icon, opts)
+        b:set_clickable(false)
+        return b
+    end
+    bar({ align = "bottom_mid", w = 56, h = 6,
+          radius = 3, bg_color = SPB, bg_opa = 255, border_width = 0 })   -- bar
+    bar({ align = "bottom_left", w = 6, h = 20,
+          radius = 3, bg_color = SPB, bg_opa = 255, border_width = 0 })   -- left leg
+    bar({ align = "bottom_right", w = 6, h = 20,
+          radius = 3, bg_color = SPB, bg_opa = 255, border_width = 0 })   -- right leg
+    local function place_space(cx, cy) space_icon:set_pos(cx - 28, cy - 11) end
     local function hide_space() space_icon:set_pos(-200, -200) end
 
     local upper = true   -- case for appended letters; the Aa cell flips it
