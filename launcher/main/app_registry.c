@@ -130,6 +130,14 @@ static esp_err_t scan_locked(void)
         app_entry_t *app = &s_apps[s_count];
 
         if (is_dir) {
+            /* A folder push writes its temp file inside the app folder, so a
+             * failed folder push leaves apps/<folder>/.push.tmp behind. Sweep
+             * it here, the same way the flat apps/.push.tmp is swept above. */
+            char tmp[APP_PATH_MAX];
+            if (snprintf(tmp, sizeof(tmp), "%s/.push.tmp", entry_path) < (int)sizeof(tmp)) {
+                remove(tmp);   /* ENOENT is the normal case */
+            }
+
             char main_path[APP_PATH_MAX];
             n = snprintf(main_path, sizeof(main_path), "%s/main.lua", entry_path);
             if (n < 0 || n >= (int)sizeof(main_path)) {

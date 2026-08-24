@@ -108,6 +108,11 @@ local function decode(s)
             i = i + 1; ws()
             if s:sub(i, i) == "]" then i = i + 1; return a end
             while true do
+                -- A JSON null element collapses: Lua arrays cannot hold a nil
+                -- hole, so a[#a+1]=nil is a no-op and the next value takes that
+                -- slot. Only reachable if a persisted array held a non-finite
+                -- number (NaN/Inf), which encode() writes as null -- don't put
+                -- those in a stored array.
                 a[#a + 1] = value()
                 ws()
                 local d = s:sub(i, i); i = i + 1

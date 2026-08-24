@@ -462,14 +462,25 @@ static void lua_app_task(void *arg)
     int errfunc = lua_gettop(L);
 
     /* Per-app persistent store: point require("store") at this app's state
-     * file (<sd>/state/<name>.json). get/set work in memory; store.save()
-     * writes here. mkdir is harmless if the dir already exists. */
+     * file (<sd>/state/<key>.json). get/set work in memory; store.save()
+     * writes here. mkdir is harmless if the dir already exists.
+     *
+     * Key on the app id (a flat app's basename minus ".lua", a folder app's
+     * folder name), NOT the pretty display name -- that is what the simulator
+     * (sim_main.c app_store_key) and the apps' own docs use, so store data
+     * lines up across device, sim, and card. */
     {
+        char key[APP_ID_MAX];
+        snprintf(key, sizeof(key), "%s", app->id);
+        size_t kl = strlen(key);
+        if (kl > 4 && strcmp(key + kl - 4, ".lua") == 0) {
+            key[kl - 4] = '\0';
+        }
         char dir[APP_PATH_MAX];
         snprintf(dir, sizeof(dir), "%s/state", BSP_SD_MOUNT_POINT);
         mkdir(dir, 0777);
         char store_path[APP_PATH_MAX];
-        snprintf(store_path, sizeof(store_path), "%s/%s.json", dir, app->name);
+        snprintf(store_path, sizeof(store_path), "%s/%s.json", dir, key);
         lua_pushstring(L, store_path);
         lua_setglobal(L, "__APP_STORE__");
     }

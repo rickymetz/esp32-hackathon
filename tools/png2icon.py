@@ -127,6 +127,13 @@ def decode_builtin(path):
         out += line
         prev = line
 
+    # A tRNS chunk on a grayscale/truecolor image is a colour key: pixels
+    # exactly matching it are transparent (8-bit sample = low byte of each
+    # big-endian 16-bit entry). Palette tRNS is handled per-index below.
+    key_gray = trans[1] if (colortype == 0 and trans and len(trans) >= 2) else None
+    key_rgb = ((trans[1], trans[3], trans[5])
+               if (colortype == 2 and trans and len(trans) >= 6) else None)
+
     # Expand whatever channel layout we have into flat RGBA.
     rgba = bytearray(width * height * 4)
     px = width * height
@@ -135,10 +142,10 @@ def decode_builtin(path):
     for i in range(px):
         if colortype == 2:      # RGB
             r, g, b = out[i * 3], out[i * 3 + 1], out[i * 3 + 2]
-            a = 255
+            a = 0 if key_rgb == (r, g, b) else 255
         elif colortype == 0:    # gray
             r = g = b = out[i]
-            a = 255
+            a = 0 if key_gray == out[i] else 255
         elif colortype == 4:    # gray + alpha
             r = g = b = out[i * 2]
             a = out[i * 2 + 1]

@@ -16,9 +16,17 @@
 
 static const char *TAG = "serial_push";
 
-#define LINE_MAX     128
-#define NAME_MAX      64
+/* NAME_MAX covers a full app id (APP_ID_MAX is 128): a shorter cap would let
+ * the registry list and launch an app by tap that RUN/DELETE then reject as
+ * "bad_name". LINE_MAX must hold the longest command line ("DELETE " + id). */
+#define LINE_MAX     256
+#define NAME_MAX     128
 #define PAYLOAD_MAX (64 * 1024)
+
+/* Stringify NAME_MAX for the sscanf field width, so the width can never drift
+ * from the buffer size (name[NAME_MAX + 1]). */
+#define STR2(x) #x
+#define STR(x)  STR2(x)
 
 /* None of these are a security boundary -- anyone with USB can already reflash
  * the board -- but they stop a stray path from writing somewhere surprising and
@@ -111,7 +119,7 @@ static void handle_push(const char *header)
     char name[NAME_MAX + 1];
     unsigned expect_len = 0, expect_crc = 0;
 
-    if (sscanf(header, "PUSH %64s %u %x", name, &expect_len, &expect_crc) != 3) {
+    if (sscanf(header, "PUSH %" STR(NAME_MAX) "s %u %x", name, &expect_len, &expect_crc) != 3) {
         printf("PUSH_ERR bad_header\n");
         return;
     }
@@ -183,7 +191,7 @@ static void handle_run(const char *header)
 {
     char name[NAME_MAX + 1];
 
-    if (sscanf(header, "RUN %64s", name) != 1) {
+    if (sscanf(header, "RUN %" STR(NAME_MAX) "s", name) != 1) {
         printf("RUN_ERR bad_name\n");
         return;
     }
@@ -230,7 +238,7 @@ static void handle_delete(const char *header)
 {
     char name[NAME_MAX + 1];
 
-    if (sscanf(header, "DELETE %64s", name) != 1 || !id_is_safe(name)) {
+    if (sscanf(header, "DELETE %" STR(NAME_MAX) "s", name) != 1 || !id_is_safe(name)) {
         printf("DELETE_ERR bad_name\n");
         return;
     }
