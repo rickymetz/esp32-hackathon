@@ -44,6 +44,7 @@
 #include "lua_module_lvgl.h"
 #include "app_registry.h"
 #include "launcher_home.h"
+#include "launcher_face.h"
 #include "app_sandbox.h"
 #include "app_timer.h"
 #include "app_button.h"
@@ -90,6 +91,35 @@ static const char *TAG = "launcher";
 #define MAX_VISIBLE_ROWS 64
 
 static lv_obj_t *s_launcher_screen;
+
+/* ---- Shell navigation ---------------------------------------------------
+ * Home is the watch face, not the app list: a watch shows you the time and
+ * makes apps somewhere you navigate to. BOOT is the only navigation control
+ * and it is a three-way toggle:
+ *
+ *     running an app  ->  home      (the app is stopped first)
+ *     home (face)     ->  app list
+ *     app list        ->  home
+ *
+ * That keeps the escape guarantee BOOT has always carried -- it is hardware,
+ * no app can consume it, so a misbehaving app is always escapable -- while
+ * making the face, not the launcher, the place you land.
+ *
+ * s_shell_view tracks which of the two shell surfaces is up. It is only
+ * meaningful when no app is running; the app-exit path always returns to the
+ * face, so it is set there rather than inferred. */
+typedef enum {
+    SHELL_VIEW_FACE = 0,
+    SHELL_VIEW_APPS = 1,
+} shell_view_t;
+
+static shell_view_t s_shell_view = SHELL_VIEW_FACE;
+/* Defined with the other shell surfaces below; declared here because
+ * lua_app_task's exit path (above them) returns to the face. */
+static void show_face_screen(void);
+static void show_apps_screen(void);
+static lv_obj_t    *s_face_screen;
+static lv_timer_t  *s_face_tick;
 static lv_display_t *s_disp;   /* for re-applying the theme after app exit */
 static launcher_view_t s_view_mode = LAUNCHER_VIEW_LIST;   /* list <-> grid */
 static void apply_persisted_font_scale(lv_display_t *disp);
@@ -274,16 +304,6 @@ static bool pump_events(lua_State *L, int timeout_ms)
     return true;
 }
 
-static void show_launcher_screen(void)
-{
-    if (s_launcher_screen == NULL) {
-        return;
-    }
-    bsp_display_lock(0);
-    lv_screen_load(s_launcher_screen);
-    bsp_display_unlock();
-}
-
 /* Message handler for lua_pcall: converts the error into a traceback. Without
  * this you get a bare one-line message with no call stack -- exactly what
  * happened before this was added: one untraceable line on serial and a
@@ -362,12 +382,17 @@ static void show_error_and_wait_for_stop(lua_State *L, const char *app_name, con
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 
-    /* Load the launcher screen before deleting the error screen so the
-     * currently-active screen is never the one being freed. Nothing else can
-     * see err_scr to clean it up -- lv_screen_load() does not free the
-     * screen it replaces, so without this every crash leaked a screen plus
-     * its labels. */
-    show_launcher_screen();
+    /* Load the face before deleting the error screen so the currently-active
+     * screen is never the one being freed. Nothing else can see err_scr to
+     * clean it up -- lv_screen_load() does not free the screen it replaces,
+     * so without this every crash leaked a screen plus its labels.
+     *
+     * The face, not the app list: since the shell boots to the face, the app
+     * list may never have been built, and the old show_launcher_screen() bailed
+     * out on a NULL screen -- which would leave err_scr active and then delete
+     * it, exactly the crash this ordering exists to avoid. build_face_ui()
+     * always produces a screen. */
+    show_face_screen();
     bsp_display_lock(0);
     lv_obj_delete(err_scr);
     bsp_display_unlock();
@@ -589,7 +614,9 @@ close:
     }
 
 out:
-    show_launcher_screen();
+    /* Home is the face: leaving an app lands you on the watch, the way a
+     * watch behaves, not back in the app list you launched from. */
+    show_face_screen();
     xSemaphoreTake(s_app_mutex, portMAX_DELAY);
     s_app_task = NULL;
     xSemaphoreGive(s_app_mutex);
@@ -860,6 +887,113 @@ static void app_row_long_pressed(lv_event_t *e)
     bsp_display_unlock();
 }
 
+/* ---- The face surface ---------------------------------------------------
+ * Rebuilt rather than mutated on each tick: the face is a handful of labels,
+ * a rebuild is far below a frame's budget, and it keeps launcher_face_build()
+ * a pure "draw this data" function with no update path to keep in sync. */
+
+/* Sample the clock and gauge into the face's data. Never fails: an
+ * unreachable sensor lands as invalid and the face draws its honest degraded
+ * state rather than a fabricated reading. */
+static void read_face_data(launcher_face_data_t *d)
+{
+    memset(d, 0, sizeof(*d));
+
+    int year, mon, mday, hour, min, sec, wday;
+    if (app_sensors_rtc_get_tm(&year, &mon, &mday, &hour, &min, &sec, &wday) == ESP_OK) {
+        d->time_valid = true;
+        d->hour = hour; d->min = min;
+        d->year = year; d->month = mon; d->day = mday; d->wday = wday;
+    }
+
+    int pct; bool charging;
+    if (app_sensors_battery_get(&pct, &charging) == ESP_OK) {
+        d->batt_valid = true;
+        d->batt_percent = pct;
+        d->charging = charging;
+    }
+}
+
+/* Build (or rebuild) the face screen and leave it loaded. Caller must NOT
+ * hold the display lock -- this takes it. */
+static void build_face_ui(void)
+{
+    launcher_face_data_t d;
+    read_face_data(&d);
+
+    bsp_display_lock(0);
+
+    lv_obj_t *old = s_face_screen;
+
+    s_face_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_face_screen, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_face_screen, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_face_screen, 0, LV_PART_MAIN);
+    launcher_face_build(s_face_screen, &d);
+
+    lv_screen_load(s_face_screen);
+
+    /* Only now that the new screen is active is the old one safe to free --
+     * lv_screen_load() does not free what it replaces, and deleting the
+     * screen that is still on-screen is exactly the crash refresh_clicked()
+     * documents avoiding. */
+    if (old != NULL && old != s_face_screen) {
+        lv_obj_delete(old);
+    }
+
+    bsp_display_unlock();
+}
+
+/* Repaint the face while it is the visible surface. Sampling faster than the
+ * minute it displays is deliberate -- a 60 s timer against a 1 Hz clock drifts
+ * and skips whole minutes (the pattern APP_CONTRACT warns apps about); 5 s is
+ * cheap and always lands within a few seconds of the true rollover. */
+static void face_tick_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_shell_view == SHELL_VIEW_FACE && s_app_task == NULL) {
+        build_face_ui();
+    }
+}
+
+static void show_face_screen(void)
+{
+    s_shell_view = SHELL_VIEW_FACE;
+    build_face_ui();
+
+    bsp_display_lock(0);
+    if (s_face_tick == NULL) {
+        s_face_tick = lv_timer_create(face_tick_cb, 5000, NULL);
+    }
+    lv_timer_resume(s_face_tick);
+    bsp_display_unlock();
+}
+
+static void show_apps_screen(void)
+{
+    s_shell_view = SHELL_VIEW_APPS;
+    /* Stop repainting the face while it is not visible -- the tick would
+     * otherwise rebuild a screen nobody is looking at every 5 s. */
+    bsp_display_lock(0);
+    if (s_face_tick != NULL) {
+        lv_timer_pause(s_face_tick);
+    }
+    bsp_display_unlock();
+    build_launcher_ui();
+}
+
+/* BOOT's three-way toggle, run off the button task. Called only when no app
+ * is running -- the app case is handled by the stop request, whose exit path
+ * lands on the face. */
+static void shell_toggle_view(void)
+{
+    if (s_shell_view == SHELL_VIEW_FACE) {
+        show_apps_screen();
+    } else {
+        show_face_screen();
+    }
+}
+
 static void build_launcher_ui(void)
 {
     size_t count = app_registry_count();
@@ -935,10 +1069,30 @@ static void button_poll_task(void *arg)
     bool level;
 
     for (;;) {
-        /* BOOT: active low. */
+        /* BOOT: active low. Three-way (see the shell navigation notes above).
+         *
+         * The stop request stays unconditional -- it must never gate on
+         * s_app_task being assigned, which is what stopped the very first
+         * version from ever returning. Reading s_app_task afterwards only
+         * decides whether this press ALSO toggles the shell surface: with an
+         * app up the stop request is the whole action, and lua_app_task's
+         * exit path lands on the face by itself. A press that races an app
+         * already exiting merely stops nothing and toggles, which is the
+         * behaviour you want anyway. */
         if (debounce_step(&boot_db, gpio_get_level(GPIO_NUM_0) == 0, &level) && level) {
-            ESP_LOGI(TAG, "BOOT pressed -- returning to launcher");
             launcher_lua_request_stop(true);
+
+            xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+            bool app_running = (s_app_task != NULL);
+            xSemaphoreGive(s_app_mutex);
+
+            if (app_running) {
+                ESP_LOGI(TAG, "BOOT pressed -- stopping app, returning home");
+            } else {
+                ESP_LOGI(TAG, "BOOT pressed -- %s",
+                         s_shell_view == SHELL_VIEW_FACE ? "face -> apps" : "apps -> face");
+                shell_toggle_view();
+            }
         }
 
         /* PWR: active high, behind the expander. */
@@ -1064,7 +1218,9 @@ void app_main(void)
 
     app_registry_scan();
     apply_persisted_font_scale(disp);   /* after SD mount, before UI build */
-    build_launcher_ui();
+    /* Boot to the watch face, not the app list: home is the watch. The app
+     * list is one BOOT press away (see the shell navigation notes above). */
+    show_face_screen();
     xTaskCreate(button_poll_task, "buttons", 3072, NULL, 6, NULL);
     serial_push_start();
 

@@ -179,12 +179,29 @@ That pump needs **a positive timeout and a yield**. `process_events(0)` returns
 immediately when the queue is empty; looping on it starves the idle task and trips the
 task watchdog.
 
-**Back to the launcher is the BOOT button** (GPIO0, top right, active low — a direct
-GPIO read, so unlike the old PWR path it has no I²C dependency and survives a wedged bus).
-Deliberately hardware: no app can consume it or paint over it, so a misbehaving app is
-always escapable. Polled every 20 ms in `button_poll_task` with a two-sample debounce; it
-requests stop unconditionally rather than gating on "is an app running", which is what
-broke the first version.
+**Home is the watch face, not the app list.** The device boots to a built-in face
+(`launcher_face.c` — pure LVGL, no card, no Lua VM, so it is always available and is
+the fallback if a Lua home app ever fails). The app list is a surface you navigate to.
+
+**BOOT (GPIO0, top right, active low) is the only navigation control**, and it is a
+three-way toggle:
+
+| From | BOOT goes to |
+| --- | --- |
+| a running app | home (the app is stopped first) |
+| home (face) | the app list |
+| the app list | home |
+
+A direct GPIO read, so unlike the old PWR path it has no I²C dependency and survives a
+wedged bus. Deliberately hardware: no app can consume it or paint over it, so a
+misbehaving app is always escapable. Polled every 20 ms in `button_poll_task` with a
+two-sample debounce; it requests stop **unconditionally** rather than gating on "is an
+app running", which is what broke the first version — the `s_app_task` read afterwards
+only decides whether the press *also* toggles the shell surface.
+
+The face repaints on a 5 s LVGL timer that is paused while the app list is up. Sampling
+faster than the minute it displays is deliberate: a 60 s timer against a 1 Hz clock
+drifts and skips whole minutes — the same trap `docs/APP_CONTRACT.md` warns apps about.
 
 **PWR (EXIO4 on the expander, active high) belongs to apps** via `require("button")` —
 pressed/released/long_pressed(2 s). Holding PWR ≥6 s still powers off — that is the

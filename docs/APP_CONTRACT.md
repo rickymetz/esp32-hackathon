@@ -60,8 +60,10 @@ to change it is a full-screen animation that visibly tears (raise it) on a scree
    board. This is different for an error *inside an event callback* (a `btn:on(...)`
    handler): that is caught, logged to serial under the tag `lua_lvgl_evt`, and your app
    keeps running — see Events, below.
-5. **BOOT (the top-right button) returns you to the launcher — almost always instantly.**
-   It is hardware: no app can consume or override it. (PWR, bottom right, belongs to your
+5. **BOOT (the top-right button) exits your app — almost always instantly.**
+   It is hardware: no app can consume or override it. It lands on the *watch face*,
+   which is home; the app list is one more BOOT press from there. (So BOOT is a
+   three-way toggle: app → face → app list → face.) (PWR, bottom right, belongs to your
    app — see the `button` module.) Under the hood, BOOT works by interrupting the Lua
    interpreter, which is fast but can't reach everywhere: a tight loop **inside a
    coroutine body, or inside a blocking C call**, is invisible to that interrupt. Those get
