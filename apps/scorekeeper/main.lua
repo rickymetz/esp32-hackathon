@@ -7,9 +7,13 @@
 --                               a short history of finished results -- via store
 --
 -- Rules depth is "right format + limits": each sport shows its correct
--- structure and targets, and you drive the scoring with +/- (tennis is the one
--- exception -- points roll into games/sets because that IS how tennis reads).
--- Nothing declares a match winner; you decide when it's over and tap the check.
+-- structure and targets, and you drive the scoring (tennis is the one exception
+-- -- points roll into games/sets because that IS how tennis reads). Nothing
+-- declares a match winner; you decide when it's over and tap Finish.
+--
+-- Scoring gesture: tap a side's big card to add a point; the full-width button
+-- under it removes one (tennis: a single Undo reverts the last point, since a
+-- point can roll a game/set). Finish and starting-over both confirm first.
 
 local lvgl  = require("lvgl")
 local ui    = require("ui")
@@ -45,89 +49,108 @@ end
 local A, B = 1, 2
 local show_menu                              -- forward decl
 
--- One consistent scoring layout across sports so long titles ("Pickleball")
--- never fight a header action: back + title only (title fits), score cards up
--- top, controls in the middle band, a full-width Finish pinned to the bottom.
-local CARDS_Y, CARDS_H = 118, 132
-local CTRL_Y,  CTRL_H  = 258, 92
+-- ---- shared scoring widgets ----------------------------------------------
+-- A big tappable score card = the +1 target (huge, with press feedback). The
+-- whole card is the button, so the score itself is what you tap to add a point.
+local CARD_Y = 96
 
--- Two score cards side by side; returns their value labels to update.
-local function two_cards(nameA, nameB)
-    local function card(x, name)
-        local c = ui.card(scr, { x = x, y = CARDS_Y, w = 160, h = CARDS_H })
-        lvgl.label(c, { text = name, align = "top_mid", text_color = "#A0A0AE", font = lvgl.font(26) })
-        return lvgl.label(c, { text = "0", align = "center", y = 6, text_color = "#FFFFFF", font = lvgl.font(60) })
-    end
-    return card(16, nameA), card(192, nameB)
+local function score_card(x, name, h, on_tap)
+    local b = lvgl.button(scr, { x = x, y = CARD_Y, w = 160, h = h, align = "top_left",
+                                 bg_color = "#1E1E28", radius = 16 })
+    b:set_style({ shadow_width = 0, pad = 0 })
+    lvgl.label(b, { text = name, align = "top_mid", y = 8, text_color = "#A0A0AE", font = lvgl.font(26) })
+    local val = lvgl.label(b, { text = "0", align = "center", y = 6, text_color = "#FFFFFF", font = lvgl.font(60) })
+    local sub = lvgl.label(b, { text = "", align = "bottom_mid", y = -6, text_color = "#6E6E7A", font = lvgl.font(26) })
+    if on_tap then b:on("clicked", on_tap) end
+    return val, sub
 end
 
-local function finish_button(on_click)
+local function finish_button(sport, result_fmt)
     ui.button(scr, { text = lvgl.symbol.ok .. " Finish", kind = "secondary",
-                     align = "bottom_mid", y = -8, w = 344, h = 88, on_click = on_click })
-end
-
--- +1 (wide) and -1 (narrow) for one side, in the middle control band.
-local function side_controls(side, on_plus, on_minus)
-    local plus_x, minus_x = (side == A) and 16 or -16, (side == A) and 128 or -128
-    local anchor = (side == A) and "top_left" or "top_right"
-    ui.button(scr, { text = "+1", kind = "primary",   x = plus_x,  y = CTRL_Y, w = 104, h = CTRL_H, align = anchor, on_click = on_plus })
-    ui.button(scr, { text = lvgl.symbol.minus, kind = "secondary", x = minus_x, y = CTRL_Y, w = 48, h = CTRL_H, align = anchor, on_click = on_minus })
+                     align = "bottom_mid", y = -8, w = 344, h = 88,
+        on_click = function()
+            ui.confirm({ title = "Finish?", message = "Save the result and start over.",
+                         confirm_label = "Finish" }, function(ok)
+                if ok then record(sport, result_fmt()); show_menu() end
+            end)
+        end })
 end
 
 -- ---- two-side sports (pickleball, cornhole) ------------------------------
 local function two_side(title, subtitle, finish_fmt)
     scr:clean()
     ui.header(scr, { title = title, on_back = show_menu })
-    lvgl.label(scr, { text = subtitle, align = "top_mid", y = 96, text_color = "#6E6E7A", font = lvgl.font(26) })
+    lvgl.label(scr, { text = subtitle, align = "top_mid", y = 70, text_color = "#6E6E7A", font = lvgl.font(26) })
 
-    local va, vb = two_cards("You", "Opp")
-    local function bump(key, d)
-        game[key] = math.max(0, game[key] + d); save()
-        va:set_text(tostring(game.a)); vb:set_text(tostring(game.b))
-    end
-    va:set_text(tostring(game.a)); vb:set_text(tostring(game.b))
-    side_controls(A, function() bump("a", 1) end, function() bump("a", -1) end)
-    side_controls(B, function() bump("b", 1) end, function() bump("b", -1) end)
-    finish_button(function() record(title, finish_fmt(game)); show_menu() end)
+    local va, vb
+    local function paint() va:set_text(tostring(game.a)); vb:set_text(tostring(game.b)) end
+    local function bump(key, d) game[key] = math.max(0, game[key] + d); save(); paint() end
+
+    va = (score_card(16,  "You", 132, function() bump("a", 1) end))
+    vb = (score_card(192, "Opp", 132, function() bump("b", 1) end))
+    -- Full-size -1 under each card (the +1 is the card itself).
+    ui.button(scr, { text = lvgl.symbol.minus, kind = "secondary", x = 16,  y = 238, w = 160, h = 96, align = "top_left",  on_click = function() bump("a", -1) end })
+    ui.button(scr, { text = lvgl.symbol.minus, kind = "secondary", x = 192, y = 238, w = 160, h = 96, align = "top_left",  on_click = function() bump("b", -1) end })
+    paint()
+    finish_button(title, function() return finish_fmt(game) end)
 end
 
 -- ---- golf ----------------------------------------------------------------
-local PAR = 4                                -- par per hole (flat, keeps it simple)
+local function par_of(h) return (game.par and game.par[h]) or 4 end
 
 local function golf_score()
     scr:clean()
     ui.header(scr, { title = "Golf", on_back = show_menu })
 
-    local par_thru = (game.hole - 1) * PAR
-    lvgl.label(scr, { text = string.format("Hole %d / %d  ", game.hole, game.holes) .. lvgl.symbol.bullet .. string.format("  par %d", PAR),
+    -- Per-hole par, tapped to cycle 3 -> 4 -> 5. corner_button gives a compact
+    -- pill with a full 88px hit target. par-thru sums the holes already played.
+    local par_thru = 0
+    for h = 1, game.hole - 1 do par_thru = par_thru + par_of(h) end
+    ui.corner_button(scr, { text = "Par " .. par_of(game.hole), align = "top_right", x = -4, y = 4, w = 120,
+        on_click = function()
+            game.par = game.par or {}
+            local p = par_of(game.hole)
+            game.par[game.hole] = (p >= 5) and 3 or (p + 1)
+            save(); golf_score()
+        end })
+    lvgl.label(scr, { text = string.format("Hole %d / %d", game.hole, game.holes),
                       align = "top_mid", y = 96, text_color = "#6E6E7A", font = lvgl.font(26) })
 
-    local list = ui.list(scr, { y = 140, h = 200, pad_row = 10 })
+    local list = ui.list(scr, { y = 130, h = 210, pad_row = 10 })
     for i = 1, game.np do
-        local row = lvgl.container(list, { w = 344, h = 88, bg_color = "#1E1E28", radius = 12, border_width = 0, pad = 0 })
+        local row = lvgl.container(list, { w = 344, h = 96, bg_color = "#1E1E28", radius = 12, border_width = 0, pad = 0 })
         local tp = game.tot[i] - par_thru
         local tag = (tp == 0) and "E" or (tp > 0 and ("+" .. tp) or tostring(tp))
         lvgl.label(row, { text = "P" .. i, align = "left_mid", x = 14, text_color = "#FFFFFF", font = lvgl.font(32) })
-        lvgl.label(row, { text = string.format("%d (%s)", game.tot[i], tag), align = "left_mid", x = 66,
+        lvgl.label(row, { text = string.format("%d (%s)", game.tot[i], tag), align = "left_mid", x = 64,
                           text_color = "#A0A0AE", font = lvgl.font(26) })
         local st = ui.stepper(row, { min = 0, max = 15, value = game.cur[i], label = "%d" }, function(v) game.cur[i] = v; save() end)
-        st.row:set_size(176, 84); st.row:align("right_mid", -6, 0)
+        st.row:set_size(200, 96); st.row:align("right_mid", 0, 0)
     end
 
-    ui.button(scr, { text = (game.hole < game.holes) and ("Next hole " .. lvgl.symbol.right) or "Finish",
+    ui.button(scr, { text = (game.hole < game.holes) and ("Next hole " .. lvgl.symbol.right) or (lvgl.symbol.ok .. " Finish"),
                      kind = "primary", align = "bottom_mid", y = -8, w = 300, h = 96,
         on_click = function()
-            for i = 1, game.np do game.tot[i] = game.tot[i] + game.cur[i]; game.cur[i] = 0 end
-            if game.hole >= game.holes then
-                local par_total, parts = game.holes * PAR, {}
-                for i = 1, game.np do
-                    local d = game.tot[i] - par_total
-                    parts[i] = string.format("P%d %d(%s)", i, game.tot[i], d == 0 and "E" or (d > 0 and "+" .. d or tostring(d)))
+            local last = game.hole >= game.holes
+            local function commit()
+                for i = 1, game.np do game.tot[i] = game.tot[i] + game.cur[i]; game.cur[i] = 0 end
+                if last then
+                    local par_total, parts = 0, {}
+                    for h = 1, game.holes do par_total = par_total + par_of(h) end
+                    for i = 1, game.np do
+                        local d = game.tot[i] - par_total
+                        parts[i] = string.format("P%d %d(%s)", i, game.tot[i], d == 0 and "E" or (d > 0 and "+" .. d or tostring(d)))
+                    end
+                    record("Golf", table.concat(parts, "  ")); show_menu()
+                else
+                    game.hole = game.hole + 1; save(); golf_score()
                 end
-                record("Golf", table.concat(parts, "  "))
-                show_menu()
+            end
+            if last then
+                ui.confirm({ title = "Finish?", message = "Save the card and start over.", confirm_label = "Finish" },
+                           function(ok) if ok then commit() end end)
             else
-                game.hole = game.hole + 1; save(); golf_score()
+                commit()
             end
         end })
 end
@@ -145,18 +168,10 @@ end
 local function tennis_score()
     scr:clean()
     ui.header(scr, { title = "Tennis", on_back = show_menu })
-    lvgl.label(scr, { text = "points " .. lvgl.symbol.right .. " games " .. lvgl.symbol.right .. " sets", align = "top_mid", y = 96,
-                      text_color = "#6E6E7A", font = lvgl.font(26) })
+    lvgl.label(scr, { text = "points " .. lvgl.symbol.right .. " games " .. lvgl.symbol.right .. " sets",
+                      align = "top_mid", y = 70, text_color = "#6E6E7A", font = lvgl.font(26) })
 
-    local function tcard(x, name)
-        local c = ui.card(scr, { x = x, y = CARDS_Y, w = 160, h = CARDS_H + 18 })
-        lvgl.label(c, { text = name, align = "top_mid", text_color = "#A0A0AE", font = lvgl.font(26) })
-        local big = lvgl.label(c, { text = "0", align = "center", y = -6, text_color = "#FFFFFF", font = lvgl.font(60) })
-        local sub = lvgl.label(c, { text = "", align = "bottom_mid", text_color = "#6E6E7A", font = lvgl.font(26) })
-        return big, sub
-    end
-    local va, sub_a = tcard(16, "You")
-    local vb, sub_b = tcard(192, "Opp")
+    local va, sub_a, vb, sub_b
     local function paint()
         local da, db = tennis_points(game.pa, game.pb)
         va:set_text(da); vb:set_text(db)
@@ -164,6 +179,10 @@ local function tennis_score()
         sub_b:set_text(string.format("S%d G%d", game.sb, game.gb))
     end
 
+    local prev = nil                        -- one-level undo snapshot
+    local function snapshot()
+        prev = { pa = game.pa, pb = game.pb, ga = game.ga, gb = game.gb, sa = game.sa, sb = game.sb }
+    end
     local function won_game(who)
         if who == A then game.ga = game.ga + 1 else game.gb = game.gb + 1 end
         game.pa, game.pb = 0, 0
@@ -175,6 +194,7 @@ local function tennis_score()
         end
     end
     local function point(who)
+        snapshot()
         if who == A then game.pa = game.pa + 1 else game.pb = game.pb + 1 end
         if game.pa >= 3 and game.pb >= 3 then
             if math.abs(game.pa - game.pb) >= 2 then won_game(game.pa > game.pb and A or B) end
@@ -184,10 +204,19 @@ local function tennis_score()
         save(); paint()
     end
 
-    ui.button(scr, { text = "+", kind = "primary", x = 16,  y = CTRL_Y, w = 160, h = CTRL_H, align = "top_left",  on_click = function() point(A) end })
-    ui.button(scr, { text = "+", kind = "primary", x = -16, y = CTRL_Y, w = 160, h = CTRL_H, align = "top_right", on_click = function() point(B) end })
-    finish_button(function() record("Tennis", string.format("Sets %d-%d", game.sa, game.sb)); show_menu() end)
+    va, sub_a = score_card(16,  "You", 150, function() point(A) end)
+    vb, sub_b = score_card(192, "Opp", 150, function() point(B) end)
+    ui.button(scr, { text = lvgl.symbol.left .. " Undo point", kind = "secondary",
+                     align = "top_mid", y = 256, w = 344, h = 88,
+        on_click = function()
+            if not prev then return end
+            game.pa, game.pb = prev.pa, prev.pb
+            game.ga, game.gb = prev.ga, prev.gb
+            game.sa, game.sb = prev.sa, prev.sb
+            prev = nil; save(); paint()
+        end })
     paint()
+    finish_button("Tennis", function() return string.format("Sets %d-%d", game.sa, game.sb) end)
 end
 
 -- ---- dispatch to the right scoring screen for the current `game` ----------
@@ -217,11 +246,33 @@ local function start_golf()
         local holes = i == 2 and 18 or 9
         ui.picker({ title = "Players", options = { "1", "2", "3", "4" }, selected = 2 }, function(n)
             if not n then return end
-            game = { sport = "golf", holes = holes, np = n, hole = 1, tot = {}, cur = {} }
+            game = { sport = "golf", holes = holes, np = n, hole = 1, par = {}, tot = {}, cur = {} }
             for p = 1, n do game.tot[p] = 0; game.cur[p] = 0 end
+            -- Fill par for every hole so the array stays contiguous (1..holes) and
+            -- survives the JSON round-trip as an array -- a sparse par table would
+            -- come back string-keyed and integer lookups would miss (par -> 4).
+            for h = 1, holes do game.par[h] = 4 end
             save(); golf_score()
         end)
     end)
+end
+
+local function start_tennis()
+    game = { sport = "tennis", pa = 0, pb = 0, ga = 0, gb = 0, sa = 0, sb = 0 }; save(); tennis_score()
+end
+local function start_cornhole()
+    game = { sport = "cornhole", a = 0, b = 0 }; save(); resume_game()
+end
+
+-- Starting a new game discards an in-progress one -- confirm first.
+local function new_game(start_fn)
+    if game then
+        ui.confirm({ title = "Start over?", message = "This discards your current game.",
+                     confirm_label = "Discard", destructive = true },
+                   function(ok) if ok then start_fn() end end)
+    else
+        start_fn()
+    end
 end
 
 -- ---- history view --------------------------------------------------------
@@ -254,13 +305,11 @@ show_menu = function()
     end
 
     local sports = {
-        { "Golf", start_golf },
-        { "Pickleball", start_pickleball },
-        { "Tennis", function() game = { sport = "tennis", pa = 0, pb = 0, ga = 0, gb = 0, sa = 0, sb = 0 }; save(); tennis_score() end },
-        { "Cornhole", function() game = { sport = "cornhole", a = 0, b = 0 }; save(); resume_game() end },
+        { "Golf", start_golf }, { "Pickleball", start_pickleball },
+        { "Tennis", start_tennis }, { "Cornhole", start_cornhole },
     }
     for _, s in ipairs(sports) do
-        ui.row(list, { text = s[1], kind = "nav", on_click = s[2] })
+        ui.row(list, { text = s[1], kind = "nav", on_click = function() new_game(s[2]) end })
     end
     ui.row(list, { text = lvgl.symbol.list .. " History", kind = "nav", on_click = show_history })
 end
