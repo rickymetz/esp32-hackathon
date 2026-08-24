@@ -59,6 +59,7 @@ add_library(bindings STATIC
     ${LAUNCHER}/main/app_timer.c
     ${LAUNCHER}/main/app_sandbox.c
     ${LAUNCHER}/main/launcher_home.c
+    ${LAUNCHER}/main/launcher_face.c
     ${LAUNCHER}/main/launcher_icons.c
     ${LAUNCHER}/components/lua_module_button/app_button.c
     # Sim-specific pieces.

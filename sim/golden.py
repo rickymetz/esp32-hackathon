@@ -128,6 +128,16 @@ FRAMES = [
     # (the fixture the removed home-preview probe used to reach).
     ("sheet",        ["sheet", "Metronome"]),
     ("sheet_card",   ["sheet", "Quicktap", "D:/apps/quicktap/icon.bin"]),
+
+    # The built-in watch face -- the shell's home screen, so the most-seen
+    # surface on the device. Three cases because its degraded states are where
+    # the bugs are: "unset" is the fresh-board/dead-cell path (and the reason
+    # the placeholder is not drawn in the 120px face, whose charset is digits
+    # and ".:" only -- a "--:--" there renders as empty boxes), and the low
+    # battery case covers the warning colour and the stepped battery glyph.
+    ("face",         ["face"]),
+    ("face_unset",   ["face", "unset"]),
+    ("face_low",     ["face", "07:45", "12"]),
 ]
 
 

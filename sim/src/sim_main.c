@@ -24,6 +24,7 @@
 #include "lua_module_ui.h"
 #include "lua_module_store.h"
 #include "launcher_home.h"
+#include "launcher_face.h"
 
 /* Sim-only reset hooks (the device wifi/sensors modules are event/register
  * driven and have no such entry point; the stubs add one for determinism). */
@@ -632,6 +633,39 @@ static void exec_cmd(int argc, char **argv)
         int n = argc > argi ? atoi(argv[argi]) : -1;   /* -1 => full fake list */
         render_home(view, n, /*sd_mounted=*/true);
         printf("HOME_OK\n");
+    } else if (!strcmp(cmd, "face")) {
+        /* Render the built-in watch face (the shared launcher_face_build) with
+         * injected values, so the shell's home screen is golden-testable with
+         * no board and no RTC.
+         *   face                      a fixed, deterministic default
+         *   face HH:MM [pct] [charging|unset]
+         * "unset" renders the no-trustworthy-time state. */
+        if (s_app) app_stop();
+        launcher_face_data_t d = {
+            .time_valid = true, .hour = 10, .min = 9,
+            .year = 2026, .month = 8, .day = 24, .wday = 1,
+            .batt_valid = true, .batt_percent = 72, .charging = false,
+        };
+        for (int i = 1; i < argc; i++) {
+            int hh, mm;
+            if (sscanf(argv[i], "%d:%d", &hh, &mm) == 2) {
+                d.hour = hh; d.min = mm;
+            } else if (!strcmp(argv[i], "charging")) {
+                d.charging = true;
+            } else if (!strcmp(argv[i], "unset")) {
+                d.time_valid = false;
+            } else {
+                d.batt_percent = atoi(argv[i]);
+                d.batt_valid = d.batt_percent > 0;
+            }
+        }
+        lv_obj_t *scr = lv_obj_create(NULL);
+        lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
+        lv_obj_set_style_pad_all(scr, 0, LV_PART_MAIN);
+        lv_obj_set_style_border_width(scr, 0, LV_PART_MAIN);
+        launcher_face_build(scr, &d);
+        lv_screen_load(scr);
+        printf("FACE_OK\n");
     } else if (!strcmp(cmd, "sheet")) {
         /* Render the app-info sheet (long-press-to-delete) for a name.
          *   sheet [Name] [D:/card/icon.bin]
