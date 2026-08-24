@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include "app_wifi.h"
 #include "app_sensors.h"
@@ -37,6 +38,21 @@ static volatile bool s_time_synced;
 static char s_ip[16];
 static int  s_retries;
 static bool s_stack_up;
+
+#define SCAN_MAX  20
+
+typedef struct {
+    char   ssid[SSID_MAX + 1];
+    int8_t rssi;
+    bool   secure;
+} scan_rec_t;
+
+/* -1 = no scan started, 1 = in flight, 0 = results ready. Written by the
+ * event handler (system task), read by Lua (app task); s_scan[] is only
+ * written before s_scan_state publishes it, same discipline as s_ip above. */
+static volatile int s_scan_state = -1;
+static scan_rec_t   s_scan[SCAN_MAX];
+static int          s_scan_n;
 
 /* ---- credentials ---- */
 
@@ -134,6 +150,53 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
             s_state = WIFI_FAILED;
             ESP_LOGW(TAG, "giving up after %d attempts", MAX_RETRIES);
         }
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_SCAN_DONE) {
+        uint16_t n = SCAN_MAX;
+        wifi_ap_record_t *recs = calloc(n, sizeof(*recs));
+        s_scan_n = 0;
+        if (recs && esp_wifi_scan_get_ap_records(&n, recs) == ESP_OK) {
+            for (uint16_t i = 0; i < n && s_scan_n < SCAN_MAX; i++) {
+                const char *ssid = (const char *)recs[i].ssid;
+                if (ssid[0] == '\0') {
+                    continue;            /* hidden network */
+                }
+                /* Dedupe by SSID, keeping the strongest. Repeaters and
+                 * dual-band APs otherwise list the same name two or three
+                 * times, which reads as a bug rather than as radio reality. */
+                int found = -1;
+                for (int j = 0; j < s_scan_n; j++) {
+                    if (strcmp(s_scan[j].ssid, ssid) == 0) { found = j; break; }
+                }
+                if (found >= 0) {
+                    if (recs[i].rssi > s_scan[found].rssi) {
+                        s_scan[found].rssi = recs[i].rssi;
+                    }
+                    continue;
+                }
+                snprintf(s_scan[s_scan_n].ssid, sizeof(s_scan[s_scan_n].ssid), "%s", ssid);
+                s_scan[s_scan_n].rssi   = recs[i].rssi;
+                s_scan[s_scan_n].secure = (recs[i].authmode != WIFI_AUTH_OPEN);
+                s_scan_n++;
+            }
+            /* Strongest first. Insertion sort: n <= 20. */
+            for (int i = 1; i < s_scan_n; i++) {
+                scan_rec_t key = s_scan[i];
+                int j = i - 1;
+                while (j >= 0 && s_scan[j].rssi < key.rssi) {
+                    s_scan[j + 1] = s_scan[j];
+                    j--;
+                }
+                s_scan[j + 1] = key;
+            }
+        }
+        free(recs);
+        esp_wifi_clear_ap_list();
+        s_scan_state = 0;               /* publishes s_scan[] */
+        /* Both counts: raw is what the radio saw, the first is what the UI
+         * gets. They differ by the hidden networks dropped and the
+         * dual-band/repeater duplicates merged -- if they are ever equal on a
+         * normal home network, the dedupe has stopped working. */
+        ESP_LOGI(TAG, "scan done: %d network(s) (%d raw)", s_scan_n, (int)n);
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&e->ip_info.ip));
@@ -289,6 +352,60 @@ static int l_wifi_forget(lua_State *L)
     return 1;
 }
 
+/* wifi.scan_start() -- begin an async scan. Non-blocking; poll
+ * scan_results(). Scanning while CONNECTED briefly interrupts the link,
+ * which is accepted so a user can switch networks without disconnecting
+ * first; scanning while CONNECTING is refused because it would abort an
+ * attempt already in progress. */
+static int l_wifi_scan_start(lua_State *L)
+{
+    if (s_state == WIFI_CONNECTING) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "connecting");
+        return 2;
+    }
+    if (!stack_start()) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "wifi stack failed");
+        return 2;
+    }
+    /* The radio must be running to scan, even with no saved credentials --
+     * connect_with() is otherwise the only thing that ever starts it. */
+    esp_wifi_start();
+
+    if (s_scan_state == 1) {
+        lua_pushboolean(L, 1);     /* already scanning: no-op, still success */
+        return 1;
+    }
+    if (esp_wifi_scan_start(NULL, false) != ESP_OK) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "scan failed");
+        return 2;
+    }
+    s_scan_state = 1;
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/* nil while scanning (or before any scan); otherwise an array of
+ * {ssid=, rssi=, secure=}. Idempotent -- reading does not consume. */
+static int l_wifi_scan_results(lua_State *L)
+{
+    if (s_scan_state != 0) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, s_scan_n, 0);
+    for (int i = 0; i < s_scan_n; i++) {
+        lua_createtable(L, 0, 3);
+        lua_pushstring(L, s_scan[i].ssid);    lua_setfield(L, -2, "ssid");
+        lua_pushinteger(L, s_scan[i].rssi);   lua_setfield(L, -2, "rssi");
+        lua_pushboolean(L, s_scan[i].secure); lua_setfield(L, -2, "secure");
+        lua_rawseti(L, -2, i + 1);
+    }
+    return 1;
+}
+
 static const luaL_Reg wifi_funcs[] = {
     {"connect", l_wifi_connect},
     {"status", l_wifi_status},
@@ -296,6 +413,8 @@ static const luaL_Reg wifi_funcs[] = {
     {"disconnect", l_wifi_disconnect},
     {"time_synced", l_wifi_time_synced},
     {"forget", l_wifi_forget},
+    {"scan_start", l_wifi_scan_start},
+    {"scan_results", l_wifi_scan_results},
     {NULL, NULL},
 };
 
