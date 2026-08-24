@@ -40,6 +40,22 @@ static bool s_time_synced = false;
 static bool s_will_fail = false;      /* set by the `wifi fail` sim command */
 static char s_ip[16] = {0};
 
+#define SCAN_POLLS  3       /* scan_results() calls spent "still scanning" */
+
+/* A fixed fake list. Deliberately includes both a secured and an open
+ * network, and is already sorted strongest-first, so the app's lock-glyph
+ * and no-password paths are both exercised headlessly. */
+static const struct { const char *ssid; int rssi; bool secure; } s_fake[] = {
+    { "HomeNetwork", -42, true  },
+    { "Cafe-Guest",  -58, true  },
+    { "OpenAP",      -71, false },
+};
+#define FAKE_N ((int)(sizeof(s_fake) / sizeof(s_fake[0])))
+
+static int  s_scan_polls  = -1;         /* <0 = no scan has been started */
+static int  s_scan_count  = FAKE_N;     /* sim-only: `wifi scan <n>` */
+static const char *s_error = NULL;
+
 void sim_wifi_reset(void)
 {
     s_state = WIFI_OFF;
@@ -48,15 +64,28 @@ void sim_wifi_reset(void)
     s_time_synced = false;
     s_will_fail = false;
     s_ip[0] = '\0';
+    s_scan_polls = -1;
+    s_scan_count = FAKE_N;
+    s_error = NULL;
 }
 
 /* sim-only: choose whether the next connect resolves to connected or failed
  * (the device's "wrong password, gave up after five tries" path). */
 void sim_wifi_set_outcome(bool succeed) { s_will_fail = !succeed; }
 
+/* sim-only: how many networks the next scan reports. 0 exercises the
+ * "no networks found" screen, which is a real UI state. */
+void sim_wifi_set_network_count(int n)
+{
+    if (n < 0) n = 0;
+    if (n > FAKE_N) n = FAKE_N;
+    s_scan_count = n;
+}
+
 static void become_connected(void)
 {
     s_state = WIFI_CONNECTED;
+    s_error = NULL;
     strncpy(s_ip, "192.168.1.42", sizeof(s_ip) - 1);
     s_ip[sizeof(s_ip) - 1] = '\0';
     s_time_synced = true;
@@ -99,6 +128,7 @@ static int l_wifi_status(lua_State *L)
         if (s_polls_left == 0) {
             if (s_will_fail) {
                 s_state = WIFI_FAILED;   /* gave up (e.g. wrong password) */
+                s_error = "wrong password";
             } else {
                 become_connected();
             }
@@ -150,6 +180,49 @@ static int l_wifi_forget(lua_State *L)
     return 1;
 }
 
+static int l_wifi_scan_start(lua_State *L)
+{
+    if (s_state == WIFI_CONNECTING) {
+        lua_pushnil(L);
+        lua_pushliteral(L, "connecting");
+        return 2;
+    }
+    if (s_scan_polls <= 0) {
+        s_scan_polls = SCAN_POLLS;   /* (re)start */
+    }
+    /* A start during an in-flight scan is a no-op that still succeeds. */
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+static int l_wifi_scan_results(lua_State *L)
+{
+    if (s_scan_polls < 0) {          /* no scan ever started */
+        lua_pushnil(L);
+        return 1;
+    }
+    if (s_scan_polls > 0) {          /* still scanning */
+        s_scan_polls--;
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_createtable(L, s_scan_count, 0);
+    for (int i = 0; i < s_scan_count; i++) {
+        lua_createtable(L, 0, 3);
+        lua_pushstring(L, s_fake[i].ssid);    lua_setfield(L, -2, "ssid");
+        lua_pushinteger(L, s_fake[i].rssi);   lua_setfield(L, -2, "rssi");
+        lua_pushboolean(L, s_fake[i].secure); lua_setfield(L, -2, "secure");
+        lua_rawseti(L, -2, i + 1);
+    }
+    return 1;
+}
+
+static int l_wifi_error(lua_State *L)
+{
+    if (s_error) lua_pushstring(L, s_error); else lua_pushnil(L);
+    return 1;
+}
+
 static const luaL_Reg wifi_funcs[] = {
     {"connect", l_wifi_connect},
     {"status", l_wifi_status},
@@ -157,6 +230,9 @@ static const luaL_Reg wifi_funcs[] = {
     {"disconnect", l_wifi_disconnect},
     {"time_synced", l_wifi_time_synced},
     {"forget", l_wifi_forget},
+    {"scan_start", l_wifi_scan_start},
+    {"scan_results", l_wifi_scan_results},
+    {"error", l_wifi_error},
     {NULL, NULL},
 };
 

@@ -28,7 +28,8 @@ Do this first: the sim stub is the test harness every later Lua task needs. Noth
 
 **Files:**
 - Modify: `sim/src/sim_wifi.c`
-- Modify: `sim/src/sim_stubs.c` (register the new `wifi scan` verb — see Step 3)
+- Modify: `sim/src/sim_main.c:610` (the `wifi` verb branch — NOT sim_stubs.c, which the
+  first draft of this plan named wrongly; the verb parser lives in sim_main.c)
 - Modify: `sim/simctl.py:30-40` (document the verb in the usage block)
 - Test: `sim/fixtures/wifi_api.lua` (create), `sim/wifi_api_test.py` (create)
 
@@ -280,14 +281,29 @@ static const luaL_Reg wifi_funcs[] = {
 };
 ```
 
-In `sim/src/sim_stubs.c`, find where the existing `wifi ok` / `wifi fail` verb is parsed and add a third branch:
+In `sim/src/sim_main.c`, extend the existing `wifi` branch (the `ok`/`fail` chain
+at ~line 610) with a third case, and update its comment and error text:
 
 ```c
-    } else if (!strcmp(argv[0], "wifi") && argc >= 2 && !strcmp(argv[1], "scan")) {
-        sim_wifi_set_network_count(argc >= 3 ? atoi(argv[2]) : 3);
+    } else if (!strcmp(cmd, "wifi")) {
+        /* wifi ok | wifi fail   -- how the next connect() resolves.
+         * wifi scan <n>         -- how many networks the next scan reports. */
+        if (!need(argc, 2, "wifi")) return;
+        if (!strcmp(argv[1], "ok")) {
+            sim_wifi_set_outcome(true);  printf("WIFI_OK ok\n");
+        } else if (!strcmp(argv[1], "fail")) {
+            sim_wifi_set_outcome(false); printf("WIFI_OK fail\n");
+        } else if (!strcmp(argv[1], "scan")) {
+            int n = (argc >= 3) ? atoi(argv[2]) : 3;
+            sim_wifi_set_network_count(n);
+            printf("WIFI_OK scan %d\n", n);
+        } else {
+            fprintf(stderr, "wifi: expected 'ok', 'fail' or 'scan <n>'\n");
+        }
 ```
 
-Declare it in whichever header already declares `sim_wifi_set_outcome`:
+Declare it beside the existing forward declaration at `sim/src/sim_main.c:41`
+(there is no shared header; `sim_wifi_set_outcome` is declared inline there):
 
 ```c
 void sim_wifi_set_network_count(int n);

@@ -39,6 +39,7 @@ void sim_sensors_set_battery(int pct, bool charging, bool external);
 void sim_sensors_set_rtc_unset(void);
 esp_err_t app_sensors_rtc_set_tm(int y, int mo, int d, int h, int mi, int s, int wday);
 void sim_wifi_set_outcome(bool succeed);
+void sim_wifi_set_network_count(int n);
 #include "sim_display.h"
 #include "sim_input.h"
 #include "lv_font_lexend.h"
@@ -608,14 +609,19 @@ static void exec_cmd(int argc, char **argv)
             fprintf(stderr, "rtc: expected 'unset' or 'set <y> <mo> <d> <h> <mi> <s> [wday]'\n");
         }
     } else if (!strcmp(cmd, "wifi")) {
-        /* wifi ok | wifi fail -- how the next connect() resolves. */
+        /* wifi ok | wifi fail   -- how the next connect() resolves.
+         * wifi scan <n>         -- how many networks the next scan reports. */
         if (!need(argc, 2, "wifi")) return;
         if (!strcmp(argv[1], "ok")) {
             sim_wifi_set_outcome(true);  printf("WIFI_OK ok\n");
         } else if (!strcmp(argv[1], "fail")) {
             sim_wifi_set_outcome(false); printf("WIFI_OK fail\n");
+        } else if (!strcmp(argv[1], "scan")) {
+            int n = (argc >= 3) ? atoi(argv[2]) : 3;
+            sim_wifi_set_network_count(n);
+            printf("WIFI_OK scan %d\n", n);
         } else {
-            fprintf(stderr, "wifi: expected 'ok' or 'fail'\n");
+            fprintf(stderr, "wifi: expected 'ok', 'fail' or 'scan <n>'\n");
         }
     } else if (!strcmp(cmd, "home")) {
         /* Render the launcher's own home screen (the shared launcher_home_build)
