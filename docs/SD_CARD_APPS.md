@@ -166,6 +166,10 @@ LIST                 ->  APP <id> per line, then LIST_OK <n>
 DELETE myapp         ->  DELETE_OK           (removes apps/myapp/ and its contents)
 ```
 
+**On the device**: **long-press** an app on the home screen to open its info
+sheet — icon, name, size — with an armed **Delete** (and Cancel). This is the
+same registry delete as `DELETE`-over-serial; a normal tap still just launches.
+
 **By hand**: copy the folder (or the `.lua` file) into `/apps/` on the card with
 the card in a computer. `/apps` on the card is the same directory the device
 sees as `/sdcard/apps`. Tap **Refresh** on the device to rescan.

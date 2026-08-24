@@ -456,9 +456,28 @@ static void sim_home_render(void)
     lv_obj_set_style_border_width(scr, 0, LV_PART_MAIN);
 
     launcher_home_build(scr, (size_t)count, s_home_sd, 64, s_home_view,
-                        sim_home_get_app, NULL, NULL, NULL, NULL, sim_home_toggle_cb);
+                        sim_home_get_app, NULL, NULL, NULL, NULL, NULL, sim_home_toggle_cb);
     lv_screen_load(scr);
     lv_timer_handler();   /* flush the render into the framebuffer */
+    lv_timer_handler();
+}
+
+/* Render the app-info sheet (the long-press-to-delete surface) for a fake app,
+ * so its layout is drivable/reviewable without a board. `icon_path` (a D: card
+ * path to a committed .bin) is optional -- passing one exercises the card-icon
+ * decode path deterministically. Non-interactive. */
+static void sim_sheet_render(const char *name, const char *icon_path)
+{
+    launcher_home_app_t app = { .name = name, .basename = name,
+                                .icon = launcher_home_default_icon(name),
+                                .icon_path = icon_path };
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(scr, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(scr, 0, LV_PART_MAIN);
+    launcher_home_app_sheet(scr, &app, "Folder app  -  1.4 KB", NULL, NULL);
+    lv_screen_load(scr);
+    lv_timer_handler();
     lv_timer_handler();
 }
 
@@ -613,6 +632,14 @@ static void exec_cmd(int argc, char **argv)
         int n = argc > argi ? atoi(argv[argi]) : -1;   /* -1 => full fake list */
         render_home(view, n, /*sd_mounted=*/true);
         printf("HOME_OK\n");
+    } else if (!strcmp(cmd, "sheet")) {
+        /* Render the app-info sheet (long-press-to-delete) for a name.
+         *   sheet [Name] [D:/card/icon.bin]
+         * default "Metronome" (a custom-image app); an icon path exercises the
+         * card-icon decode. */
+        if (s_app) app_stop();
+        sim_sheet_render(argc >= 2 ? argv[1] : "Metronome", argc >= 3 ? argv[2] : NULL);
+        printf("SHEET_OK\n");
     } else {
         fprintf(stderr, "unknown command: %s\n", cmd);
     }

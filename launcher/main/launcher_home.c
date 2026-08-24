@@ -152,11 +152,17 @@ const char *launcher_home_default_icon(const char *basename)
 /* Attach a strdup'd basename + the click/delete callbacks to a row or tile,
  * exactly as the list rows always did. No-op when not interactive (the sim). */
 static void wire_launch(lv_obj_t *obj, const char *basename,
-                        lv_event_cb_t on_click, lv_event_cb_t on_delete)
+                        lv_event_cb_t on_click, lv_event_cb_t on_delete,
+                        lv_event_cb_t on_long_press)
 {
     if (!on_click) return;
     char *copy = strdup(basename);
-    lv_obj_add_event_cb(obj, on_click, LV_EVENT_CLICKED, copy);
+    /* SHORT_CLICKED, not CLICKED: a long-press (which opens the app-info sheet)
+     * must not also fire a launch on release. */
+    lv_obj_add_event_cb(obj, on_click, LV_EVENT_SHORT_CLICKED, copy);
+    if (on_long_press) {
+        lv_obj_add_event_cb(obj, on_long_press, LV_EVENT_LONG_PRESSED, copy);
+    }
     if (on_delete) {
         lv_obj_add_event_cb(obj, on_delete, LV_EVENT_DELETE, copy);
     }
@@ -282,7 +288,7 @@ static void row_icon(lv_obj_t *row, const launcher_home_app_t *app)
 static void build_list(lv_obj_t *screen, size_t count, size_t max_visible,
                        launcher_home_get_app_t get_app, void *ctx,
                        lv_event_cb_t on_row_click, lv_event_cb_t on_row_delete,
-                       lv_event_cb_t on_refresh)
+                       lv_event_cb_t on_row_long_press, lv_event_cb_t on_refresh)
 {
     lv_obj_t *list = lv_obj_create(screen);
     lv_obj_set_size(list, LV_PCT(100), LV_PCT(84));
@@ -308,7 +314,7 @@ static void build_list(lv_obj_t *screen, size_t count, size_t max_visible,
         lv_obj_set_size(row, LV_PCT(100), LAUNCHER_ROW_HEIGHT);
         lv_obj_set_style_bg_color(row, lv_color_hex(0x1E1E28), LV_PART_MAIN);
         lv_obj_set_style_radius(row, 12, LV_PART_MAIN);
-        wire_launch(row, app.basename, on_row_click, on_row_delete);
+        wire_launch(row, app.basename, on_row_click, on_row_delete, on_row_long_press);
 
         row_icon(row, &app);   /* leftmost inline icon */
 
@@ -383,7 +389,8 @@ static void grid_dots_free(lv_event_t *e)
  * the custom image tiles, so both icon paths read as one family. */
 static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
                      int cx, int cy, int size,
-                     lv_event_cb_t on_click, lv_event_cb_t on_delete)
+                     lv_event_cb_t on_click, lv_event_cb_t on_delete,
+                     lv_event_cb_t on_long_press)
 {
     lv_obj_t *icon = lv_button_create(page);
     lv_obj_set_size(icon, size, size);
@@ -391,7 +398,7 @@ static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
     lv_obj_set_style_radius(icon, LV_RADIUS_CIRCLE, LV_PART_MAIN);  /* circle, to match the image tiles */
     lv_obj_set_style_pad_all(icon, 0, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(icon, 0, LV_PART_MAIN);
-    wire_launch(icon, app->basename, on_click, on_delete);
+    wire_launch(icon, app->basename, on_click, on_delete, on_long_press);
 
     /* Icon fallback chain: a card icon the app ships or a full-colour bitmap
      * (which is the whole tile art, so the button sits transparent behind it),
@@ -427,7 +434,8 @@ static void app_icon(lv_obj_t *page, const launcher_home_app_t *app,
 
 static void build_grid(lv_obj_t *screen, size_t count,
                        launcher_home_get_app_t get_app, void *ctx,
-                       lv_event_cb_t on_row_click, lv_event_cb_t on_row_delete)
+                       lv_event_cb_t on_row_click, lv_event_cb_t on_row_delete,
+                       lv_event_cb_t on_row_long_press)
 {
     int pages = (int)((count + GRID_PER_PAGE - 1) / GRID_PER_PAGE);
     if (pages < 1) pages = 1;
@@ -455,7 +463,7 @@ static void build_grid(lv_obj_t *screen, size_t count,
             i++;
             int c = cell % GRID_COLS, r = cell / GRID_COLS;
             app_icon(page, &app, col_cx[c], row_cy[r], ICON,
-                     on_row_click, on_row_delete);
+                     on_row_click, on_row_delete, on_row_long_press);
         }
     }
 
@@ -496,6 +504,7 @@ void launcher_home_build(lv_obj_t *screen, size_t count, bool sd_mounted,
                          size_t max_visible, launcher_view_t view,
                          launcher_home_get_app_t get_app, void *ctx,
                          lv_event_cb_t on_row_click, lv_event_cb_t on_row_delete,
+                         lv_event_cb_t on_row_long_press,
                          lv_event_cb_t on_refresh, lv_event_cb_t on_toggle)
 {
     lv_obj_t *header = lv_label_create(screen);
@@ -537,9 +546,114 @@ void launcher_home_build(lv_obj_t *screen, size_t count, bool sd_mounted,
     add_toggle(screen, view, on_toggle);
 
     if (view == LAUNCHER_VIEW_GRID) {
-        build_grid(screen, count, get_app, ctx, on_row_click, on_row_delete);
+        build_grid(screen, count, get_app, ctx, on_row_click, on_row_delete, on_row_long_press);
     } else {
         build_list(screen, count, max_visible, get_app, ctx,
-                   on_row_click, on_row_delete, on_refresh);
+                   on_row_click, on_row_delete, on_row_long_press, on_refresh);
+    }
+}
+
+/* ---- app-info sheet ---------------------------------------------------- */
+
+/* A large circular app icon, same fallback chain as the rows/tiles. */
+static void sheet_icon(lv_obj_t *parent, const launcher_home_app_t *app, int size, int y)
+{
+    const void *img = app_image_src(app);
+    lv_obj_t *holder = lv_obj_create(parent);
+    lv_obj_set_size(holder, size, size);
+    lv_obj_align(holder, LV_ALIGN_TOP_MID, 0, y);
+    lv_obj_set_style_radius(holder, size / 2, LV_PART_MAIN);
+    lv_obj_set_style_border_width(holder, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(holder, 0, LV_PART_MAIN);
+    lv_obj_remove_flag(holder, LV_OBJ_FLAG_SCROLLABLE);
+
+    if (img) {
+        lv_obj_set_style_clip_corner(holder, true, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(holder, LV_OPA_TRANSP, LV_PART_MAIN);
+        lv_obj_t *im = lv_image_create(holder);
+        lv_image_set_src(im, img);
+        lv_obj_set_size(im, size, size);
+        lv_image_set_inner_align(im, LV_IMAGE_ALIGN_STRETCH);
+        lv_obj_center(im);
+        return;
+    }
+
+    lv_obj_set_style_bg_color(holder, lv_color_hex(letter_color(app->name)), LV_PART_MAIN);
+    lv_obj_t *lbl = lv_label_create(holder);
+    const char *glyph = glyph_for(app->icon);
+    if (glyph) {
+        lv_label_set_text(lbl, glyph);
+    } else {
+        char initial[2] = { app->name && app->name[0] ? app->name[0] : '?', '\0' };
+        if (initial[0] >= 'a' && initial[0] <= 'z') initial[0] -= 32;
+        lv_label_set_text(lbl, initial);
+    }
+    lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, lua_module_lvgl_scaled_builtin_font(48), LV_PART_MAIN);
+    lv_obj_center(lbl);
+}
+
+/* Arms the Delete button after the delay: makes it clickable and full red. The
+ * 400ms disarm is the same guard ui.confirm uses, so a stray tap can't delete. */
+static void sheet_arm_cb(lv_timer_t *t)
+{
+    lv_obj_t *btn = (lv_obj_t *)lv_timer_get_user_data(t);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(0xEB5757), LV_PART_MAIN);
+    lv_timer_delete(t);
+}
+
+void launcher_home_app_sheet(lv_obj_t *screen, const launcher_home_app_t *app,
+                             const char *detail,
+                             lv_event_cb_t on_delete, lv_event_cb_t on_cancel)
+{
+    sheet_icon(screen, app, 120, 36);
+
+    lv_obj_t *name = lv_label_create(screen);
+    lv_label_set_text(name, app->name ? app->name : "");
+    lv_obj_set_width(name, LV_PCT(90));
+    lv_obj_set_style_text_align(name, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(name, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(name, lua_module_lvgl_scaled_builtin_font(40), LV_PART_MAIN);
+    lv_obj_align(name, LV_ALIGN_TOP_MID, 0, 168);
+
+    if (detail && detail[0]) {
+        lv_obj_t *d = lv_label_create(screen);
+        lv_label_set_text(d, detail);
+        lv_obj_set_style_text_color(d, lv_color_hex(0x8A8A99), LV_PART_MAIN);
+        lv_obj_set_style_text_font(d, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
+        lv_obj_align(d, LV_ALIGN_TOP_MID, 0, 214);
+    }
+
+    /* Delete: armed (grey + non-clickable) for 400ms, then red + live. */
+    lv_obj_t *del = lv_button_create(screen);
+    lv_obj_set_size(del, 320, 96);
+    lv_obj_align(del, LV_ALIGN_BOTTOM_MID, 0, -108);
+    lv_obj_set_style_radius(del, 16, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(del, lv_color_hex(0x3A2A2E), LV_PART_MAIN);
+    lv_obj_remove_flag(del, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t *dl = lv_label_create(del);
+    lv_label_set_text(dl, LV_SYMBOL_TRASH " Delete");
+    lv_obj_set_style_text_color(dl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_center(dl);
+    if (on_delete) {
+        lv_obj_add_event_cb(del, on_delete, LV_EVENT_CLICKED, NULL);
+        lv_timer_create(sheet_arm_cb, 400, del);
+    } else {
+        /* Non-interactive (sim): show it armed so the render matches the device. */
+        lv_obj_set_style_bg_color(del, lv_color_hex(0xEB5757), LV_PART_MAIN);
+    }
+
+    lv_obj_t *cancel = lv_button_create(screen);
+    lv_obj_set_size(cancel, 320, 96);
+    lv_obj_align(cancel, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_set_style_radius(cancel, 16, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(cancel, lv_color_hex(0x24303C), LV_PART_MAIN);
+    lv_obj_t *cl = lv_label_create(cancel);
+    lv_label_set_text(cl, "Cancel");
+    lv_obj_set_style_text_color(cl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_center(cl);
+    if (on_cancel) {
+        lv_obj_add_event_cb(cancel, on_cancel, LV_EVENT_CLICKED, NULL);
     }
 }
