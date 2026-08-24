@@ -1056,9 +1056,24 @@ static void face_tick_cb(lv_timer_t *t)
     launcher_face_update(s_face, &d);
 }
 
+/* Re-read the saved style from NVS. apps/settings.lua writes "face" through
+ * the prefs module while the shell is suspended behind it, so s_face_style is
+ * stale by the time we land back here -- reading it only at boot made the
+ * Settings picker look like it did nothing until the next reboot. (tz_min
+ * never had this bug: read_face_data() reads it fresh on every tick.) */
+static void reload_face_style(void)
+{
+    int32_t saved = shell_nvs_get_i32(SHELL_NVS_FACE, LAUNCHER_FACE_DIGITAL);
+    if (saved < 0 || saved >= LAUNCHER_FACE_COUNT) {
+        saved = LAUNCHER_FACE_DIGITAL;
+    }
+    s_face_style = (launcher_face_style_t)saved;
+}
+
 static void show_face_screen(void)
 {
     s_shell_view = SHELL_VIEW_FACE;
+    reload_face_style();
     build_face_ui();
 
     bsp_display_lock(0);
@@ -1274,6 +1289,31 @@ void app_main(void)
         return;
     }
 
+    /* NVS holds every device setting the shell reads without a card -- the
+     * face style, the timezone, the font scale -- so it must be up before the
+     * first of those reads, which is the face build a few lines below.
+     *
+     * It used to be initialised only as a side effect of Wi-Fi coming up
+     * (app_wifi.c's stack_start), which made the boot face read a race the
+     * shell usually lost: NVS was still closed, shell_nvs_get_i32 returned its
+     * fallback, and the device booted to Digital no matter what the user had
+     * chosen. tz_min escaped it only because read_face_data() re-reads it on
+     * every tick, long after Wi-Fi has run. On a board with no network
+     * configured, stack_start never runs at all and NVS never opened.
+     *
+     * stack_start still calls this; a second nvs_flash_init() is a no-op. */
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_err = nvs_flash_init();
+    }
+    if (nvs_err != ESP_OK) {
+        /* Not fatal: settings fall back to their defaults and the device
+         * still boots, which is the same rule networking follows. */
+        ESP_LOGE(TAG, "nvs init failed: %s -- settings will use defaults",
+                 esp_err_to_name(nvs_err));
+    }
+
     ESP_ERROR_CHECK(release_panel_reset());
 
     lv_display_t *disp = bsp_display_start();
@@ -1351,14 +1391,7 @@ void app_main(void)
      * The style is whatever was last swiped to; an out-of-range or absent
      * value falls back to the digital face, which is also the fallback for a
      * failed home app. */
-    {
-        int32_t saved = shell_nvs_get_i32(SHELL_NVS_FACE, LAUNCHER_FACE_DIGITAL);
-        if (saved < 0 || saved >= LAUNCHER_FACE_COUNT) {
-            saved = LAUNCHER_FACE_DIGITAL;
-        }
-        s_face_style = (launcher_face_style_t)saved;
-    }
-    show_face_screen();
+    show_face_screen();   /* reloads the saved style itself */
     xTaskCreate(button_poll_task, "buttons", 3072, NULL, 6, NULL);
     serial_push_start();
 
