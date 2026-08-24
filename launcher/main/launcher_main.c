@@ -125,6 +125,1119 @@ static lv_obj_t    *s_face_screen;
 static lv_timer_t  *s_face_tick;
 static lv_display_t *s_disp;   /* for re-applying the theme after app exit */
 static launcher_view_t s_view_mode = LAUNCHER_VIEW_LIST;   /* list <-> grid */
+static void apply_persisted_font_scale(lv_display_t *disp);
+
+/* ---- Synthetic touch injection (serial TAP/SWIPE; see launcher_main.h).
+ * Single-writer (serial task) / single-reader (LVGL task via read_cb),
+ * guarded by a spinlock because the fields must change atomically. ---- */
+typedef struct {
+    bool    active;
+    int     x0, y0, x1, y1;
+    int64_t start_us;
+    int64_t dur_us;
+} synth_touch_t;
+
+/* Queued, not overwritten: back-to-back serial TAPs used to clobber the
+ * in-flight gesture before its release was read, merging three taps into
+ * one long press (caught driving the stepper: +3 registered as +1). A
+ * small ring holds pending gestures; the read_cb starts the next only
+ * after the current one released AND an enforced released-state gap. */
+#define SYNTH_QUEUE  8
+#define SYNTH_GAP_US 90000
+
+static portMUX_TYPE s_synth_lock = portMUX_INITIALIZER_UNLOCKED;
+static synth_touch_t s_synth_q[SYNTH_QUEUE];
+static int s_synth_head, s_synth_count;   /* head = next to run */
+static synth_touch_t s_synth_cur;         /* .active = running now */
+static int64_t s_synth_idle_since;
+
+void launcher_input_inject(int x0, int y0, int x1, int y1, int duration_ms)
+{
+    if (duration_ms < 60) duration_ms = 60;
+    if (duration_ms > 2000) duration_ms = 2000;
+
+    portENTER_CRITICAL(&s_synth_lock);
+    if (s_synth_count < SYNTH_QUEUE) {
+        int slot = (s_synth_head + s_synth_count) % SYNTH_QUEUE;
+        s_synth_q[slot] = (synth_touch_t){
+            .active = true,
+            .x0 = x0, .y0 = y0, .x1 = x1, .y1 = y1,
+            .start_us = 0,
+            .dur_us = (int64_t)duration_ms * 1000,
+        };
+        s_synth_count++;
+    }
+    portEXIT_CRITICAL(&s_synth_lock);
+}
+
+/* Runs on the LVGL task. Plays the current gesture (PRESSED along the
+ * interpolated path, one RELEASED at the end), then waits SYNTH_GAP_US
+ * in the released state before dequeuing the next. */
+static void synth_indev_read(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    (void)indev;
+    int64_t now = esp_timer_get_time();
+
+    portENTER_CRITICAL(&s_synth_lock);
+    if (!s_synth_cur.active && s_synth_count > 0 &&
+        now - s_synth_idle_since >= SYNTH_GAP_US) {
+        s_synth_cur = s_synth_q[s_synth_head];
+        s_synth_cur.start_us = now;
+        s_synth_head = (s_synth_head + 1) % SYNTH_QUEUE;
+        s_synth_count--;
+    }
+    synth_touch_t t = s_synth_cur;
+    portEXIT_CRITICAL(&s_synth_lock);
+
+    if (!t.active) {
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
+
+    int64_t el = now - t.start_us;
+    if (el >= t.dur_us) {
+        data->point.x = t.x1;
+        data->point.y = t.y1;
+        data->state = LV_INDEV_STATE_RELEASED;
+        portENTER_CRITICAL(&s_synth_lock);
+        s_synth_cur.active = false;
+        s_synth_idle_since = now;
+        portEXIT_CRITICAL(&s_synth_lock);
+        return;
+    }
+
+    data->point.x = t.x0 + (int)((int64_t)(t.x1 - t.x0) * el / t.dur_us);
+    data->point.y = t.y0 + (int)((int64_t)(t.y1 - t.y0) * el / t.dur_us);
+    data->state = LV_INDEV_STATE_PRESSED;
+}
+static TaskHandle_t s_app_task;
+static esp_io_expander_handle_t s_expander;
+
+/* Guards s_app_task's check-then-act (launch/stop) across the three tasks
+ * that touch it: the LVGL/UI task (app_row_clicked), the serial task
+ * (launcher_run_app_by_name / launcher_stop_app), and lua_app_task itself
+ * clearing it on exit. Created in app_main() before anything can launch. */
+static SemaphoreHandle_t s_app_mutex;
+
+/* Single-app-at-a-time means a single static copy is enough: the launch
+ * path fills this in (under s_app_mutex) from app_registry_find_by_id()
+ * just before starting the task, and lua_app_task reads only from this copy
+ * for its whole run. That avoids holding a pointer into s_apps[] across a
+ * run, which app_registry_scan() can rewrite at any time now that a serial
+ * PUSH rescans at runtime. */
+static app_entry_t s_current_app;
+
+static esp_err_t release_panel_reset(void)
+{
+    esp_io_expander_handle_t exp = bsp_io_expander_init();
+    if (exp == NULL) {
+        ESP_LOGE(TAG, "io expander init failed");
+        return ESP_FAIL;
+    }
+    s_expander = exp;
+
+    const uint32_t rst = EXIO_LCD_RST | EXIO_TOUCH_RST;
+
+    ESP_ERROR_CHECK(esp_io_expander_set_dir(exp, rst, IO_EXPANDER_OUTPUT));
+    ESP_ERROR_CHECK(esp_io_expander_set_dir(exp, EXIO_PWR_BTN | EXIO_PMU_IRQ, IO_EXPANDER_INPUT));
+
+    ESP_ERROR_CHECK(esp_io_expander_set_level(exp, rst, 0));
+    vTaskDelay(pdMS_TO_TICKS(20));
+    ESP_ERROR_CHECK(esp_io_expander_set_level(exp, rst, 1));
+    vTaskDelay(pdMS_TO_TICKS(50));
+
+    ESP_LOGI(TAG, "panel reset released via IO expander");
+    return ESP_OK;
+}
+
+/* Lua's allocator, pointed at PSRAM so apps cannot starve internal DRAM. */
+static void *lua_psram_alloc(void *ud, void *ptr, size_t osize, size_t nsize)
+{
+    (void)ud; (void)osize;
+    if (nsize == 0) {
+        free(ptr);
+        return NULL;
+    }
+    return heap_caps_realloc(ptr, nsize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
+/* I4: raised by lua_module_lvgl's process_events whenever the app has never
+ * called lvgl.init() -- nothing in the app contract requires it, so a
+ * timer-only, sensor-only, or print-only app must not be treated as failed
+ * just because there is no LVGL runtime to drain. */
+#define LVGL_NOT_INITIALIZED_ERRMSG "lvgl runtime is not initialized"
+
+/* Drain queued LVGL events into their Lua callbacks.
+ * Returns false if the call errored, which ends the app. */
+static bool pump_events(lua_State *L, int timeout_ms)
+{
+    lua_getglobal(L, "lvgl");
+    if (!lua_istable(L, -1)) {
+        lua_pop(L, 1);
+        return false;
+    }
+    lua_getfield(L, -1, "process_events");
+    if (!lua_isfunction(L, -1)) {
+        lua_pop(L, 2);
+        return false;
+    }
+    lua_pushinteger(L, timeout_ms);
+    if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+        const char *msg = lua_tostring(L, -1);
+
+        if (msg != NULL && strstr(msg, LVGL_NOT_INITIALIZED_ERRMSG) != NULL) {
+            /* Not a crash -- there is simply nothing queued to drain. Sleep
+             * for the requested wait ourselves (process_events never got to)
+             * so app_timer_run_due()'s timers keep firing on schedule and
+             * the app stays alive instead of being torn down after its first
+             * pump. */
+            lua_pop(L, 2);
+            if (timeout_ms > 0) {
+                vTaskDelay(pdMS_TO_TICKS(timeout_ms));
+            }
+            return true;
+        }
+
+        ESP_LOGE(TAG, "process_events failed: %s", msg);
+        lua_pop(L, 2);
+        lua_lvgl_force_unlock_if_held();
+        return false;
+    }
+    lua_pop(L, 2);   /* result + lvgl table */
+    return true;
+}
+
+/* Message handler for lua_pcall: converts the error into a traceback. Without
+ * this you get a bare one-line message with no call stack -- exactly what
+ * happened before this was added: one untraceable line on serial and a
+ * silent return to the launcher. */
+static int traceback_handler(lua_State *L)
+{
+    const char *msg = lua_tostring(L, 1);
+    luaL_traceback(L, L, msg ? msg : "(non-string error)", 1);
+    return 1;
+}
+
+/* Body label sits between the title (Montserrat 40, line_height 44, top ~8px)
+ * and the "press the top button" hint (default font is Montserrat 32, line_height
+ * 35, bottom ~8px) on the 368x448 panel. Capped and scrollable so a deep
+ * traceback stays reachable instead of overlapping the hint or being
+ * silently clipped. */
+#define ERROR_BODY_TOP     60
+#define ERROR_BODY_HEIGHT  300
+
+/* Show a failure on the panel. Five people debugging through one USB cable is
+ * miserable; the error belongs where they are already looking. Returns the
+ * screen object so the caller can delete it once it is no longer displayed --
+ * lv_screen_load() does not free the screen it replaces, and nothing else
+ * can see this one to clean it up. */
+static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
+{
+    bsp_display_lock(0);
+
+    lv_obj_t *scr = lv_obj_create(NULL);
+    /* True black, not a red field: the guide warns against full-screen
+     * colour on a long-lived view (this can sit up until BOOT is pressed).
+     * The red title alone carries the "something failed" signal. */
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(scr, 12, LV_PART_MAIN);
+
+    lv_obj_t *title = lv_label_create(scr);
+    lv_label_set_text_fmt(title, "%s failed", app_name);
+    lv_obj_set_style_text_color(title, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, lua_module_lvgl_scaled_builtin_font(40), LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
+
+    lv_obj_t *body = lv_label_create(scr);
+    lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(body, LV_PCT(96));
+    lv_obj_set_height(body, ERROR_BODY_HEIGHT);
+    lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(body, LV_DIR_VER);
+    lv_label_set_text(body, msg ? msg : "(no message)");
+    lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
+    lv_obj_set_style_text_font(body, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, ERROR_BODY_TOP);
+
+    lv_obj_t *hint = lv_label_create(scr);
+    lv_label_set_text(hint, "press the top button to go back");
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x9A9AA5), LV_PART_MAIN);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    lv_screen_load(scr);
+    bsp_display_unlock();
+    return scr;
+}
+
+/* Shared by every path that ends an app run with an error on screen: shows
+ * `msg`, blocks until BOOT/STOP asks to go back, then restores the launcher
+ * screen and frees the error screen. Never call this while still holding an
+ * LVGL lock the error path itself needs (see lua_lvgl_force_unlock_if_held()
+ * at each call site below). */
+static void show_error_and_wait_for_stop(lua_State *L, const char *app_name, const char *msg)
+{
+    lv_obj_t *err_scr = show_error_screen(app_name, msg);
+    /* msg may point into the Lua stack; it has been copied into the label,
+     * so it is safe to drop now. */
+    lua_settop(L, 0);
+
+    while (!cap_lua_runtime_stop_requested(L)) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    /* Load the face before deleting the error screen so the currently-active
+     * screen is never the one being freed. Nothing else can see err_scr to
+     * clean it up -- lv_screen_load() does not free the screen it replaces,
+     * so without this every crash leaked a screen plus its labels.
+     *
+     * The face, not the app list: since the shell boots to the face, the app
+     * list may never have been built, and the old show_launcher_screen() bailed
+     * out on a NULL screen -- which would leave err_scr active and then delete
+     * it, exactly the crash this ordering exists to avoid. build_face_ui()
+     * always produces a screen. */
+    show_face_screen();
+    bsp_display_lock(0);
+    lv_obj_delete(err_scr);
+    bsp_display_unlock();
+}
+
+/* I6: everything a fresh lua_State needs before any app code loads --
+ * opening the standard libs, installing every cap_lua module (this is what
+ * runs luaopen_lvgl, building ~45 LVGL metatables, and the timer module's
+ * opener), resetting timer state, and applying the sandbox. Pushed as a
+ * C function and run via lua_pcall (see lua_app_task) rather than called
+ * directly: with no protected call yet on this lua_State, an error anywhere
+ * in this chain -- an allocation failure while building those metatables,
+ * a future module that can fail to open -- has no error jump buffer to
+ * unwind through, and Lua's default panic function calls abort(), taking
+ * the whole board down with it. */
+/* Lua seeds math.random from time(NULL) plus a stack address. Neither is
+ * random here: nothing sets the system clock from the RTC, so without Wi-Fi
+ * time(NULL) is just seconds-since-boot, and an embedded stack has no ASLR.
+ * Two launches at the same uptime therefore deal identical "random" numbers.
+ * esp_random() is the hardware RNG, so reseed from it. */
+static void seed_random(lua_State *L)
+{
+    if (lua_getglobal(L, "math") != LUA_TTABLE) {
+        lua_pop(L, 1);
+        return;
+    }
+    if (lua_getfield(L, -1, "randomseed") != LUA_TFUNCTION) {
+        lua_pop(L, 2);
+        return;
+    }
+    lua_pushinteger(L, (lua_Integer)esp_random());
+    lua_pushinteger(L, (lua_Integer)esp_random());
+    lua_call(L, 2, 0);   /* inside the pcall around lua_setup_state */
+    lua_pop(L, 1);       /* math */
+}
+
+static int lua_setup_state(lua_State *L)
+{
+    luaL_openlibs(L);
+    seed_random(L);
+
+    esp_err_t err = launcher_lua_open_modules(L);
+    if (err != ESP_OK) {
+        /* Was ESP_ERROR_CHECK(): that aborts on failure. Raising a Lua error
+         * instead lets the lua_pcall around this function catch it, so the
+         * caller can report it on screen rather than panicking. */
+        return luaL_error(L, "launcher_lua_open_modules failed: %s", esp_err_to_name(err));
+    }
+
+    app_timer_reset(L);   /* no timers leak in from a previous app */
+    app_button_reset(L);  /* nor edges recorded before this app launched */
+    app_voice_reset(L);   /* nor a capture someone left running */
+    app_audio_reset(L);   /* nor a queued tone */
+    app_sandbox_apply(L);
+    app_sandbox_install_hook(L);
+    return 0;
+}
+
+/* Runs one app in its own VM. A failing app is reported and torn down; it
+ * must never take the launcher with it. */
+static void lua_app_task(void *arg)
+{
+    (void)arg;
+    /* Read only from the static copy the launch path filled in -- never a
+     * pointer into app_registry's s_apps[], which a concurrent PUSH-driven
+     * rescan can rewrite mid-run. */
+    const app_entry_t *app = &s_current_app;
+    size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    lua_State *L;
+
+    ESP_LOGI(TAG, "launching '%s' (%s)", app->name, app->path);
+    launcher_lua_request_stop(false);
+
+    L = lua_newstate(lua_psram_alloc, NULL, 0);  /* Lua 5.5 takes a seed */
+    if (L == NULL) {
+        ESP_LOGE(TAG, "lua_newstate failed for '%s'", app->name);
+        goto out;
+    }
+    lua_pushcfunction(L, lua_setup_state);
+    if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
+        const char *msg = lua_tostring(L, -1);
+        ESP_LOGE(TAG, "lua state setup failed for '%s': %s", app->name, msg ? msg : "(nil)");
+        /* Nothing here can be holding the LVGL lock yet, but every other
+         * error exit calls this first -- keep it uniform in case that ever
+         * changes. */
+        lua_lvgl_force_unlock_if_held();
+        show_error_and_wait_for_stop(L, app->name, msg ? msg : "lua state setup failed");
+        goto close;
+    }
+
+    lua_pushcfunction(L, traceback_handler);
+    int errfunc = lua_gettop(L);
+
+    /* Per-app persistent store: point require("store") at this app's state
+     * file (<sd>/state/<key>.json). get/set work in memory; store.save()
+     * writes here. mkdir is harmless if the dir already exists.
+     *
+     * Key on the app id (a flat app's basename minus ".lua", a folder app's
+     * folder name), NOT the pretty display name -- that is what the simulator
+     * (sim_main.c app_store_key) and the apps' own docs use, so store data
+     * lines up across device, sim, and card. */
+    {
+        char key[APP_ID_MAX];
+        /* Explicit precision, not a bare "%s": app->id is a char[APP_ID_MAX]
+         * buffer, so GCC 14 cannot prove the copy fits and -Werror=
+         * format-truncation rejects it. Bounding it to sizeof(key)-1 states
+         * the invariant the id already satisfies. */
+        snprintf(key, sizeof(key), "%.*s", (int)(sizeof(key) - 1), app->id);
+        size_t kl = strlen(key);
+        if (kl > 4 && strcmp(key + kl - 4, ".lua") == 0) {
+            key[kl - 4] = '\0';
+        }
+        /* Sized for what it actually holds -- BSP_SD_MOUNT_POINT "/state",
+         * 13 bytes -- rather than APP_PATH_MAX. At APP_PATH_MAX the compiler
+         * had to assume dir could be 319 bytes and so could not prove
+         * store_path below fits either. */
+        char dir[64];
+        snprintf(dir, sizeof(dir), "%s/state", BSP_SD_MOUNT_POINT);
+        mkdir(dir, 0777);
+        char store_path[APP_PATH_MAX];
+        snprintf(store_path, sizeof(store_path), "%s/%s.json", dir, key);
+        lua_pushstring(L, store_path);
+        lua_setglobal(L, "__APP_STORE__");
+    }
+
+    if (luaL_loadfile(L, app->path) != LUA_OK ||
+        lua_pcall(L, 0, 0, errfunc) != LUA_OK) {
+        const char *msg = lua_tostring(L, -1);
+
+        if (cap_lua_runtime_stop_requested(L)) {
+            /* The interrupt hook raises a Lua error to unwind a runaway app
+             * when BOOT/STOP was pressed deliberately -- that is not a crash
+             * and must not flash the red error screen. Check the atomic
+             * stop flag, never the message string: an app can raise this
+             * exact text itself (deliberately, or by re-raising a caught
+             * error), and comparing strings would let the launcher silently
+             * swallow a genuine crash. */
+            ESP_LOGI(TAG, "app '%s' stopped: %s", app->name, msg ? msg : "(nil)");
+            lua_lvgl_force_unlock_if_held();
+            lua_settop(L, 0);
+            goto close;
+        }
+
+        ESP_LOGE(TAG, "app '%s' failed: %s", app->name, msg ? msg : "(nil)");
+        /* The error may have unwound out of an LVGL binding that was holding
+         * the display lock. Without this the LVGL task blocks forever. The
+         * error screen's own bsp_display_lock() below must come after this. */
+        lua_lvgl_force_unlock_if_held();
+        show_error_and_wait_for_stop(L, app->name, msg);
+        goto close;
+    }
+    lua_remove(L, errfunc);
+    lua_settop(L, 0);
+
+    ESP_LOGI(TAG, "app '%s' running, vm psram cost = %d bytes", app->name,
+             (int)(psram_before - heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
+    /* Widget callback errors are swallowed by design (dispatch must keep
+     * going so one dead button doesn't take the whole app down), and logged
+     * by the vendored binding under tag 'lua_lvgl_evt' -- point people at it
+     * once per run so a dead button isn't a total dead end. */
+    ESP_LOGI(TAG, "app '%s' running (callback errors appear under tag 'lua_lvgl_evt')",
+             app->name);
+
+    /* Event pump: this is what makes Lua callbacks actually fire. Timers run
+     * first each iteration, and the wait is shortened to the next timer
+     * deadline so a short timer is not stuck behind a long event wait. */
+    while (!cap_lua_runtime_stop_requested(L)) {
+        app_button_run_pending(L);
+        app_voice_run_pending(L);
+        int64_t next_due = app_timer_run_due(L);
+
+        int wait_ms = EVENT_PUMP_MS;
+        if (next_due != INT64_MAX) {
+            int64_t delta_ms = (next_due - esp_timer_get_time()) / 1000;
+            if (delta_ms < 0) {
+                delta_ms = 0;
+            }
+            if (delta_ms < wait_ms) {
+                wait_ms = (int)delta_ms;
+            }
+        }
+        if (!pump_events(L, wait_ms)) {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+close:
+    /* Unconditional: a task can never be deleted below while still owning
+     * the LVGL mutex, whatever path got us here. */
+    lua_lvgl_force_unlock_if_held();
+    app_timer_reset(L);
+    app_button_reset(L);
+    app_voice_reset(L);
+    app_audio_reset(L);
+    /* Re-read the persisted font scale: an app that called
+     * lvgl.font_scale() without persisting must not restyle every later
+     * app (Settings persists first, so its change survives). Also
+     * re-applies the theme so the next screens build at the right scale. */
+    apply_persisted_font_scale(s_disp);
+    launcher_lua_run_exit_cleanup(L);
+    lua_close(L);
+    {
+        /* internal_free is ESP heap. LVGL now uses the C stdlib allocator
+         * (CONFIG_LV_USE_CLIB_MALLOC) instead of a fixed internal pool, so
+         * lv_mem_monitor()'s core is a no-op here and free/total report as
+         * 0/0 -- that is expected, not a bug. A leaked error screen would
+         * now show up as a drop in internal_free/psram free above instead
+         * of exhausting a fixed LVGL pool, which is why those two numbers
+         * are logged on every app close, not just crashes. */
+        lv_mem_monitor_t mon;
+        lv_mem_monitor(&mon);
+        ESP_LOGI(TAG, "app '%s' closed, psram free=%u, internal free=%u, "
+                 "lv_mem free=%u/%u",
+                 app->name,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)mon.free_size, (unsigned)mon.total_size);
+    }
+
+out:
+    /* Home is the face: leaving an app lands you on the watch, the way a
+     * watch behaves, not back in the app list you launched from. */
+    show_face_screen();
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    s_app_task = NULL;
+    xSemaphoreGive(s_app_mutex);
+    vTaskDelete(NULL);
+}
+
+/* Frees the heap copy of a row's basename (see build_launcher_ui) when LVGL
+ * deletes the row -- on Refresh's full rebuild and on ordinary screen
+ * teardown alike. */
+static void row_data_delete_cb(lv_event_t *e)
+{
+    free(lv_event_get_user_data(e));
+}
+
+/* Rows store a heap-allocated copy of the app's basename, not a raw
+ * app_entry_t* into app_registry's static array. That array is rewritten in
+ * place by every rescan -- Refresh, and (since PUSH also rescans at runtime)
+ * an ordinary file push too -- so a raw pointer captured when the row was
+ * built could point at a different app, or garbage, by the time it is
+ * tapped. Resolving by name at click time via app_registry_find_by_id()
+ * makes a stale row a no-op instead of a wrong-app launch or a crash: the
+ * lookup and the copy-out happen under the registry's own lock, so a PUSH
+ * rescanning concurrently on the serial task cannot be observed half-done. */
+static void app_row_clicked(lv_event_t *e)
+{
+    const char *basename = (const char *)lv_event_get_user_data(e);
+    if (basename == NULL) {
+        return;   /* strdup() failed when the row was built; nothing to launch */
+    }
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    if (s_app_task != NULL) {
+        xSemaphoreGive(s_app_mutex);
+        ESP_LOGW(TAG, "an app is already running");
+        return;
+    }
+
+    app_entry_t match;
+    if (!app_registry_find_by_id(basename, &match)) {
+        xSemaphoreGive(s_app_mutex);
+        ESP_LOGW(TAG, "tapped row '%s' is no longer in the registry", basename);
+        return;
+    }
+
+    s_current_app = match;
+    xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
+                NULL, 5, &s_app_task);
+    xSemaphoreGive(s_app_mutex);
+}
+
+/* Launcher-side API for other modules (serial_push) to drive app lifecycle
+ * the same way a screen tap or the BOOT button would. Reuses the exact same
+ * task-creation and stop-request machinery as app_row_clicked() and
+ * back_button_task() so RUN/STOP behave identically to a physical launch. */
+bool launcher_run_app_by_name(const char *basename)
+{
+    if (basename == NULL || basename[0] == '\0') {
+        return false;
+    }
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+
+    if (s_app_task != NULL) {
+        xSemaphoreGive(s_app_mutex);
+        ESP_LOGW(TAG, "RUN '%s': an app is already running", basename);
+        return false;
+    }
+
+    app_entry_t match;
+    if (!app_registry_find_by_id(basename, &match)) {
+        xSemaphoreGive(s_app_mutex);
+        ESP_LOGW(TAG, "RUN '%s': not found", basename);
+        return false;
+    }
+
+    s_current_app = match;
+    xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
+                NULL, 5, &s_app_task);
+    xSemaphoreGive(s_app_mutex);
+    return true;
+}
+
+bool launcher_stop_app(void)
+{
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    bool running = (s_app_task != NULL);
+    xSemaphoreGive(s_app_mutex);
+
+    if (!running) {
+        return false;
+    }
+    launcher_lua_request_stop(true);
+    return true;
+}
+
+static void build_launcher_ui(void);
+
+/* Rebuilds the whole UI rather than reusing rows: every row holds a heap
+ * copy of its app's basename (see build_launcher_ui / app_registry_find_by_basename),
+ * resolved fresh at tap time, so a stale row is merely a no-op rather than a
+ * wrong-app launch -- but the row list itself still needs to be rebuilt to
+ * reflect apps added or removed since the last scan. */
+static void refresh_clicked(lv_event_t *e)
+{
+    (void)e;
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    if (s_app_task != NULL) {
+        xSemaphoreGive(s_app_mutex);
+        return;   /* never rescan or rebuild under a running app */
+    }
+
+    lv_obj_t *old = s_launcher_screen;
+
+    app_registry_invalidate();
+    app_registry_scan();
+    build_launcher_ui();
+
+    /* build_launcher_ui() already loaded the new screen; delete the old one
+     * now that it is no longer the active screen. Never delete the screen
+     * that is currently on-screen -- that path is only reached here because
+     * the new screen has already replaced it.
+     *
+     * Explicitly locked even though refresh_clicked() only ever runs inside
+     * the LVGL task's own (recursive) lock today: that is an implicit
+     * invariant, not something lv_obj_delete() enforces, and it would break
+     * silently if Refresh is ever triggered from elsewhere -- e.g. a future
+     * serial REFRESH command, alongside the existing RUN/STOP. */
+    if (old != NULL && old != s_launcher_screen) {
+        bsp_display_lock(0);
+        lv_obj_delete(old);
+        bsp_display_unlock();
+    }
+
+    xSemaphoreGive(s_app_mutex);
+}
+
+/* The header view toggle: flip list <-> grid and rebuild in place. Unlike
+ * Refresh this does not rescan the card -- the app set is unchanged, only the
+ * layout -- but it uses the same rebuild-and-swap-screens dance so the same
+ * "never touch a running app's screen" invariant holds. */
+static void view_toggle_clicked(lv_event_t *e)
+{
+    (void)e;
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    if (s_app_task != NULL) {
+        xSemaphoreGive(s_app_mutex);
+        return;   /* never rebuild under a running app */
+    }
+
+    s_view_mode = (s_view_mode == LAUNCHER_VIEW_LIST) ? LAUNCHER_VIEW_GRID
+                                                      : LAUNCHER_VIEW_LIST;
+
+    lv_obj_t *old = s_launcher_screen;
+    build_launcher_ui();
+    if (old != NULL && old != s_launcher_screen) {
+        bsp_display_lock(0);
+        lv_obj_delete(old);
+        bsp_display_unlock();
+    }
+
+    xSemaphoreGive(s_app_mutex);
+}
+
+/* Fill a launcher_home_app_t view from a registry entry. `icon_buf` backs the
+ * folder-app icon path (a folder app may ship apps/<id>/icon.bin; launcher_home
+ * only uses it if the file exists, so a folder app without one falls back to a
+ * glyph). Shared by the home rows and the app-info sheet. */
+static void fill_home_app(const app_entry_t *app, launcher_home_app_t *out,
+                          char *icon_buf, size_t icon_buf_sz)
+{
+    out->name = app->name;
+    out->basename = app->id;   /* the stable RUN/DELETE identity, folder or flat */
+    out->icon = launcher_home_default_icon(app->id);
+    if (app->in_folder && icon_buf &&
+        snprintf(icon_buf, icon_buf_sz, "D:/apps/%s/icon.bin", app->id) < (int)icon_buf_sz) {
+        out->icon_path = icon_buf;
+    } else {
+        out->icon_path = NULL;
+    }
+}
+
+/* Adapts app_registry to launcher_home_build's get_app callback. The statics
+ * are consumed by the builder (label text copied, basename strdup'd) before the
+ * next call, so reusing them across rows is safe on the UI task. */
+static bool launcher_home_get_app(size_t index, launcher_home_app_t *out, void *ctx)
+{
+    (void)ctx;
+    static app_entry_t app;
+    static char icon_path[APP_PATH_MAX];
+    if (!app_registry_get_copy(index, &app)) {
+        return false;
+    }
+    fill_home_app(&app, out, icon_path, sizeof(icon_path));
+    return true;
+}
+
+/* ---- app-info sheet (long-press a home app) ---------------------------- */
+
+static void build_launcher_ui(void);
+static lv_obj_t *s_sheet_screen;             /* the sheet, over the home screen */
+static char s_sheet_id[APP_ID_MAX];          /* which app the open sheet acts on */
+
+/* Cancel: drop the sheet, return to the (still-live) home screen. */
+static void sheet_cancel_cb(lv_event_t *e)
+{
+    (void)e;
+    bsp_display_lock(0);
+    if (s_launcher_screen) lv_screen_load(s_launcher_screen);
+    if (s_sheet_screen) { lv_obj_delete(s_sheet_screen); s_sheet_screen = NULL; }
+    bsp_display_unlock();
+}
+
+/* Delete: remove the app from the card, then rebuild the home list fresh. */
+static void sheet_delete_cb(lv_event_t *e)
+{
+    (void)e;
+    app_registry_delete_app(s_sheet_id);     /* unlink + rescan under the lock */
+
+    lv_obj_t *old_home = s_launcher_screen;
+    lv_obj_t *sheet = s_sheet_screen;
+    s_sheet_screen = NULL;
+    build_launcher_ui();                      /* creates + loads a new home screen */
+
+    bsp_display_lock(0);
+    if (old_home && old_home != s_launcher_screen) lv_obj_delete(old_home);
+    if (sheet) lv_obj_delete(sheet);
+    bsp_display_unlock();
+}
+
+/* Long-press a home row/tile: open the app-info sheet for it. */
+static void app_row_long_pressed(lv_event_t *e)
+{
+    const char *id = (const char *)lv_event_get_user_data(e);
+    if (id == NULL) return;
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    bool running = (s_app_task != NULL);
+    xSemaphoreGive(s_app_mutex);
+    if (running) return;                      /* never manage apps while one runs */
+    if (s_sheet_screen != NULL) return;       /* a sheet is already open */
+
+    app_entry_t match;
+    if (!app_registry_find_by_id(id, &match)) return;
+
+    /* Detail line: the code file's size, and "Folder" for a folder app. */
+    char detail[64] = "";
+    struct stat st;
+    if (stat(match.path, &st) == 0) {
+        double kb = (double)st.st_size / 1024.0;
+        snprintf(detail, sizeof(detail), "%s%.1f KB",
+                 match.in_folder ? "Folder app  -  " : "", kb);
+    }
+
+    snprintf(s_sheet_id, sizeof(s_sheet_id), "%s", match.id);
+    static char icon_path[APP_PATH_MAX];
+    launcher_home_app_t view;
+    fill_home_app(&match, &view, icon_path, sizeof(icon_path));
+
+    bsp_display_lock(0);
+    s_sheet_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_sheet_screen, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_sheet_screen, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_sheet_screen, 0, LV_PART_MAIN);
+    launcher_home_app_sheet(s_sheet_screen, &view, detail, sheet_delete_cb, sheet_cancel_cb);
+    lv_screen_load(s_sheet_screen);
+    bsp_display_unlock();
+}
+
+/* ---- The face surface ---------------------------------------------------
+ * Built once and then mutated on each tick -- never rebuilt. The analog dial
+ * alone is 60+ tick lines plus three hands; recreating that four times a
+ * second to move a second hand would be absurd. The screen is only rebuilt
+ * when the STYLE changes (a swipe), which is a user action, not a tick.
+ *
+ * Style and timezone both live in NVS rather than on the card: home has to
+ * work with no card in it, and NVS is already initialised (the Wi-Fi stack
+ * does it) and cheaper than mounting a filesystem. */
+#define SHELL_NVS_NS      "shell"
+#define SHELL_NVS_FACE    "face"      /* launcher_face_style_t */
+#define SHELL_NVS_TZ_MIN  "tz_min"    /* minutes east of UTC */
+
+static launcher_face_t *s_face;
+static launcher_face_style_t s_face_style = LAUNCHER_FACE_DIGITAL;
+
+static int32_t shell_nvs_get_i32(const char *key, int32_t fallback)
+{
+    nvs_handle_t h;
+    if (nvs_open(SHELL_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return fallback;
+    }
+    int32_t v = fallback;
+    if (nvs_get_i32(h, key, &v) != ESP_OK) {
+        v = fallback;
+    }
+    nvs_close(h);
+    return v;
+}
+
+static void shell_nvs_set_i32(const char *key, int32_t value)
+{
+    nvs_handle_t h;
+    if (nvs_open(SHELL_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    if (nvs_set_i32(h, key, value) == ESP_OK) {
+        nvs_commit(h);
+    }
+    nvs_close(h);
+}
+
+/* Days in `mon` (1-12) of `year`, for the timezone shift's date rollover. */
+static int days_in_month(int year, int mon)
+{
+    static const int len[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (mon < 1 || mon > 12) return 31;
+    if (mon == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)) return 29;
+    return len[mon - 1];
+}
+
+/* Shift a UTC reading by `minutes`, rolling the date properly.
+ *
+ * This matters and is easy to get wrong: NTP sets the RTC in UTC, so a naive
+ * face shows the right time nowhere except Greenwich -- and a shift that moves
+ * the clock but not the date shows tomorrow's time beside today's date across
+ * midnight. The former apps/faces.lua carried the same warning after exactly
+ * that bug; this is now the only copy on the device. */
+static void shift_local(launcher_face_data_t *d, int minutes)
+{
+    if (!d->time_valid || minutes == 0) return;
+
+    int total = d->hour * 60 + d->min + minutes;
+    int day_delta = 0;
+    while (total < 0)     { total += 24 * 60; day_delta--; }
+    while (total >= 1440) { total -= 24 * 60; day_delta++; }
+    d->hour = total / 60;
+    d->min  = total % 60;
+
+    if (day_delta == 0) return;
+
+    d->wday = ((d->wday + day_delta) % 7 + 7) % 7;
+    d->day += day_delta;
+    if (d->day < 1) {
+        d->month = (d->month == 1) ? 12 : d->month - 1;
+        if (d->month == 12) d->year--;
+        d->day = days_in_month(d->year, d->month);
+    } else if (d->day > days_in_month(d->year, d->month)) {
+        d->day = 1;
+        d->month = (d->month == 12) ? 1 : d->month + 1;
+        if (d->month == 1) d->year++;
+    }
+}
+
+/* Sample the clock and gauge, in local time. Never fails: an unreachable
+ * sensor lands as invalid and the face draws its honest degraded state
+ * rather than a fabricated reading. */
+static void read_face_data(launcher_face_data_t *d)
+{
+    memset(d, 0, sizeof(*d));
+
+    int year, mon, mday, hour, min, sec, wday;
+    if (app_sensors_rtc_get_tm(&year, &mon, &mday, &hour, &min, &sec, &wday) == ESP_OK) {
+        d->time_valid = true;
+        d->hour = hour; d->min = min; d->sec = sec;
+        d->year = year; d->month = mon; d->day = mday; d->wday = wday;
+        shift_local(d, (int)shell_nvs_get_i32(SHELL_NVS_TZ_MIN, 0));
+    }
+
+    int pct; bool charging;
+    if (app_sensors_battery_get(&pct, &charging) == ESP_OK) {
+        d->batt_valid = true;
+        d->batt_percent = pct;
+        d->charging = charging;
+    }
+}
+
+static void face_gesture_cb(lv_event_t *e);
+
+/* Build (or rebuild) the face screen and leave it loaded. Only called on boot
+ * and on a style change. Caller must NOT hold the display lock. */
+static void build_face_ui(void)
+{
+    launcher_face_data_t d;
+    read_face_data(&d);
+
+    bsp_display_lock(0);
+
+    lv_obj_t *old = s_face_screen;
+    launcher_face_t *old_face = s_face;
+
+    s_face_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_face_screen, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_face_screen, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_face_screen, 0, LV_PART_MAIN);
+
+    s_face = launcher_face_create(s_face_screen, s_face_style);
+    launcher_face_update(s_face, &d);
+
+    /* Swipe to change face, the way the old faces app paged between them.
+     * Gestures are delivered to the screen, not to widgets. */
+    lv_obj_add_event_cb(s_face_screen, face_gesture_cb, LV_EVENT_GESTURE, NULL);
+
+    lv_screen_load(s_face_screen);
+
+    /* Only now that the new screen is active is the old one safe to free --
+     * lv_screen_load() does not free what it replaces, and deleting the
+     * screen that is still on-screen is exactly the crash refresh_clicked()
+     * documents avoiding. */
+    if (old != NULL && old != s_face_screen) {
+        lv_obj_delete(old);
+    }
+    launcher_face_destroy(old_face);
+
+    bsp_display_unlock();
+}
+
+/* Repaint the face in place while it is the visible surface.
+ *
+ * Sampling faster than the thing being sampled is deliberate: a periodic timer
+ * re-arms AFTER its callback, so a 1000 ms tick against the RTC's own 1 Hz
+ * edge is always a little over a second and some seconds are never observed --
+ * the second hand visibly jumps two ticks. 250 ms cannot skip one. Faces
+ * without a second hand only need to catch the minute, so they tick at 1 s and
+ * the update is gated on the value actually changing. */
+static void face_tick_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_shell_view != SHELL_VIEW_FACE || s_app_task != NULL || s_face == NULL) {
+        return;
+    }
+    launcher_face_data_t d;
+    read_face_data(&d);
+    launcher_face_update(s_face, &d);
+}
+
+static void show_face_screen(void)
+{
+    s_shell_view = SHELL_VIEW_FACE;
+    build_face_ui();
+
+    bsp_display_lock(0);
+    uint32_t period = launcher_face_wants_seconds(s_face_style) ? 250 : 1000;
+    if (s_face_tick == NULL) {
+        s_face_tick = lv_timer_create(face_tick_cb, period, NULL);
+    } else {
+        lv_timer_set_period(s_face_tick, period);
+    }
+    lv_timer_resume(s_face_tick);
+    bsp_display_unlock();
+}
+
+/* Swipe left/right cycles the face and remembers the choice, the way a watch
+ * does. Runs on the LVGL task, so it must not take the display lock that
+ * build_face_ui() takes -- LVGL's lock is recursive on this BSP, but the
+ * screen swap is done here rather than inline to keep one code path. */
+static void face_gesture_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+    if (dir != LV_DIR_LEFT && dir != LV_DIR_RIGHT) {
+        return;
+    }
+
+    int next = (int)s_face_style + (dir == LV_DIR_LEFT ? 1 : -1);
+    if (next < 0) next = LAUNCHER_FACE_COUNT - 1;
+    if (next >= LAUNCHER_FACE_COUNT) next = 0;
+    s_face_style = (launcher_face_style_t)next;
+
+    shell_nvs_set_i32(SHELL_NVS_FACE, next);
+    ESP_LOGI(TAG, "face -> %s", launcher_face_style_name(s_face_style));
+    show_face_screen();
+}
+
+static void show_apps_screen(void)
+{
+    s_shell_view = SHELL_VIEW_APPS;
+    /* Stop repainting the face while it is not visible -- the tick would
+     * otherwise redraw a screen nobody is looking at, and on the analog face
+     * that is an I2C read four times a second. */
+    bsp_display_lock(0);
+    if (s_face_tick != NULL) {
+        lv_timer_pause(s_face_tick);
+    }
+    bsp_display_unlock();
+    build_launcher_ui();
+}
+
+/* BOOT's three-way toggle, run off the button task. Called only when no app
+ * is running -- the app case is handled by the stop request, whose exit path
+ * lands on the face. */
+static void shell_toggle_view(void)
+{
+    if (s_shell_view == SHELL_VIEW_FACE) {
+        show_apps_screen();
+    } else {
+        show_face_screen();
+    }
+}
+
+static void build_launcher_ui(void)
+{
+    size_t count = app_registry_count();
+
+    bsp_display_lock(0);
+
+    s_launcher_screen = lv_obj_create(NULL);
+    /* True black, not near-black: watchOS/Wear OS are dark-theme only, and on
+     * OLED a black pixel is an off pixel -- see docs/DESIGN_GUIDE.md. */
+    lv_obj_set_style_bg_color(s_launcher_screen, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_launcher_screen, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_launcher_screen, 0, LV_PART_MAIN);
+
+    /* The whole app-list UI now lives in launcher_home.c so the headless
+     * simulator can render it too (with a fake app list). This passes the real
+     * app-registry accessor and the real row/refresh callbacks. */
+    launcher_home_build(s_launcher_screen, count, app_registry_sd_mounted(),
+                        MAX_VISIBLE_ROWS, s_view_mode, launcher_home_get_app, NULL,
+                        app_row_clicked, row_data_delete_cb, app_row_long_pressed,
+                        refresh_clicked, view_toggle_clicked);
+
+    lv_screen_load(s_launcher_screen);
+    bsp_display_unlock();
+}
+
+/* BOOT (GPIO0, top right) is Home: the universal way back to the launcher.
+ * It is deliberately hardware: no app can consume it or paint over it, so a
+ * misbehaving app can always be escaped. PWR (EXIO4, bottom right) belongs
+ * to apps via the `button` module -- but holding PWR >=6s still powers the
+ * board off, which is the AXP2101 acting below us, not something we handle.
+ *
+ * Runs whether or not an app is up: pressing BOOT with no app running is a
+ * harmless no-op. */
+
+/* Two-consecutive-sample debounce on the 20 ms poll tick. Returns true
+ * exactly when the stable level changes, with the new level in *stable. */
+typedef struct {
+    bool raw_prev;
+    bool stable;
+} debounce_t;
+
+static bool debounce_step(debounce_t *d, bool raw, bool *stable)
+{
+    bool edge = false;
+
+    if (raw == d->raw_prev && raw != d->stable) {
+        d->stable = raw;
+        edge = true;
+    }
+    d->raw_prev = raw;
+    *stable = d->stable;
+    return edge;
+}
+
+/* Polls both physical buttons every 20 ms.
+ *
+ * BOOT (GPIO0, top right) is Home: a press requests app stop,
+ * unconditionally -- harmless when nothing is running, and it must not gate
+ * on s_app_task being assigned (gating was why the first version never
+ * returned). A direct GPIO read with no bus dependency: unlike the old
+ * PWR-based back button this survives an I2C wedge, so the escape hatch is
+ * strictly stronger than before.
+ *
+ * PWR (EXIO4, bottom right, via the I2C expander) belongs to apps: edges go
+ * to the button module, which the app task drains. This task never touches
+ * the Lua state. A failed expander read skips the sample -- never treat a
+ * failed read as an edge. */
+static void button_poll_task(void *arg)
+{
+    (void)arg;
+    debounce_t boot_db = {0};
+    debounce_t pwr_db = {0};
+    bool level;
+
+    for (;;) {
+        /* BOOT: active low. Three-way (see the shell navigation notes above).
+         *
+         * The stop request stays unconditional -- it must never gate on
+         * s_app_task being assigned, which is what stopped the very first
+         * version from ever returning. Reading s_app_task afterwards only
+         * decides whether this press ALSO toggles the shell surface: with an
+         * app up the stop request is the whole action, and lua_app_task's
+         * exit path lands on the face by itself. A press that races an app
+         * already exiting merely stops nothing and toggles, which is the
+         * behaviour you want anyway. */
+        if (debounce_step(&boot_db, gpio_get_level(GPIO_NUM_0) == 0, &level) && level) {
+            launcher_lua_request_stop(true);
+
+            xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+            bool app_running = (s_app_task != NULL);
+            xSemaphoreGive(s_app_mutex);
+
+            if (app_running) {
+                ESP_LOGI(TAG, "BOOT pressed -- stopping app, returning home");
+            } else {
+                ESP_LOGI(TAG, "BOOT pressed -- %s",
+                         s_shell_view == SHELL_VIEW_FACE ? "face -> apps" : "apps -> face");
+                shell_toggle_view();
+            }
+        }
+
+        /* PWR: active high, behind the expander. */
+        if (s_expander != NULL) {
+            uint32_t raw = 0;
+            if (esp_io_expander_get_level(s_expander, EXIO_PWR_BTN, &raw) == ESP_OK) {
+                if (debounce_step(&pwr_db, raw != 0, &level)) {
+                    app_button_record_edge(level);
+                }
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+}
+
+/* Restore the user's saved UI font scale (apps/settings.lua writes it) and
+ * re-apply the theme so plain-label text picks it up. Called before the
+ * launcher UI is built. Reads NVS, so it no longer depends on the SD being
+ * mounted; an absent or out-of-range value leaves the default in place. */
 static void apply_persisted_font_scale(lv_display_t *disp)
 {
     /* NVS, not the card: the UI scale is a device setting and must apply with
