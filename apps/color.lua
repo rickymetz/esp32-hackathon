@@ -30,11 +30,11 @@ local function update()
     hex:set_style({ text_color = lum > 140 and "#000000" or "#ffffff" })
 end
 
--- One labelled slider per channel. A 26px track is a slim bar that's still an
--- easy drag (sliders are dragged, not tapped); channel letter, track and value
--- share one vertical centre (cy), and the track stops well short of the value
--- column so the knob can't overrun the number even at 255.
-local SLIDER_H = 16
+-- One labelled slider per channel: a thin 8px track with a big round 32px knob
+-- (knob_pad grows the handle past the track; knob_radius rounds it). Channel
+-- letter, track and value share one vertical centre (cy), and the track stops
+-- short of the value column so the knob can't overrun the number even at 255.
+local TRACK_H = 8
 local function channel(i, cy, name, color)
     lvgl.label(scr, {
         text = name, align = "left_mid", x = 22, y = cy - 224,
@@ -46,7 +46,8 @@ local function channel(i, cy, name, color)
     })
     local s = lvgl.slider(scr, {
         min = 0, max = 255, value = rgb[i],
-        x = 56, y = cy - SLIDER_H // 2, w = 200, h = SLIDER_H,
+        x = 56, y = cy - TRACK_H // 2, w = 196, h = TRACK_H,
+        knob_pad = 12, knob_radius = 100, knob_color = "#FFFFFF",
     })
     s:on("value_changed", function()
         rgb[i] = s:get_value()

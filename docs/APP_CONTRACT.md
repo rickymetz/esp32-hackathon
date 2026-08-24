@@ -219,6 +219,9 @@ Accepted by most widgets:
 - **Values**: `min`, `max`, `value`
 - **Style**: `bg_color`, `text_color`, `border_color`, `bg_opa`, `opa`, `radius`,
   `border_width`, `pad`, `line_color`, `line_width`, `arc_width`, `font`
+- **Slider/arc knob**: `knob_color`, `knob_pad` (grows the handle beyond the
+  track, for a thin-track/big-knob slider), `knob_radius` (a large value rounds
+  it to a circle)
 
 Colors are strings or numbers: `bg_color = "#2f80ed"` or `text_color = 0xffffff`. `font`
 takes a font object — see Fonts, below.

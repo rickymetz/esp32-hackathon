@@ -34,6 +34,10 @@ static void lua_lvgl_apply_color_style_field(lua_State *L, int index, lv_obj_t *
             lv_obj_set_style_bg_color(obj, color, LV_PART_KNOB);
         } else if (strcmp(field, "track_color") == 0) {
             lv_obj_set_style_arc_color(obj, color, LV_PART_MAIN);
+        } else if (strcmp(field, "knob_color") == 0) {
+            /* A slider's/arc's handle -- style it apart from the track so a thin
+             * track can carry a big, distinctly coloured knob. */
+            lv_obj_set_style_bg_color(obj, color, LV_PART_KNOB);
         }
     }
     lua_pop(L, 1);
@@ -72,6 +76,14 @@ static void lua_lvgl_apply_style_int_field(lua_State *L, int index, lv_obj_t *ob
         lv_obj_set_style_line_width(obj, value, 0);
     } else if (strcmp(field, "arc_width") == 0) {
         lv_obj_set_style_arc_width(obj, value, 0);
+    } else if (strcmp(field, "knob_pad") == 0) {
+        /* Grows the slider handle beyond the track height, for a thin-track,
+         * big-knob look. */
+        lv_obj_set_style_pad_all(obj, value, LV_PART_KNOB);
+    } else if (strcmp(field, "knob_radius") == 0) {
+        /* Round the handle independently of the track (a large value clamps to
+         * a circle). */
+        lv_obj_set_style_radius(obj, value, LV_PART_KNOB);
     }
 }
 
@@ -86,6 +98,7 @@ void lua_lvgl_apply_style_opts_locked(lua_State *L, int index, lv_obj_t *obj)
     lua_lvgl_apply_color_style_field(L, index, obj, "border_color");
     lua_lvgl_apply_color_style_field(L, index, obj, "line_color");
     lua_lvgl_apply_color_style_field(L, index, obj, "track_color");
+    lua_lvgl_apply_color_style_field(L, index, obj, "knob_color");
     lua_lvgl_apply_style_int_field(L, index, obj, "bg_opa");
     lua_lvgl_apply_style_int_field(L, index, obj, "opa");
     lua_lvgl_apply_style_int_field(L, index, obj, "radius");
@@ -95,6 +108,8 @@ void lua_lvgl_apply_style_opts_locked(lua_State *L, int index, lv_obj_t *obj)
     lua_lvgl_apply_style_int_field(L, index, obj, "pad_column");
     lua_lvgl_apply_style_int_field(L, index, obj, "line_width");
     lua_lvgl_apply_style_int_field(L, index, obj, "arc_width");
+    lua_lvgl_apply_style_int_field(L, index, obj, "knob_pad");
+    lua_lvgl_apply_style_int_field(L, index, obj, "knob_radius");
     lua_lvgl_apply_font_style_field(L, index, obj);
 }
 int lua_lvgl_set_style(lua_State *L)
