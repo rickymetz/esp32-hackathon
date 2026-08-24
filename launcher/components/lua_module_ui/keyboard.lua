@@ -31,7 +31,9 @@ local GROUPS = {
 }
 
 local BACKSPACE = lvgl.symbol.backspace
-local SPACE = "space"
+-- The space key's label is blank (a single space): the compiled font has no
+-- space-bar glyph, so a drawn ⎵ line is overlaid on the key instead (below).
+local SPACE = " "
 
 function M.open(opts, cb)
     opts = opts or {}
@@ -115,6 +117,20 @@ function M.open(opts, cb)
         bg_color = "#000000", bg_opa = 255, border_width = 0, pad = 4,
     })
 
+    -- The space key carries a drawn ⎵ (space-bar) glyph rather than the word
+    -- "space" -- the compiled font has no such codepoint. It's a plain line
+    -- laid over the (blank-labelled) space cell; a line is non-clickable, so
+    -- taps fall through to the buttonmatrix. place_space() moves it onto the
+    -- space cell per view; hide_space() parks it off-screen in the digit pad.
+    local space_icon = lvgl.line(scr, {
+        w = 56, h = 20,
+        points = { { x = 0, y = 0 }, { x = 0, y = 16 },
+                   { x = 54, y = 16 }, { x = 54, y = 0 } },
+        line_color = "#A0A0AE", line_width = 6,
+    })
+    local function place_space(cx, cy) space_icon:set_pos(cx - 28, cy - 8) end
+    local function hide_space() space_icon:set_pos(-200, -200) end
+
     local upper = true   -- case for appended letters; the Aa cell flips it
     local view   -- forward: "groups" | "letters" | "digits"
     local show_groups, show_letters, show_digits
@@ -145,6 +161,7 @@ function M.open(opts, cb)
         map[#map + 1] = SPACE
         map[#map + 1] = BACKSPACE
         bm:set_map(map)
+        place_space(184, 404)   -- bottom-row middle of the 4-row groups view
     end
 
     local function start_voice()
@@ -197,6 +214,7 @@ function M.open(opts, cb)
         bm:set_map({ c[1], c[2], c[3], "\n",
                      c[4], c[5], c[6], "\n",
                      lvgl.symbol.left, SPACE, BACKSPACE })
+        place_space(184, 389)   -- bottom-row middle of the 3-row letters view
     end
 
     show_digits = function()
@@ -208,6 +226,7 @@ function M.open(opts, cb)
                      "4", "5", "6", "\n",
                      "7", "8", "9", "\n",
                      (mode == "text") and "ABC" or "00", "0", BACKSPACE })
+        hide_space()   -- the digit pad has no space key
     end
 
     bm:on("value_changed", function()
