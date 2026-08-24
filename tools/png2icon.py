@@ -205,7 +205,7 @@ def resample_rgb(w, h, rgb, size):
 
 
 def main():
-    args = [a for a in sys.argv[1:]]
+    args = sys.argv[1:]
     size = 128           # the launcher's grid tile size; see the module docstring
     bg = (0, 0, 0)
     positional = []

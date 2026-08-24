@@ -439,7 +439,9 @@ static void build_grid(lv_obj_t *screen, size_t count,
     lv_obj_set_style_bg_opa(tv, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_scrollbar_mode(tv, LV_SCROLLBAR_MODE_OFF);
 
-    /* Icon-only cells, evenly spaced in the 368x330 page. */
+    /* Icon-only cells, evenly spaced in the 368x330 page. NOTE: tools/png2icon.py
+     * defaults card icons to this size so the launcher never upscales them (LVGL's
+     * file-image upscale clips circles). Keep its default in sync if ICON changes. */
     const int ICON = 128;
     const int col_cx[GRID_COLS] = { 101, 267 };
     const int row_cy[GRID_ROWS] = { 89, 242 };

@@ -35,13 +35,13 @@ local best_stat = ui.stat(scr, { value = best, label = "best", size = 40,
 local hint = ui.note(scr, "Tap as fast as you can", { y = 150, size = 26 })
 
 local count    = 0
-local state    = "idle"     -- idle -> running -> done
+local running  = false
 local deadline = 0
 local tick                  -- declared before use so the closure sees the local
 local target                -- the big tap button, built below
 
 local function finish_round()
-    state = "done"
+    running = false
     if tick then tick:cancel(); tick = nil end
     audio.play({ { 660, 120 }, { 880, 200 } })
     if count > best then
@@ -59,7 +59,7 @@ end
 
 local function start_round()
     count = 0
-    state = "running"
+    running = true
     -- Absolute deadline, so a late tick can't stretch the round (the timer
     -- accuracy trap the app contract warns about).
     deadline = timer.now_ms() + ROUND_MS
@@ -80,7 +80,7 @@ target = ui.button(scr, {
     align = "center", y = 40,
     w = 300, h = 150,
     on_click = function()
-        if state == "running" then
+        if running then
             count = count + 1
             target:set_text(tostring(count))
             audio.beep()
@@ -94,7 +94,7 @@ target = ui.button(scr, {
 -- round too (app contract, rule 2). It only (re)starts -- never a destructive
 -- or hidden action.
 button.on("pwr", "pressed", function()
-    if state ~= "running" then start_round() end
+    if not running then start_round() end
 end)
 
 scr:load()

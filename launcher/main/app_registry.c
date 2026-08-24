@@ -70,6 +70,19 @@ static bool has_lua_suffix(const char *name)
     return len > 4 && strcasecmp(name + len - 4, ".lua") == 0;
 }
 
+/* Remove a stray <dir>/.push.tmp left by a failed push. app_registry_write_app
+ * co-locates its temp file with the destination (apps/.push.tmp for a flat
+ * push, apps/<folder>/.push.tmp for a folder push), so a power loss between
+ * fwrite and rename can strand one; scan_locked() sweeps both the apps root
+ * and each app folder through here. ENOENT is the normal case. */
+static void sweep_push_tmp(const char *dir)
+{
+    char tmp[APP_PATH_MAX];
+    if (snprintf(tmp, sizeof(tmp), "%s/.push.tmp", dir) < (int)sizeof(tmp)) {
+        remove(tmp);
+    }
+}
+
 /* Body of app_registry_scan(), without the lock. Callers that already hold
  * registry_lock() (namely app_registry_write_app()) must call this directly
  * -- s_lock is a plain mutex, not a recursive one, so taking it twice from
@@ -100,14 +113,7 @@ static esp_err_t scan_locked(void)
         return ESP_OK;
     }
 
-    /* A failed push's rename leaves .push.tmp behind; sweep it here so
-     * the card never accumulates them (open issue 3 from the handoff). */
-    {
-        char tmp[APP_PATH_MAX];
-        if (snprintf(tmp, sizeof(tmp), "%s/.push.tmp", APPS_DIR) < (int)sizeof(tmp)) {
-            remove(tmp);   /* ENOENT is the normal case */
-        }
-    }
+    sweep_push_tmp(APPS_DIR);   /* clear a stray temp from a failed flat push */
 
     struct dirent *ent;
     while ((ent = readdir(dir)) != NULL && s_count < APP_MAX_COUNT) {
@@ -130,13 +136,7 @@ static esp_err_t scan_locked(void)
         app_entry_t *app = &s_apps[s_count];
 
         if (is_dir) {
-            /* A folder push writes its temp file inside the app folder, so a
-             * failed folder push leaves apps/<folder>/.push.tmp behind. Sweep
-             * it here, the same way the flat apps/.push.tmp is swept above. */
-            char tmp[APP_PATH_MAX];
-            if (snprintf(tmp, sizeof(tmp), "%s/.push.tmp", entry_path) < (int)sizeof(tmp)) {
-                remove(tmp);   /* ENOENT is the normal case */
-            }
+            sweep_push_tmp(entry_path);   /* stray temp from a failed folder push */
 
             char main_path[APP_PATH_MAX];
             n = snprintf(main_path, sizeof(main_path), "%s/main.lua", entry_path);

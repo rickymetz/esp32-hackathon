@@ -420,28 +420,8 @@ static bool sim_home_get_app(size_t index, launcher_home_app_t *out, void *ctx)
     out->name = name;
     out->basename = name;   /* callbacks are NULL in the sim */
     out->icon = launcher_home_default_icon(name);
-
-    /* Preview a real card icon when one exists under --sdroot at
-     * apps/<slug>/icon.bin (slug = the app name lower-cased, spaces/dashes ->
-     * underscores), so a dev can eyeball their icon on the home screen the way
-     * the device shows it. The golden/scenario runs use --sdroot '.', which
-     * has no such files, so those stay pinned to the glyph/letter fallbacks. */
-    static char slug[128];
-    size_t si = 0;
-    for (const char *p = name; *p && si + 1 < sizeof(slug); p++) {
-        char c = *p;
-        if (c >= 'A' && c <= 'Z') c += 32;
-        slug[si++] = (c == ' ' || c == '-') ? '_' : c;
-    }
-    slug[si] = '\0';
-
-    static char fs_path[512], lv_path[512];
-    out->icon_path = NULL;
-    if (snprintf(fs_path, sizeof(fs_path), "%s/apps/%s/icon.bin", s_sdroot, slug) < (int)sizeof(fs_path) &&
-        access(fs_path, R_OK) == 0 &&
-        snprintf(lv_path, sizeof(lv_path), "D:/apps/%s/icon.bin", slug) < (int)sizeof(lv_path)) {
-        out->icon_path = lv_path;
-    }
+    out->icon_path = NULL;  /* the fixed fake list ships no card icons, so the
+                             * home render stays a pure function of the fixture */
     return true;
 }
 
