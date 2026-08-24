@@ -49,6 +49,8 @@
 #include "app_button.h"
 #include "lv_font_lexend.h"
 #include "lua_module_ui.h"
+#include "lua_module_store.h"
+#include <sys/stat.h>
 #include "app_voice.h"
 #include "app_sensors.h"
 #include "app_audio.h"
@@ -458,6 +460,19 @@ static void lua_app_task(void *arg)
 
     lua_pushcfunction(L, traceback_handler);
     int errfunc = lua_gettop(L);
+
+    /* Per-app persistent store: point require("store") at this app's state
+     * file (<sd>/state/<name>.json). get/set work in memory; store.save()
+     * writes here. mkdir is harmless if the dir already exists. */
+    {
+        char dir[APP_PATH_MAX];
+        snprintf(dir, sizeof(dir), "%s/state", BSP_SD_MOUNT_POINT);
+        mkdir(dir, 0777);
+        char store_path[APP_PATH_MAX];
+        snprintf(store_path, sizeof(store_path), "%s/%s.json", dir, app->name);
+        lua_pushstring(L, store_path);
+        lua_setglobal(L, "__APP_STORE__");
+    }
 
     if (luaL_loadfile(L, app->path) != LUA_OK ||
         lua_pcall(L, 0, 0, errfunc) != LUA_OK) {
@@ -928,6 +943,7 @@ void app_main(void)
     ESP_ERROR_CHECK(app_voice_register());
     ESP_ERROR_CHECK(app_sensors_register());
     ESP_ERROR_CHECK(app_wifi_register());
+    ESP_ERROR_CHECK(lua_module_store_register());   /* no deps; order is free */
     ESP_ERROR_CHECK(lua_module_ui_register());
 
     /* BOOT (GPIO0) is the Home button. Input + pull-up matches its idle

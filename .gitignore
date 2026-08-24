@@ -24,3 +24,7 @@ secrets*
 
 # clangd index cache
 .cache/
+
+# Sim app state written by the store module at runtime
+/state/
+sim/state/

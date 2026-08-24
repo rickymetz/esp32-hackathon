@@ -158,6 +158,7 @@ others, and you cannot `require` a `.lua` file of your own (see the trust model 
 | `ui` | Shared primitives — header, row, select, picker, confirm, toast, … |
 | `button` | The PWR button |
 | `keyboard` | Text entry |
+| `store` | Per-app persistent key/value, saved on the card |
 | `voice` | Offline speech — gate on `voice.available()` |
 | `audio` | Tones and beeps |
 | `rtc` | Wall-clock date and time |
@@ -747,6 +748,35 @@ The speaker opens on first use, never at boot — audio hardware that
 misbehaves during startup would wedge the device before the launcher
 exists, and that needs a physical button dance to recover.
 
+### Persistence: `require("store")`
+
+Remember things across runs — a high score, a settings choice, a list — without
+hand-rolling files. Each app gets its own JSON file on the card (the launcher
+points `store` at it); you never name the path.
+
+```lua
+local store = require("store")
+
+local best = store.get("best", 0)     -- second arg is the default if never saved
+if score > best then
+    store.set("best", score)          -- in memory only
+    store.save()                      -- THIS writes the card
+end
+```
+
+| Call | What |
+| --- | --- |
+| `store.get(key, default)` | The saved value, or `default` if the key was never stored |
+| `store.set(key, value)` | Set a value **in memory** (strings, numbers, booleans, and nested tables/arrays) |
+| `store.save()` | Write the file. Returns `true`, or `nil, reason`. **Nothing persists until you call this** |
+| `store.all()` | The whole state table, to read or mutate directly (then `save()`) |
+| `store.clear()` | Forget everything (then `save()` to persist the empty state) |
+
+`get`/`set` only touch memory, so a tight loop can `set` freely; call `save()`
+once at a natural moment (game over, item added). Values must be JSON-friendly —
+strings, numbers, booleans, and tables of those; a function or userdata will not
+round-trip. The file is human-readable JSON, so you can inspect it on the card.
+
 ### More on widgets
 
 A few methods and options that the widget table above does not show:
@@ -949,11 +979,9 @@ caller:load()
 
 ## Not available yet
 
-Ask if your app genuinely needs one — each is launcher work that blocks everyone:
-
-- A dedicated persistent-storage API. There's no `app.store` — if you need to remember
-  something across runs, use `io.open` on a file under `/sdcard` yourself (see the trust
-  model above: nothing stops you, there's just no helper for it)
+Ask if your app genuinely needs one — each is launcher work that blocks everyone.
+(Persistent storage used to live here; it now ships as `require("store")` — see
+**Persistence**, below.)
 
 ---
 

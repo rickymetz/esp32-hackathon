@@ -22,6 +22,7 @@
 #include "app_sensors.h"
 #include "app_sandbox.h"
 #include "lua_module_ui.h"
+#include "lua_module_store.h"
 #include "launcher_home.h"
 
 /* Sim-only reset hooks (the device wifi/sensors modules are event/register
@@ -48,6 +49,7 @@ void sim_wifi_set_outcome(bool succeed);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <signal.h>
 #include <unistd.h>
@@ -298,6 +300,24 @@ static int app_run(const char *path)
 
     char pathbuf[1024];
     const char *rpath = resolve_app_path(path, pathbuf, sizeof(pathbuf));
+
+    /* Per-app store path, mirroring the device (launcher_main.c): point
+     * require("store") at <sdroot>/state/<name>.json. */
+    {
+        const char *base = strrchr(path, '/');
+        base = base ? base + 1 : path;
+        char name[256];
+        snprintf(name, sizeof(name), "%s", base);
+        char *dot = strrchr(name, '.');
+        if (dot && strcmp(dot, ".lua") == 0) *dot = '\0';
+        char dir[1024];
+        snprintf(dir, sizeof(dir), "%s/state", s_sdroot);
+        mkdir(dir, 0777);
+        char store_path[1300];
+        snprintf(store_path, sizeof(store_path), "%s/%s.json", dir, name);
+        lua_pushstring(L, store_path);
+        lua_setglobal(L, "__APP_STORE__");
+    }
 
     lua_pushcfunction(L, traceback_handler);
     int errfunc = lua_gettop(L);
@@ -579,6 +599,7 @@ int main(int argc, char **argv)
         app_audio_register() != ESP_OK ||
         app_wifi_register() != ESP_OK ||
         app_sensors_register() != ESP_OK ||
+        lua_module_store_register() != ESP_OK ||
         lua_module_ui_register() != ESP_OK) {
         fprintf(stderr, "module registration failed\n");
         return 1;
