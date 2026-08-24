@@ -30,17 +30,23 @@ local function update()
     hex:set_style({ text_color = lum > 140 and "#000000" or "#ffffff" })
 end
 
--- One labelled slider per channel. Sliders are 48px tall (default ~10px sits in
--- the band this digitizer drops ~half of) and 78px apart so a drag can't grab
--- the neighbouring channel; a live 0-255 readout sits on the right.
-local function channel(i, y, name, color)
-    lvgl.label(scr, { text = name, x = 22, y = y + 12, text_color = color })
+-- One labelled slider per channel. A 26px track is a slim bar that's still an
+-- easy drag (sliders are dragged, not tapped); channel letter, track and value
+-- share one vertical centre (cy), and the track stops well short of the value
+-- column so the knob can't overrun the number even at 255.
+local SLIDER_H = 26
+local function channel(i, cy, name, color)
+    lvgl.label(scr, {
+        text = name, align = "left_mid", x = 22, y = cy - 224,
+        text_color = color, font = lvgl.font(32),
+    })
     local val = lvgl.label(scr, {
-        text = tostring(rgb[i]), align = "top_right", x = -18, y = y + 12,
-        text_color = "#A0A0AE",
+        text = tostring(rgb[i]), align = "right_mid", x = -16, y = cy - 224,
+        text_color = "#A0A0AE", font = lvgl.font(32),
     })
     local s = lvgl.slider(scr, {
-        min = 0, max = 255, value = rgb[i], x = 58, y = y, w = 232, h = 48,
+        min = 0, max = 255, value = rgb[i],
+        x = 56, y = cy - SLIDER_H // 2, w = 200, h = SLIDER_H,
     })
     s:on("value_changed", function()
         rgb[i] = s:get_value()
@@ -49,9 +55,11 @@ local function channel(i, y, name, color)
     end)
 end
 
-channel(1, 210, "R", "#ff6b6b")
-channel(2, 288, "G", "#51cf66")
-channel(3, 366, "B", "#4dabf7")
+-- cy is each channel's centreline; align="*_mid" places the labels there too
+-- (y is the offset from the screen's vertical centre, 224).
+channel(1, 250, "R", "#ff6b6b")
+channel(2, 322, "G", "#51cf66")
+channel(3, 394, "B", "#4dabf7")
 
 update()
 scr:load()

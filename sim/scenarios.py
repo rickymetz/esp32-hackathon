@@ -178,8 +178,9 @@ SCENARIOS = [
     ("flashlight-off", ["run", "apps/flashlight.lua", ":", "tap", "184", "224"], flashlight_off),
     ("color-default",  ["run", "apps/color.lua"], color_default_blue),
     ("color-mixed",    ["run", "apps/color.lua",
-                        ":", "swipe", "200", "236", "320", "236", "300",
-                        ":", "swipe", "200", "364", "66", "364", "300"], color_mixed_orange),
+                        ":", "swipe", "150", "250", "256", "250", "300",   # R -> max
+                        ":", "swipe", "200", "394", "56", "394", "300"],   # B -> min
+                       color_mixed_orange),
     ("reaction-green", ["run", "apps/reaction.lua",
                         ":", "tap", "184", "248", ":", "sleep", "4.5"], reaction_green),
     ("clock-shows-time", ["run", "apps/clock.lua", ":", "sleep", "0.3"], clock_shows_time),
