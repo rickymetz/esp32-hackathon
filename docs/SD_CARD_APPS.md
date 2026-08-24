@@ -89,8 +89,11 @@ tools/png2icon.py logo.png icon.bin --bg "#101018"    # flatten alpha onto this
   onto a background colour (`--bg`, default black). The launcher's tiles sit on
   true black, so a transparent PNG composited on black looks clean — a
   full-bleed disc or square is the safe shape.
-- **Size**: any square source works; the launcher scales it to the tile. 120×120
-  matches the built-in icons. Bigger just wastes card space.
+- **Size**: `png2icon` emits at `--size` (default 120×120, the tile size).
+  **Author the source PNG larger** — 240 or 480 square — and let it downscale:
+  `png2icon` box-filters on the way down (Pillow's LANCZOS when installed), so a
+  full-bleed disc comes out smooth and fills the tile like the built-ins. A
+  source already at 120 is emitted as-is, so make sure it is clean at that size.
 - **Fallback**: if `icon.bin` is missing or unreadable, the launcher falls back
   to the same glyph/letter avatar a flat app gets — so a folder app without an
   icon still looks fine.

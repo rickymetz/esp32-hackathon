@@ -35,12 +35,14 @@ def parse_bg(s):
 
 # ---- PNG decode: Pillow if available, else a compact built-in decoder -------
 
-def decode_with_pillow(path, size):
-    from PIL import Image
-    im = Image.open(path).convert("RGBA")
-    if size:
-        im = im.resize((size, size), Image.LANCZOS)
-    return im.width, im.height, im.tobytes()
+def decode_rgba(path):
+    """Decode a PNG to (w, h, RGBA bytes) at its native size."""
+    try:
+        from PIL import Image
+        im = Image.open(path).convert("RGBA")
+        return im.width, im.height, im.tobytes()
+    except ImportError:
+        return decode_builtin(path)
 
 
 def _paeth(a, b, c):
@@ -142,16 +144,51 @@ def decode_builtin(path):
     return width, height, bytes(rgba)
 
 
-def nearest_resize(w, h, rgba, size):
-    out = bytearray(size * size * 4)
-    for y in range(size):
-        sy = y * h // size
-        for x in range(size):
-            sx = x * w // size
-            si = (sy * w + sx) * 4
-            di = (y * size + x) * 4
-            out[di:di + 4] = rgba[si:si + 4]
-    return size, size, bytes(out)
+def flatten_rgb(w, h, rgba, bg):
+    """Composite RGBA over the background to opaque RGB. Done *before* any
+    resize so a resampled edge blends the icon colour into the background --
+    the alpha is baked in at full resolution, not averaged separately."""
+    br, bgc, bb = bg
+    rgb = bytearray(w * h * 3)
+    for i in range(w * h):
+        r, g, b, a = rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2], rgba[i * 4 + 3]
+        if a != 255:
+            r = (r * a + br * (255 - a)) // 255
+            g = (g * a + bgc * (255 - a)) // 255
+            b = (b * a + bb * (255 - a)) // 255
+        rgb[i * 3:i * 3 + 3] = bytes((r, g, b))
+    return rgb
+
+
+def resample_rgb(w, h, rgb, size):
+    """Resize opaque RGB to size*size. Downscaling averages every source pixel
+    that falls in a destination cell (a box filter -- real antialiasing, so a
+    hard-edged source comes out smooth); the common case, since icons are drawn
+    larger than the tile. Upscaling falls back to nearest, so author at >= the
+    target size for crisp results."""
+    if w >= size:  # Pillow gives nicer filtering when present; use it if we can.
+        try:
+            from PIL import Image
+            im = Image.frombytes("RGB", (w, h), bytes(rgb)).resize((size, size), Image.LANCZOS)
+            return bytearray(im.tobytes())
+        except ImportError:
+            pass
+    out = bytearray(size * size * 3)
+    for dy in range(size):
+        sy0 = dy * h // size
+        sy1 = max(sy0 + 1, (dy + 1) * h // size)
+        for dx in range(size):
+            sx0 = dx * w // size
+            sx1 = max(sx0 + 1, (dx + 1) * w // size)
+            r = g = b = n = 0
+            for sy in range(sy0, sy1):
+                row = sy * w
+                for sx in range(sx0, sx1):
+                    i = (row + sx) * 3
+                    r += rgb[i]; g += rgb[i + 1]; b += rgb[i + 2]; n += 1
+            di = (dy * size + dx) * 3
+            out[di] = r // n; out[di + 1] = g // n; out[di + 2] = b // n
+    return out
 
 
 def main():
@@ -173,23 +210,16 @@ def main():
     src = positional[0]
     dst = positional[1] if len(positional) > 1 else os.path.splitext(src)[0] + ".bin"
 
-    try:
-        import PIL  # noqa: F401
-        w, h, rgba = decode_with_pillow(src, size)
-    except ImportError:
-        w, h, rgba = decode_builtin(src)
-        if size and (w, h) != (size, size):
-            w, h, rgba = nearest_resize(w, h, rgba, size)
+    w, h, rgba = decode_rgba(src)
+    rgb = flatten_rgb(w, h, rgba, bg)          # bake alpha at full resolution
+    if size and (w, h) != (size, size):        # then resample (antialiased)
+        rgb = resample_rgb(w, h, rgb, size)
+        w = h = size
 
-    # Flatten RGBA onto the background, pack RGB565 little-endian.
-    br, bgc, bb = bg
+    # Pack RGB565 little-endian.
     pixels = bytearray(w * h * 2)
     for i in range(w * h):
-        r, g, b, a = rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2], rgba[i * 4 + 3]
-        if a != 255:
-            r = (r * a + br * (255 - a)) // 255
-            g = (g * a + bgc * (255 - a)) // 255
-            b = (b * a + bb * (255 - a)) // 255
+        r, g, b = rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2]
         v = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
         pixels[i * 2] = v & 0xFF
         pixels[i * 2 + 1] = (v >> 8) & 0xFF
