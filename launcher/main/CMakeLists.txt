@@ -1,4 +1,4 @@
-idf_component_register(SRCS "launcher_main.c" "launcher_home.c" "launcher_face.c" "launcher_icons.c" "app_registry.c" "serial_push.c" "app_timer.c" "app_sandbox.c"
+idf_component_register(SRCS "launcher_main.c" "launcher_home.c" "launcher_face.c" "log_ring.c" "launcher_icons.c" "app_registry.c" "serial_push.c" "app_timer.c" "app_sandbox.c"
                        INCLUDE_DIRS "."
                        # Apps baked into the binary, so the device is useful
                        # with no SD card. A card app of the same name shadows

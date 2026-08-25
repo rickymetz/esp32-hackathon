@@ -58,6 +58,7 @@
 #include "app_voice.h"
 #include "app_sensors.h"
 #include "app_audio.h"
+#include "log_ring.h"
 #include "app_wifi.h"
 #include "driver/gpio.h"
 #include "launcher_main.h"
@@ -1727,6 +1728,11 @@ void app_main(void)
     /* Created before anything that can launch an app (UI build, serial
      * task): app_row_clicked, launcher_run_app_by_name, launcher_stop_app,
      * and lua_app_task's own exit path all take this. */
+    /* Before anything that can log something worth reading. The console is
+     * only readable by resetting the board, which destroys what you were
+     * trying to see -- this keeps a copy the LOG serial verb can hand back. */
+    log_ring_init();
+
     s_app_mutex = xSemaphoreCreateMutex();
     if (s_app_mutex == NULL) {
         ESP_LOGE(TAG, "failed to create app mutex");

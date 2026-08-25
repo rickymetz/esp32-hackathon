@@ -7,6 +7,7 @@ Usage: drive.py CMD [args] [: CMD [args]]...
   run <app.lua>            launch an app (STOPs anything running first)
   stop                     stop the running app
   boot                     press BOOT: app -> home, home -> app list, list -> home
+  log                      dump the buffered console output (ESP_LOG since boot)
   pwr [down|up|long]       inject the PWR button (a quick click by default)
   tap <x> <y>              synthetic tap
   swipe <x0> <y0> <x1> <y1> [ms]   synthetic swipe/drag
@@ -146,6 +147,19 @@ for c in chains(args):
         # timeout is not -- the device did not answer at all.
         if got == "timeout":
             fail("stop: timeout")
+    elif op == "log":
+        s.write(b"LOG\n"); s.flush()
+        # Streamed between markers rather than a single reply line, so read
+        # until LOG_END instead of using cmd_and_wait.
+        out, deadline = [], time.time() + 8
+        while time.time() < deadline:
+            ln = s.readline().decode("utf-8", "replace").rstrip("\r\n")
+            if not ln:
+                continue
+            if ln.startswith("LOG_END"):
+                break
+            out.append(ln)
+        print("\n".join(out))
     elif op == "boot":
         got = cmd_and_wait(s, "BOOT", "BOOT_OK", None)
         print("boot:", got)

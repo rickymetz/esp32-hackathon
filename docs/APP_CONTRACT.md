@@ -1272,7 +1272,13 @@ shipped example — the built-in sizes cover every app so far.)
 
 ## Debugging
 
-`print()` goes to the serial console. A crashing app also shows its error on-screen (rule
+`print()` goes to the serial console. **Reading that console live means
+resetting the board**, which destroys the state you were trying to inspect --
+so the launcher keeps the last 32 KB of its own log in memory and `LOG` (or
+`tools/drive.py log`) hands it back over the port the harness already owns.
+Trigger the fault, then ask what happened. It captures `ESP_LOGx` -- including
+the launcher's `app '<name>' failed:` and its traceback -- but **not** your
+app's own `print()`, which Lua writes straight to stdout. A crashing app also shows its error on-screen (rule
 4), with the full traceback on serial too, prefixed `app '<name>' failed:`. Errors inside
 an event callback are logged separately under the tag `lua_lvgl_evt` and don't stop the
 app or show the error screen.
@@ -1298,6 +1304,8 @@ SWIPE x0 y0 x1 y1 [ms] -> synthetic swipe/drag (a long press is a
 BOOT                 ->  BOOT_OK -- one BOOT press, through the same handler
                          the physical button calls: app -> home, home -> app
                          list, list -> home
+LOG                  ->  LOG_BEGIN <bytes>, the buffered console output
+                         (ESP_LOG since boot, oldest first), LOG_END
 MEM                  ->  MEM <psram_free> <internal_free> <largest_internal>
 PING                 ->  PONG launcher <proto> lvgl <x.y.z>  (confirm the port
                          really is the launcher before driving it)

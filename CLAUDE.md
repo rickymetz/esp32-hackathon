@@ -66,7 +66,8 @@ idf.py -p $PORT flash monitor
 **You may build, flash, and monitor freely** — treat it as the normal verify loop.
 
 **Verify UI work with the drive harness, not by asking a human.** The launcher
-speaks `SHOT` / `TAP x y` / `SWIPE x0 y0 x1 y1 [ms]` / `LIST` / `DELETE` /
+speaks `SHOT` / `TAP x y` / `SWIPE x0 y0 x1 y1 [ms]` / `BOOT` / `LOG` /
+`LIST` / `DELETE` /
 `MEM` / `STATS` / `PING` / `BRIGHT` over
 serial next to RUN/STOP; `tools/drive.py` chains them and `tools/screenshot.py`
 decodes SHOT to a PNG (~1.6 s per frame):

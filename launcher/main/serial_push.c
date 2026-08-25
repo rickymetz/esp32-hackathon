@@ -5,6 +5,7 @@
 #include "app_registry.h"
 #include "launcher_main.h"
 #include "app_button.h"
+#include "log_ring.h"
 #include "esp_heap_caps.h"
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
@@ -699,6 +700,11 @@ static void serial_push_task(void *arg)
             handle_pwr();
         } else if (strcmp(line, "BOOT") == 0) {
             handle_boot();
+        } else if (strcmp(line, "LOG") == 0) {
+            /* Everything ESP_LOG has printed since boot, oldest first. The
+             * point of it: trigger a fault, then ask what happened, over the
+             * port the harness already owns. */
+            log_ring_dump();
         } else if (strcmp(line, "MEM") == 0) {
             handle_mem();
         } else if (strncmp(line, "BRIGHT ", 7) == 0) {
