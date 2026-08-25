@@ -63,8 +63,12 @@ local function page_wifi()
         show_menu()
     end })
 
-    local status = ui.note(scr, "", { align = "bottom_mid", y = -108, size = 26 })
-    local list = ui.list(scr, { y = 96, h = 226, pad_row = 12 })
+    -- Sized from the bottom up, because the buttons are the fixed thing:
+    -- buttons occupy 350-438, the status line ~314-348, so the list gets
+    -- 96..302. Two 104px rows fit and the rest scrolls -- that is the panel's
+    -- constraint, not a layout bug. Do not shrink the rows to fit more.
+    local status = ui.note(scr, "", { align = "bottom_mid", y = -100, size = 26 })
+    local list = ui.list(scr, { y = 96, h = 206, pad_row = 12 })
 
     local function connect_to(ssid, pass)
         prefs.set("wifi_ssid", ssid)

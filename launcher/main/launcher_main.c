@@ -1368,8 +1368,17 @@ static void refresh_ui_async_cb(void *arg)
     xSemaphoreTake(s_app_mutex, portMAX_DELAY);
     s_refresh_pending = false;
 
-    if (s_app_task != NULL || s_sheet_screen != NULL) {
-        /* Not a good moment: an app owns the screen, or the info sheet is up.
+    /* s_shell_view is the post-#7 condition #8 could not have known about: it
+     * was written when the launcher list WAS home, so rebuilding and loading
+     * it was always the right answer. Home is the watch face now, and
+     * build_launcher_ui() ends in lv_screen_load() -- so without this a serial
+     * PUSH would yank the screen off the face and onto the app list while
+     * someone was looking at the time. Defer instead; show_apps_screen()
+     * rebuilds from the registry every time it runs, so nothing is lost. */
+    if (s_app_task != NULL || s_sheet_screen != NULL ||
+        s_shell_view != SHELL_VIEW_APPS) {
+        /* Not a good moment: an app owns the screen, the info sheet is up, or
+         * the user is looking at the face.
          * Remember that the list on screen no longer matches the card, and
          * rebuild when the launcher next becomes visible. Without this flag the
          * update was simply LOST: returning home lands on the face, which never
