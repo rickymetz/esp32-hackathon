@@ -127,7 +127,14 @@ local function page_wifi()
         on_click = function()
             scanning = true
             render(nil)
-            wifi.scan_start()
+            -- scan_start refuses while a connect is in flight, which is the
+            -- state during the boot auto-connect. Discarding that left the
+            -- page on "scanning..." forever with no way to tell why.
+            local ok, err = wifi.scan_start()
+            if not ok then
+                scanning = false
+                status:set_text("cannot scan - " .. tostring(err))
+            end
         end,
     })
 
@@ -151,7 +158,13 @@ local function page_wifi()
     })
 
     render(nil)
-    wifi.scan_start()
+    do
+        local ok, err = wifi.scan_start()
+        if not ok then
+            scanning = false
+            status:set_text("cannot scan - " .. tostring(err))
+        end
+    end
 
     -- One timer for both jobs. Polls faster than either thing it watches and
     -- repaints only on change: a poll matched to the source's own rate misses

@@ -62,7 +62,14 @@ local function chrome_fit(text, avail_w, nominal)
     local scale = lvgl.font_scale() or 1.0
     local pick = FONT_SIZES[1]
     for _, size in ipairs(FONT_SIZES) do
-        if size <= nominal and (size * scale) * 0.64 * n <= avail_w then
+        -- BOTH predicates. chrome_fit is chrome_font PLUS a width test, not
+        -- instead of it: dropping the growth cap let a SHORT title sail past
+        -- the width check and render at the full nominal, so at scale 1.3
+        -- ui.header{title="Wi-Fi"} picked 40 (~52px) where chrome_font picked
+        -- 26 (~34px) -- reintroducing the exact overflow chrome_font exists to
+        -- prevent, for every short chrome title.
+        if size <= nominal and (size * scale) <= nominal
+           and (size * scale) * 0.64 * n <= avail_w then
             pick = size
         end
     end

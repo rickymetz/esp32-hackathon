@@ -114,6 +114,42 @@ static bool looks_like_base64(const char *line)
     return n >= BODY_LINE_MIN;
 }
 
+/* read_line() with a deadline. ONLY the drain uses it: the command loop must
+ * block forever waiting for the next command, but the drain is recovering from
+ * a stream that has already proven malformed, and SILENCE is one of the shapes
+ * that takes -- `PUSH` typed with no body, or a header whose sscanf failed.
+ *
+ * The drain's own loop counter does not cover that: it counts lines RECEIVED,
+ * so with nothing arriving it never advances and read_line's EOF path spins
+ * forever. One malformed header then pinned serial_push_task permanently --
+ * no RUN, STOP, SHOT, BOOT or PING answered again until a reboot. */
+static bool read_line_until(char *out, size_t cap, int timeout_ms)
+{
+    size_t n = 0;
+    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+
+    while (n + 1 < cap) {
+        int c = fgetc(stdin);
+        if (c == EOF) {
+            if (esp_timer_get_time() >= deadline) {
+                return false;
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        if (c == '\r') {
+            continue;
+        }
+        if (c == '\n') {
+            out[n] = '\0';
+            return true;
+        }
+        out[n++] = (char)c;
+    }
+    out[cap - 1] = '\0';
+    return false;
+}
+
 static bool read_line(char *out, size_t cap)
 {
     size_t n = 0;
@@ -162,14 +198,23 @@ static bool read_line(char *out, size_t cap)
  * corner case. A 4-character final chunk could even literally be "PING" and
  * draw a spurious PONG.
  *
- * Bounded so a malformed stream cannot pin the task here forever: PAYLOAD_MAX
- * base64 lines is already far more than any legal push. */
+ * Bounded TWO ways, because the line counter alone is not a bound: it counts
+ * lines RECEIVED, so a stream that simply stops never advances it and the task
+ * hung forever on one malformed header. The silence deadline is what actually
+ * caps this; it is generous next to push.py, which writes the whole body
+ * without pausing. */
+#define DRAIN_SILENCE_MS 2000
+
 static void drain_push_payload(void)
 {
     char line[LINE_MAX];
     for (unsigned i = 0; i < (PAYLOAD_MAX / 3) + 16; i++) {
-        if (!read_line(line, sizeof(line))) {
-            continue;   /* oversized line; read_line already resynced */
+        if (!read_line_until(line, sizeof(line), DRAIN_SILENCE_MS)) {
+            /* Silence, or an oversized line. Either way stop draining and go
+             * back to answering commands -- staying here is what wedged it. */
+            ESP_LOGW(TAG, "drain: giving up after %d ms of silence",
+                     DRAIN_SILENCE_MS);
+            return;
         }
         if (strcmp(line, "ENDPUSH") == 0) {
             return;

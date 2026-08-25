@@ -1300,9 +1300,18 @@ static void shell_toggle_view(void)
      * calls knows about it. Left behind it leaked, AND app_row_long_pressed()
      * bails on `s_sheet_screen != NULL`, so long-press-to-delete stayed dead
      * for the rest of the boot. Dispose of it before the face loads. */
-    if (s_sheet_screen != NULL) {
-        lv_obj_t *sheet = s_sheet_screen;
-        s_sheet_screen = NULL;
+    /* s_sheet_screen is guarded by s_app_mutex (see its declaration), and
+     * capture-and-NULL must happen under it or a Cancel tap on the LVGL task
+     * racing a BOOT press lets both sides take the same pointer and both
+     * delete it. That race is now reachable from a script, since serial BOOT
+     * runs this on the serial task. Lock order holds: no display lock is held
+     * here, and it is released before the delete. */
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    lv_obj_t *sheet = s_sheet_screen;
+    s_sheet_screen = NULL;
+    xSemaphoreGive(s_app_mutex);
+
+    if (sheet != NULL) {
         bsp_display_lock(0);
         lv_obj_delete(sheet);
         bsp_display_unlock();
@@ -1452,15 +1461,30 @@ bool launcher_refresh_ui(void)
  * already exiting. */
 void launcher_boot_press(void)
 {
-    bool was_dark = (s_screen != SCREEN_AWAKE);
+    /* ASLEEP only, NOT dimmed. Dimming happens after 30s of no touch, which is
+     * the normal resting state of a watch face or any app left alone for half
+     * a minute -- and touch stays enabled while dimmed, so the screen is both
+     * legible and live. Treating that as "dark" made BOOT a wake-only press in
+     * the common case, so escaping an app took two presses, against the
+     * contract's "returns you to the launcher -- almost always instantly".
+     * Confirmed on hardware before this fix: 35s idle, BOOT, app still up.
+     * Only a genuinely black screen may swallow the press. */
+    bool was_asleep = (s_screen == SCREEN_ASLEEP);
+
+    /* Stop request BEFORE the wake, because the wake takes the display lock
+     * (wait-forever) and the stop is a lock-free atomic flag. Ordered the
+     * other way, the escape hatch would queue behind whatever holds that lock
+     * -- which is exactly the bus dependency BOOT is documented not to have. */
+    if (!was_asleep) {
+        launcher_lua_request_stop(true);
+    }
+
     launcher_screen_wake();
 
-    if (was_dark) {
+    if (was_asleep) {
         ESP_LOGI(TAG, "BOOT -- waking the screen");
         return;
     }
-
-    launcher_lua_request_stop(true);
 
     xSemaphoreTake(s_app_mutex, portMAX_DELAY);
     bool app_running = (s_app_task != NULL);
@@ -1605,7 +1629,15 @@ static void button_poll_task(void *arg)
 
         /* Screen timeout. Reuses this task rather than adding a fourth one: it
          * already ticks at 20 ms and already owns BOOT, and this repo has
-         * already shipped an AB-BA deadlock by giving a new task the display. */
+         * already shipped an AB-BA deadlock by giving a new task the display.
+         *
+         * Read AFTER the buttons, deliberately. CLAUDE.md sells BOOT as a
+         * direct GPIO read with no bus dependency, and taking a wait-forever
+         * display lock at the TOP of this loop would put the escape hatch
+         * behind whatever holds that lock -- a card-backed font_load, a slow
+         * flush -- long enough for the two-sample debounce to miss a quick
+         * tap. Sampling the button first keeps the guarantee; a late
+         * brightness step is invisible. */
         bsp_display_lock(0);
         uint32_t idle = lv_display_get_inactive_time(NULL);
         bsp_display_unlock();
@@ -1662,11 +1694,18 @@ static void apply_persisted_font_scale(lv_display_t *disp)
      * hide rather than relying on a default. It lives on the display's system
      * layer, so it is unaffected by every screen swap below. */
 #if LV_USE_SYSMON && LV_USE_PERF_MONITOR
+    /* Not flag writes: show_performance() creates an object, a subject, an
+     * observer, an lv_timer and a display event callback. This function runs
+     * at boot AND on every app exit, concurrently with the LVGL task inside
+     * lv_timer_handler(), so it needs the display lock like the theme call
+     * immediately below it. */
+    bsp_display_lock(0);
     if (shell_nvs_get_i32("fps", 0) == 1) {
         lv_sysmon_show_performance(disp);
     } else {
         lv_sysmon_hide_performance(disp);
     }
+    bsp_display_unlock();
 #endif
 
     bsp_display_lock(0);

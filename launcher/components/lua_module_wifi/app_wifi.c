@@ -531,12 +531,18 @@ static int l_wifi_scan_start(lua_State *L)
         lua_pushboolean(L, 1);     /* already scanning: no-op, still success */
         return 1;
     }
+    /* Marked scanning BEFORE the start call, and rolled back on failure. The
+     * other order loses the race against WIFI_EVENT_SCAN_DONE: an event landing
+     * between the two lines has its results overwritten by this `1`, and the
+     * loss is permanent rather than transient -- scan_results() then returns
+     * nil forever, and a restart is a deliberate no-op while the state says 1. */
+    s_scan_state = 1;
     if (esp_wifi_scan_start(NULL, false) != ESP_OK) {
+        s_scan_state = 0;
         lua_pushnil(L);
         lua_pushliteral(L, "scan failed");
         return 2;
     }
-    s_scan_state = 1;
     lua_pushboolean(L, 1);
     return 1;
 }
