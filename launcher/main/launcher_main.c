@@ -1293,6 +1293,19 @@ static void apply_persisted_font_scale(lv_display_t *disp)
      * "never set", which app_audio_set_volume() ignores. */
     app_audio_set_volume((int)shell_nvs_get_i32("volume", -1));
 
+    /* The FPS overlay is compiled in but starts hidden, so a release boots
+     * clean; Settings turns it on and remembers the choice here. LVGL creates
+     * it during lv_init when LV_USE_PERF_MONITOR is set, hence the explicit
+     * hide rather than relying on a default. It lives on the display's system
+     * layer, so it is unaffected by every screen swap below. */
+#if LV_USE_SYSMON && LV_USE_PERF_MONITOR
+    if (shell_nvs_get_i32("fps", 0) == 1) {
+        lv_sysmon_show_performance(disp);
+    } else {
+        lv_sysmon_hide_performance(disp);
+    }
+#endif
+
     bsp_display_lock(0);
     lv_display_set_theme(disp,
         lv_theme_default_init(disp,

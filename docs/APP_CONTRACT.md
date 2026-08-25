@@ -832,8 +832,8 @@ A float is rounded to an integer, so `get` returns what `set` stored.
 Most apps do not need this — it is how **`apps/settings.lua`** stores things the
 shell must know about with no card present: `face` (the watch face style),
 `tz_min` (minutes east of UTC), `tz_city` and `tz_dst` (which zone was picked
-and whether summer time is on), `font_pct`, `volume`, and the Wi-Fi
-credentials. Writing those keys from your own app changes the device's
+and whether summer time is on), `font_pct`, `volume`, `fps` (the developer
+overlay, below), and the Wi-Fi credentials. Writing those keys from your own app changes the device's
 settings, so treat them as the Settings app's.
 
 The three timezone keys are one value in three parts, and the watch face reads
@@ -846,6 +846,25 @@ tz_min == ui.ZONES[tz_city][2] + (tz_dst and 60 or 0)
 So `tz_min` is the **effective** offset, already including summer time. Writing
 it on its own leaves `tz_city`/`tz_dst` describing a different zone than the
 face is showing — which is why this is Settings' job, not an app's.
+
+### The FPS overlay
+
+`lvgl.perf_overlay(true)` shows LVGL's frame-rate and CPU readout,
+`lvgl.perf_overlay(false)` hides it, and calling it with no argument returns the
+current state. It is **off by default** and lives in **Settings → Display &
+sound**, which is where it belongs — like the other device-wide `prefs` keys,
+it is the Settings app's control and not something an app should be reaching
+for.
+
+Two things about it that are easy to get wrong:
+
+- **It draws on the display's *system layer*, not on your screen.** So it
+  survives every screen swap on its own, including your app exiting — and
+  `SHOT` can never capture it, because `lv_snapshot_take()` walks the active
+  screen and the system layer is that screen's *sibling*. It is visible on the
+  physical panel only.
+- Because it survives your app, turning it on and leaving it on is exactly the
+  intended use: you enable it in Settings, leave, and watch something else.
 
 ### More on widgets
 

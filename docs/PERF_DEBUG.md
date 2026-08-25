@@ -55,12 +55,15 @@ parse its three fields positionally, and widening it would have broken both.
 `CONFIG_LV_USE_SYSMON` + `CONFIG_LV_USE_PERF_MONITOR` paint LVGL's own
 frame-rate and CPU figure into the corner of the live screen.
 
-**`PERF_MONITOR` is off by default.** It paints onto the live panel, and
-`release.yml` builds release firmware from `sdkconfig.defaults`, so leaving it
-on shipped a debug overlay over the watch face on every board flashed from a
-release. Turn it on for a perf session — `idf.py menuconfig`, Components →
-LVGL → Others → sysmon, or add `CONFIG_LV_USE_PERF_MONITOR=y` to `sdkconfig` —
-and leave it out of anything you tag.
+**It is a setting, not a rebuild: Settings → Display & sound → FPS overlay.**
+Off by default, remembered in NVS as `fps`, and applied at boot.
+
+It used to be compile-time-on, and `release.yml` builds release firmware from
+`sdkconfig.defaults` — so every board flashed from a release showed a debug
+overlay painted over the watch face. It is now compiled in but hidden at boot
+and toggled at runtime through `lv_sysmon_show_performance()` /
+`lv_sysmon_hide_performance()`, so you can turn it on for the board in front of
+you without reflashing, and a release still boots clean.
 
 **`SHOT` does not capture it, and cannot.** `handle_shot()` calls
 `lv_snapshot_take(lv_screen_active())`, but sysmon builds its label on the

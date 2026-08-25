@@ -175,11 +175,13 @@ CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
 # 2 has the detail. It was visible on the physical panel only, which is the
 # one place it hurt.
 #
-# Turn it on for a perf session with `idf.py menuconfig` (Components -> LVGL
-# -> Others -> sysmon) or by adding the line below to sdkconfig; STATS
-# already reports per-task CPU and heap without touching the display.
-# CONFIG_LV_USE_PERF_MONITOR=y
+# Compiled IN but hidden at boot. lv_sysmon_show_performance() /
+# lv_sysmon_hide_performance() toggle it at runtime, so this is a Settings
+# switch ("FPS overlay", off by default, remembered in NVS as `fps`) rather
+# than a rebuild -- you get it on the board in front of you without reflashing,
+# and a release boots clean.
 CONFIG_LV_USE_SYSMON=y
+CONFIG_LV_USE_PERF_MONITOR=y
 # Deliberately NOT enabling CONFIG_LV_USE_MEM_MONITOR: it reports
 # lv_mem_monitor(), whose core is a no-op under CONFIG_LV_USE_CLIB_MALLOC
 # (set above), so it would paint a permanent 0/0 on screen. STATS reports

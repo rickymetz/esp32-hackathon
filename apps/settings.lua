@@ -196,6 +196,23 @@ local function page_display()
             prefs.set("volume", v)
             audio.beep()      -- hear what you just set
         end)
+
+    -- The developer FPS/CPU readout. Off by default and remembered, so a
+    -- release boots clean and turning it on does not need a reflash. It draws
+    -- on the display's system layer, so it appears immediately and stays put
+    -- across every screen -- including after this app exits, which is the
+    -- point: you turn it on here to watch something else.
+    local row_fps
+    row_fps = ui.row(list, {
+        text = "FPS overlay", kind = "toggle",
+        checked = prefs.get("fps", 0) == 1,
+        on_change = function()
+            local on = row_fps.get()
+            on = on and on ~= 0
+            lvgl.perf_overlay(on)
+            prefs.set("fps", on and 1 or 0)
+        end,
+    })
 end
 
 -- --------------------------------------------------------------------- about
