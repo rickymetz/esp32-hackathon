@@ -1421,6 +1421,44 @@ bool launcher_refresh_ui(void)
     return true;
 }
 
+/* One BOOT press. Factored out so the serial BOOT command drives exactly the
+ * same path as the physical button -- the alternative is a second copy of this
+ * logic that drifts from the real one, which would make the harness prove
+ * something the button does not do.
+ *
+ * Callable from any task that holds NEITHER lock. The s_app_mutex take below
+ * is released BEFORE shell_toggle_view(), which is what keeps this off the
+ * s_app_mutex -> display order that the lock-order note warns about.
+ *
+ * Two presses racing (a finger and a serial command at once) can interleave
+ * into one stop plus one toggle. That is the same outcome as pressing twice,
+ * and no worse than the existing race between a press and an app that is
+ * already exiting. */
+void launcher_boot_press(void)
+{
+    bool was_dark = (s_screen != SCREEN_AWAKE);
+    launcher_screen_wake();
+
+    if (was_dark) {
+        ESP_LOGI(TAG, "BOOT -- waking the screen");
+        return;
+    }
+
+    launcher_lua_request_stop(true);
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    bool app_running = (s_app_task != NULL);
+    xSemaphoreGive(s_app_mutex);
+
+    if (app_running) {
+        ESP_LOGI(TAG, "BOOT -- stopping app, returning home");
+    } else {
+        ESP_LOGI(TAG, "BOOT -- %s",
+                 s_shell_view == SHELL_VIEW_FACE ? "face -> apps" : "apps -> face");
+        shell_toggle_view();
+    }
+}
+
 /* BOOT (GPIO0, top right) is Home: the universal way back to the launcher.
  * It is deliberately hardware: no app can consume it or paint over it, so a
  * misbehaving app can always be escaped. PWR (EXIO4, bottom right) belongs
@@ -1536,26 +1574,7 @@ static void button_poll_task(void *arg)
          * press is always navigation -- worst case you press BOOT twice, and
          * the escape hatch cannot be lost. */
         if (debounce_step(&boot_db, gpio_get_level(GPIO_NUM_0) == 0, &level) && level) {
-            bool was_dark = (s_screen != SCREEN_AWAKE);
-            launcher_screen_wake();
-
-            if (was_dark) {
-                ESP_LOGI(TAG, "BOOT pressed -- waking the screen");
-            } else {
-                launcher_lua_request_stop(true);
-
-                xSemaphoreTake(s_app_mutex, portMAX_DELAY);
-                bool app_running = (s_app_task != NULL);
-                xSemaphoreGive(s_app_mutex);
-
-                if (app_running) {
-                    ESP_LOGI(TAG, "BOOT pressed -- stopping app, returning home");
-                } else {
-                    ESP_LOGI(TAG, "BOOT pressed -- %s",
-                             s_shell_view == SHELL_VIEW_FACE ? "face -> apps" : "apps -> face");
-                    shell_toggle_view();
-                }
-            }
+            launcher_boot_press();
         }
 
         /* PWR: active high, behind the expander. */

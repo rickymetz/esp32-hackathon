@@ -72,6 +72,22 @@ bool launcher_refresh_ui(void);
 void launcher_input_inject(int x0, int y0, int x1, int y1, int duration_ms);
 
 /**
+ * @brief One BOOT press, exactly as the physical button delivers it.
+ *
+ * BOOT is the only navigation control and the only escape hatch, and until now
+ * it was the one input the harness could not produce -- RUN/STOP go through
+ * launcher_stop_app(), not through this. That left the three-way toggle, the
+ * app list, and the wake-from-dark path unverifiable without a finger.
+ *
+ * This does NOT weaken the guarantee that BOOT belongs to the hardware: the
+ * serial link is a development channel, the same one that already injects
+ * touch (TAP/SWIPE) and PWR edges. No app can reach it.
+ *
+ * Call from a task holding neither the display lock nor s_app_mutex.
+ */
+void launcher_boot_press(void);
+
+/**
  * @brief Wake the panel and restart the inactivity ladder from the top.
  *
  * Safe from any task. Sets brightness to 100%, re-enables the touch indev,

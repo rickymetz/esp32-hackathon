@@ -1259,7 +1259,11 @@ LIST                 ->  APP <name> per line, then LIST_OK <n>
 DELETE myapp.lua     ->  DELETE_OK          (or DELETE_ERR not_found|delete_failed)
 SHOT                 ->  screenshot of the live screen (see tools/screenshot.py)
 TAP <x> <y>          ->  synthetic tap, same event pipeline as a finger
-SWIPE x0 y0 x1 y1 [ms] -> synthetic swipe/drag
+SWIPE x0 y0 x1 y1 [ms] -> synthetic swipe/drag (a long press is a
+                         zero-distance swipe with a long duration)
+BOOT                 ->  BOOT_OK -- one BOOT press, through the same handler
+                         the physical button calls: app -> home, home -> app
+                         list, list -> home
 MEM                  ->  MEM <psram_free> <internal_free> <largest_internal>
 PING                 ->  PONG launcher <proto> lvgl <x.y.z>  (confirm the port
                          really is the launcher before driving it)

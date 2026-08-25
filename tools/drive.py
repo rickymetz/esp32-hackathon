@@ -6,6 +6,7 @@ Usage: drive.py CMD [args] [: CMD [args]]...
   push <path>              install a .lua file or folder app over USB
   run <app.lua>            launch an app (STOPs anything running first)
   stop                     stop the running app
+  boot                     press BOOT: app -> home, home -> app list, list -> home
   pwr [down|up|long]       inject the PWR button (a quick click by default)
   tap <x> <y>              synthetic tap
   swipe <x0> <y0> <x1> <y1> [ms]   synthetic swipe/drag
@@ -145,6 +146,11 @@ for c in chains(args):
         # timeout is not -- the device did not answer at all.
         if got == "timeout":
             fail("stop: timeout")
+    elif op == "boot":
+        got = cmd_and_wait(s, "BOOT", "BOOT_OK", None)
+        print("boot:", got)
+        if not got.startswith("BOOT_OK"):
+            fail(f"boot: {got}")
     elif op == "pwr":
         got = cmd_and_wait(s, "PWR", "PWR_OK", None)
         print("pwr:", got)

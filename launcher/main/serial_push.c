@@ -548,6 +548,16 @@ static void handle_pwr(void)
     printf("PWR_OK\n");
 }
 
+/* BOOT -- inject a synthetic BOOT press through the same handler the poller
+ * calls, so the shell's only navigation control is drivable from the harness.
+ * The physical button obviously is not, and that gap is why the three-way
+ * toggle went unverified for so long. */
+static void handle_boot(void)
+{
+    launcher_boot_press();
+    printf("BOOT_OK\n");
+}
+
 /* TAP <x> <y> / SWIPE <x0> <y0> <x1> <y1> [ms] -- synthetic touch through
  * launcher_input_inject(). With SHOT this closes the agent's loop: look,
  * tap, look again, no human at the panel. */
@@ -636,6 +646,8 @@ static void serial_push_task(void *arg)
             handle_swipe(line);
         } else if (strcmp(line, "PWR") == 0) {
             handle_pwr();
+        } else if (strcmp(line, "BOOT") == 0) {
+            handle_boot();
         } else if (strcmp(line, "MEM") == 0) {
             handle_mem();
         } else if (strncmp(line, "BRIGHT ", 7) == 0) {
