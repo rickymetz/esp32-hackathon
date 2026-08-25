@@ -70,10 +70,22 @@ local function page_wifi()
     local status = ui.note(scr, "", { align = "bottom_mid", y = -100, size = 26 })
     local list = ui.list(scr, { y = 96, h = 206, pad_row = 12 })
 
+    -- Only touch the label when the text actually changes. The poll runs at
+    -- 4Hz and most ticks say the same thing, so this is mostly to stop a
+    -- steady stream of identical set_text calls on a label that other code
+    -- (render) may be rebuilding around.
+    local status_text
+    local function set_status(t)
+        if t ~= status_text then
+            status_text = t
+            status:set_text(t)
+        end
+    end
+
     local function connect_to(ssid, pass)
         prefs.set("wifi_ssid", ssid)
         prefs.set("wifi_pass", pass or "")
-        status:set_text("connecting...")
+        set_status("connecting...")
         wifi.connect(ssid, pass or "")
     end
 
@@ -133,7 +145,7 @@ local function page_wifi()
             local ok, err = wifi.scan_start()
             if not ok then
                 scanning = false
-                status:set_text("cannot scan - " .. tostring(err))
+                set_status("cannot scan - " .. tostring(err))
             end
         end,
     })
@@ -162,7 +174,7 @@ local function page_wifi()
         local ok, err = wifi.scan_start()
         if not ok then
             scanning = false
-            status:set_text("cannot scan - " .. tostring(err))
+            set_status("cannot scan - " .. tostring(err))
         end
     end
 
@@ -179,14 +191,19 @@ local function page_wifi()
         end
         local st = wifi.status()
         if st == "connected" then
-            status:set_text(wifi.time_synced() and "connected  clock synced"
+            set_status(wifi.time_synced() and "connected  clock synced"
                                                 or ("connected  " .. (wifi.ip() or "")))
         elseif st == "failed" then
-            status:set_text("failed - " .. (wifi.error() or "check the password"))
+            set_status("failed - " .. (wifi.error() or "check the password"))
         elseif st == "retrying" then
-            status:set_text("retrying - " .. (wifi.error() or "network not found"))
+            set_status("retrying - " .. (wifi.error() or "network not found"))
         elseif st == "connecting" then
-            status:set_text("connecting...")
+            set_status("connecting...")
+        elseif st == "off" then
+            -- Without this the label keeps whatever it last said, so tapping
+            -- Forget left "connected  clock synced" on screen -- the exact
+            -- state the user had just asked to end.
+            set_status("not connected")
         end
     end)
 end

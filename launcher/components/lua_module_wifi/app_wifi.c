@@ -53,6 +53,19 @@ static char s_ip[16];
 static int  s_retries;
 static bool s_stack_up;
 
+/* True only when the user (or the boot auto-connect) actually asked to join a
+ * network. The radio has to be RUNNING to scan, and starting it raises
+ * WIFI_EVENT_STA_START, whose handler used to call esp_wifi_connect()
+ * unconditionally -- so a scan connected as a side effect. That was harmless
+ * while connect_with() was the only thing that ever started the radio; it
+ * stopped being harmless when scanning began starting it too.
+ *
+ * The sharp edge it created: esp_wifi_forget() clears OUR copies of the
+ * credentials, but the driver keeps its own NVS-backed STA config, so the
+ * first scan after "forget" silently rejoined the network just forgotten.
+ * Scanning is an observation. Only a connect connects. */
+static bool s_want_connect;
+
 #define SCAN_MAX  20
 
 typedef struct {
@@ -145,6 +158,11 @@ static bool creds_load_legacy(char *ssid, char *pass)
 
 static void creds_forget(void)
 {
+    /* Drop the intent too, not just the stored credentials: the driver keeps
+     * its OWN NVS-backed STA config, which we do not erase, so leaving the
+     * flag set would let the next scan rejoin the forgotten network. */
+    s_want_connect = false;
+
     nvs_handle_t h;
     if (nvs_open(WIFI_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
         /* ESP_ERR_NVS_NOT_FOUND here just means it was never saved. */
@@ -276,7 +294,11 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
     (void)arg; (void)data;
 
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        /* Gated: STA_START also fires when the radio is started merely to
+         * scan. See s_want_connect. */
+        if (s_want_connect) {
+            esp_wifi_connect();
+        }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)data;
         s_ip[0] = '\0';
@@ -292,6 +314,11 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         if (auth) {
             ESP_LOGW(TAG, "auth failed (reason %d) -- not retrying", d->reason);
             wifi_set_state(WIFI_FAILED, "wrong password");
+        } else if (!s_want_connect) {
+            /* Not our connection to keep alive -- a scan interrupted an idle
+             * radio, or the user just disconnected. Retrying here is what
+             * would resurrect a forgotten network. */
+            wifi_set_state(WIFI_OFF, NULL);
         } else if (s_retries < MAX_RETRIES) {
             s_retries++;
             wifi_set_state(WIFI_CONNECTING, NULL);
@@ -413,6 +440,7 @@ static bool connect_with(const char *ssid, const char *pass)
     }
     s_retries = 0;
     s_backoff_idx = 0;                  /* a manual connect restarts the ladder */
+    s_want_connect = true;              /* this is the intent STA_START checks */
     wifi_set_state(WIFI_CONNECTING, NULL);
     if (esp_wifi_start() != ESP_OK) {   /* STA_START triggers connect */
         wifi_set_state(WIFI_FAILED, "wifi start failed");
@@ -481,6 +509,7 @@ static int l_wifi_ip(lua_State *L)
 
 static int l_wifi_disconnect(lua_State *L)
 {
+    s_want_connect = false;        /* a later scan must not rejoin */
     if (s_stack_up) {
         s_retries = MAX_RETRIES;   /* stop the auto-retry chain */
         esp_wifi_disconnect();
