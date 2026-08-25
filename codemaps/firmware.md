@@ -118,7 +118,7 @@ Also installs the interrupt hook BOOT/STOP uses to unwind a runaway app.
 | `lua_module_ui` | `ui`, `keyboard` | 1133 | `ui.lua` + `keyboard.lua`, embedded as blobs |
 | `lua_module_voice` | `voice` | 441 | MultiNet 7, one persistent instance |
 | `lua_module_sensors` | `rtc`, `imu`, `battery` | 371 | three modules, one component |
-| `lua_module_wifi` | `wifi` | 319 | station only, non-blocking, NTP → RTC |
+| `lua_module_wifi` | `wifi` | 523 | station only, non-blocking, NTP → RTC, polled scan, reason-aware retry |
 | `lua_module_audio` | `audio` | 306 | ES8311; shares I2S with voice |
 | `lua_module_button` | `button` | 282 | PWR only; BOOT is not interceptable |
 | `lua_module_store` | `store` | 226 | per-app JSON at `<sd>/state/<id>.json` |
