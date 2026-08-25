@@ -122,6 +122,21 @@ static void lua_lvgl_enqueue_sub_locked(lua_lvgl_event_sub_t *sub)
         s_lvgl.event_queue_head = sub;
     }
     s_lvgl.event_queue_tail = sub;
+
+    /* Wake the script task's drain loop. Runs on the LVGL task, which is the
+     * whole point: without it the script task only discovers the event on its
+     * next poll, up to 20 ms later.
+     *
+     * There is no lost wakeup, because a binary semaphore LATCHES -- a give
+     * that lands before the corresponding take leaves it signalled and the
+     * take returns immediately. Note that property does not depend on holding
+     * the lock here; giving after lua_lvgl_unlock() would be equally safe. We
+     * give here only because this is where the sub becomes visible. The one
+     * real cost is that the woken task's next act is to contend for the mutex
+     * we still hold, costing one extra context switch per event. */
+    if (s_lvgl.event_signal) {
+        xSemaphoreGive(s_lvgl.event_signal);
+    }
 }
 
 static lua_lvgl_event_sub_t *lua_lvgl_dequeue_sub_locked(void)
@@ -479,9 +494,55 @@ static int lua_lvgl_drain_events_for(lua_State *L, int timeout_ms)
              * otherwise any render work drops the simulator below 50 fps. */
             vTaskDelay(pdMS_TO_TICKS(10));
 #else
-            /* Sleep briefly and re-check both stop and deadline. 20ms is
-             * about one LVGL tick and keeps stop responsiveness ~50Hz. */
-            vTaskDelay(pdMS_TO_TICKS(20));
+            /* Wait for the LVGL task to signal an event, or for this nap to
+             * expire -- whichever comes first.
+             *
+             * This used to be a flat vTaskDelay(20), which made 20 ms the
+             * floor on how long a tap could sit in the queue before its Lua
+             * callback ran, however idle the board was. Blocking on the
+             * semaphore instead means an event wakes this loop as soon as it
+             * is enqueued. Measured on hardware, enqueue -> dispatch over 118
+             * taps:
+             *
+             *     poll    median 24.69 ms   mean 23.37   p90 26.61
+             *     signal  median  0.76 ms   mean  1.27   p90  1.38
+             *
+             * Measure this interval directly if you touch it -- a serial
+             * round-trip benchmark cannot see it. The 24 ms here is buried in
+             * a ~48 ms TAP-to-print round trip whose other terms (serial, and
+             * where the tap lands relative to the indev read) swing by tens of
+             * ms, and a fixed inter-tap cadence phase-locks against the LVGL
+             * task period and will happily report a 3x difference between two
+             * builds of identical firmware. Stamp esp_timer_get_time() at
+             * enqueue and subtract it here.
+             *
+             * The 20 ms cap stays, and is now purely a stop-responsiveness
+             * bound: cap_lua_runtime_stop_requested() is an atomic flag set by
+             * another task with nothing to signal us, so BOOT/STOP is still
+             * noticed within one nap. Do not raise it to the full remaining
+             * budget -- that would make BOOT take up to EVENT_PUMP_MS to
+             * register on an idle app.
+             *
+             * Clamped to the caller's deadline as well: the launcher's pump
+             * asks for exactly the time until the next timer is due
+             * (launcher_main.c, wait_ms), and sleeping past that is wrong on
+             * its own terms. Note this clamp did NOT change periodic-timer
+             * drift -- it was tried as a fix for that and moved the number by
+             * 0.0 ms. That drift was structural, in how app_timer.c re-armed,
+             * and is fixed there. */
+            int64_t remain_us = deadline_us - esp_timer_get_time();
+            int nap_ms = 20;
+            if (remain_us < (int64_t)nap_ms * 1000) {
+                nap_ms = (int)(remain_us / 1000);
+            }
+            /* Always yield at least one tick: a sub-millisecond remainder
+             * would otherwise spin against the deadline check above. */
+            TickType_t nap = nap_ms > 0 ? pdMS_TO_TICKS(nap_ms) : 1;
+            if (s_lvgl.event_signal) {
+                xSemaphoreTake(s_lvgl.event_signal, nap);
+            } else {
+                vTaskDelay(nap);
+            }
 #endif
             continue;
         }

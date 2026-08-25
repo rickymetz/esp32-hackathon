@@ -60,9 +60,9 @@ TaskHandle_t xTaskGetCurrentTaskHandle(void)
     return (TaskHandle_t)&the_task;
 }
 
-/* --- FreeRTOS mutex (single-threaded: ownership is a plain counter) ------ */
+/* --- FreeRTOS semaphores (single-threaded; see shim/freertos/semphr.h) --- */
 
-struct sim_semaphore { int count; };
+struct sim_semaphore { int count; int binary; };
 
 SemaphoreHandle_t xSemaphoreCreateMutex(void)
 {
@@ -70,18 +70,44 @@ SemaphoreHandle_t xSemaphoreCreateMutex(void)
     return (SemaphoreHandle_t)s;
 }
 
+SemaphoreHandle_t xSemaphoreCreateBinary(void)
+{
+    struct sim_semaphore *s = calloc(1, sizeof(*s));
+    if (s) s->binary = 1;
+    return (SemaphoreHandle_t)s;
+}
+
 void vSemaphoreDelete(SemaphoreHandle_t sem) { free(sem); }
 
 BaseType_t xSemaphoreTake(SemaphoreHandle_t sem, TickType_t ticks)
 {
-    (void)ticks;
-    if (sem) sem->count++;
+    if (!sem) return pdTRUE;
+
+    if (sem->binary) {
+        /* Already signalled: consume it and return at once, same as FreeRTOS. */
+        if (sem->count > 0) {
+            sem->count = 0;
+            return pdTRUE;
+        }
+        /* Nothing signalled, and on a single thread nobody can signal while
+         * we wait -- so this is a timeout by construction. Sleep it out so
+         * the caller's pacing matches the device's. */
+        vTaskDelay(ticks);
+        return pdFALSE;
+    }
+
+    sem->count++;   /* mutex: ownership counter, never blocks */
     return pdTRUE;
 }
 
 BaseType_t xSemaphoreGive(SemaphoreHandle_t sem)
 {
-    if (sem && sem->count > 0) sem->count--;
+    if (!sem) return pdTRUE;
+    if (sem->binary) {
+        sem->count = 1;   /* binary: signalled, and gives do not stack */
+        return pdTRUE;
+    }
+    if (sem->count > 0) sem->count--;
     return pdTRUE;
 }
 

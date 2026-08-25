@@ -143,4 +143,4 @@ def push_one(local_path, remote):
 for local_path, remote in jobs:
     push_one(local_path, remote)
 s.close()
-print("done — tap Refresh on the device")
+print("done — the launcher list refreshes itself (deferred until it is on screen)")

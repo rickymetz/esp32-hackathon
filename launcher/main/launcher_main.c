@@ -216,8 +216,32 @@ static esp_io_expander_handle_t s_expander;
 /* Guards s_app_task's check-then-act (launch/stop) across the three tasks
  * that touch it: the LVGL/UI task (app_row_clicked), the serial task
  * (launcher_run_app_by_name / launcher_stop_app), and lua_app_task itself
- * clearing it on exit. Created in app_main() before anything can launch. */
+ * clearing it on exit. Created in app_main() before anything can launch.
+ *
+ * It also guards s_sheet_screen and s_launcher_screen -- see below.
+ *
+ * ==== LOCK ORDER: the display lock is ALWAYS outermost. ====
+ *
+ * esp_lvgl_port holds the display lock across the whole of lv_timer_handler(),
+ * so every LVGL event callback already runs inside it and then takes this
+ * mutex: display -> s_app_mutex. Any other task that needs both MUST use the
+ * same order, or take neither and post the work to the LVGL task with
+ * lv_async_call (see launcher_refresh_ui).
+ *
+ * Taking s_app_mutex first and then blocking on the display lock is an AB-BA
+ * deadlock with any concurrent tap, and neither task is late enough for the
+ * watchdog to notice -- they both block cleanly, so the board simply stops.
+ * That shipped once. Do not reintroduce it. */
 static SemaphoreHandle_t s_app_mutex;
+
+/* True when the app set on the card changed but the home screen could not be
+ * rebuilt at the time (an app was running, or the info sheet was open). The
+ * next moment the launcher becomes visible, it is rebuilt rather than merely
+ * re-loaded. Written only under s_app_mutex. */
+static bool s_home_stale;
+
+/* One rebuild request in flight at a time; see launcher_refresh_ui(). */
+static volatile bool s_refresh_pending;
 
 /* Single-app-at-a-time means a single static copy is enough: the launch
  * path fills this in (under s_app_mutex) from app_registry_find_by_id()
@@ -601,7 +625,26 @@ static void lua_app_task(void *arg)
         if (!pump_events(L, wait_ms)) {
             break;
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+        /* Only yield when pump_events did not already sleep.
+         *
+         * The yield is REQUIRED when wait_ms is 0: pump_events returns
+         * immediately in that case, so without this the loop spins and
+         * starves the idle task into a watchdog reset (file header, note 3).
+         *
+         * When wait_ms > 0, pump_events USUALLY blocked for it -- but not
+         * always, and the earlier version of this comment stated the guarantee
+         * as fact, which it is not. The drain loop only sleeps when the queue
+         * goes empty; while events keep arriving it dispatches back-to-back
+         * until the deadline and returns without ever blocking. What actually
+         * bounds that is task priority: the LVGL task (producer, prio 4) runs
+         * BELOW lua_app (consumer, prio 5), so it cannot outrun the drain and
+         * the queue must reach empty. The residual risk is an app whose own
+         * callbacks synchronously re-enqueue events on this task; that is a
+         * pathological app, and it is the one case where this loop can now go
+         * a whole 100 ms window without yielding. */
+        if (wait_ms <= 0) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
     }
 
 close:
@@ -638,12 +681,28 @@ close:
     }
 
 out:
+    /* Clear s_app_task BEFORE asking for any refresh: refresh_ui_async_cb
+     * bails (and re-flags stale) while an app is still registered as running,
+     * so requesting first would just re-defer the rebuild we are here to do. */
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    s_app_task = NULL;
+    bool stale = s_home_stale;
+    xSemaphoreGive(s_app_mutex);
+
     /* Home is the face: leaving an app lands you on the watch, the way a
      * watch behaves, not back in the app list you launched from. */
     show_face_screen();
-    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
-    s_app_task = NULL;
-    xSemaphoreGive(s_app_mutex);
+
+    /* A PUSH or DELETE that arrived while this app was running could not touch
+     * the screen at the time, and we have just landed on the FACE, not the app
+     * list -- so nothing has consulted the registry yet. Without this the
+     * change stayed invisible until someone tapped Refresh, which is the exact
+     * bug the refresh feature exists to remove. In the documented
+     * `drive.py push : run` loop every push after the first lands while an app
+     * is running, so this is the common path, not the corner case. */
+    if (stale) {
+        launcher_refresh_ui();
+    }
     vTaskDelete(NULL);
 }
 
@@ -756,6 +815,7 @@ static void refresh_clicked(lv_event_t *e)
     app_registry_invalidate();
     app_registry_scan();
     build_launcher_ui();   /* frees the screen it replaces */
+    s_home_stale = false;   /* an explicit Refresh satisfies any deferred one */
 
     xSemaphoreGive(s_app_mutex);
 }
@@ -778,6 +838,7 @@ static void view_toggle_clicked(lv_event_t *e)
                                                       : LAUNCHER_VIEW_LIST;
 
     build_launcher_ui();   /* frees the screen it replaces */
+    s_home_stale = false;   /* the rebuild picks up any deferred change too */
 
     xSemaphoreGive(s_app_mutex);
 }
@@ -821,14 +882,45 @@ static void build_launcher_ui(void);
 static lv_obj_t *s_sheet_screen;             /* the sheet, over the home screen */
 static char s_sheet_id[APP_ID_MAX];          /* which app the open sheet acts on */
 
-/* Cancel: drop the sheet, return to the (still-live) home screen. */
+/* Both sheet callbacks run on the LVGL task with the display lock already
+ * held, so they take s_app_mutex in the sanctioned order (display first) --
+ * and they MUST take it. They capture s_launcher_screen, publish a new one and
+ * delete the old; refresh_ui_async_cb does the same. Unsynchronised, the two
+ * could both capture the same `old`, both build, and both lv_obj_delete() it:
+ * a double free of an lv_obj_t and its whole subtree, plus row_data_delete_cb
+ * free()ing each row's strdup'd basename twice. Deleting a folder app from the
+ * sheet while a push was in flight could hit it. */
+
+/* Cancel: drop the sheet, return to the home screen -- rebuilding it first if
+ * a push/delete landed while the sheet was up. */
 static void sheet_cancel_cb(lv_event_t *e)
 {
     (void)e;
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+
+    lv_obj_t *sheet = s_sheet_screen;
+    s_sheet_screen = NULL;
+
+    if (s_home_stale) {
+        /* Same reasoning as the app-exit path: re-loading the old screen would
+         * silently discard a registry change made while the sheet was open. */
+        lv_obj_t *old = s_launcher_screen;
+        build_launcher_ui();
+        bsp_display_lock(0);
+        if (old && old != s_launcher_screen) lv_obj_delete(old);
+        bsp_display_unlock();
+        s_home_stale = false;
+    } else {
+        bsp_display_lock(0);
+        if (s_launcher_screen) lv_screen_load(s_launcher_screen);
+        bsp_display_unlock();
+    }
+
     bsp_display_lock(0);
-    if (s_launcher_screen) lv_screen_load(s_launcher_screen);
-    if (s_sheet_screen) { lv_obj_delete(s_sheet_screen); s_sheet_screen = NULL; }
+    if (sheet) lv_obj_delete(sheet);
     bsp_display_unlock();
+
+    xSemaphoreGive(s_app_mutex);
 }
 
 /* Delete: remove the app from the card, then rebuild the home list fresh. */
@@ -837,13 +929,18 @@ static void sheet_delete_cb(lv_event_t *e)
     (void)e;
     app_registry_delete_app(s_sheet_id);     /* unlink + rescan under the lock */
 
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+
     lv_obj_t *sheet = s_sheet_screen;
     s_sheet_screen = NULL;
-    build_launcher_ui();   /* creates + loads a new home screen, frees the old */
+    build_launcher_ui();   /* loads a new home screen and frees the old */
+    s_home_stale = false;  /* this rebuild IS the refresh */
 
     bsp_display_lock(0);
     if (sheet) lv_obj_delete(sheet);
     bsp_display_unlock();
+
+    xSemaphoreGive(s_app_mutex);
 }
 
 /* Long-press a home row/tile: open the app-info sheet for it. */
@@ -852,14 +949,29 @@ static void app_row_long_pressed(lv_event_t *e)
     const char *id = (const char *)lv_event_get_user_data(e);
     if (id == NULL) return;
 
+    /* Held across the WHOLE function, not just the running check. The first
+     * version released here, then did a registry lookup and an SD stat() --
+     * milliseconds -- before assigning s_sheet_screen. A refresh landing in
+     * that gap saw s_sheet_screen == NULL, rebuilt, and loaded the new home
+     * screen over the sheet being created. The sheet then survived off-screen
+     * with s_sheet_screen still set: its buttons unreachable, no new sheet
+     * openable, and every later refresh bailing forever while pushes kept
+     * reporting OK. A silent, permanent wedge until reboot.
+     *
+     * We already hold the display lock here (LVGL callback), so the SD I/O
+     * below blocks the UI either way; adding s_app_mutex costs nothing extra
+     * and the order is the sanctioned display -> s_app_mutex. */
     xSemaphoreTake(s_app_mutex, portMAX_DELAY);
-    bool running = (s_app_task != NULL);
-    xSemaphoreGive(s_app_mutex);
-    if (running) return;                      /* never manage apps while one runs */
-    if (s_sheet_screen != NULL) return;       /* a sheet is already open */
+    if (s_app_task != NULL || s_sheet_screen != NULL) {
+        xSemaphoreGive(s_app_mutex);
+        return;   /* an app is running, or a sheet is already open */
+    }
 
     app_entry_t match;
-    if (!app_registry_find_by_id(id, &match)) return;
+    if (!app_registry_find_by_id(id, &match)) {
+        xSemaphoreGive(s_app_mutex);
+        return;
+    }
 
     /* Detail line: the code file's size, and "Folder" for a folder app. */
     char detail[64] = "";
@@ -883,6 +995,8 @@ static void app_row_long_pressed(lv_event_t *e)
     launcher_home_app_sheet(s_sheet_screen, &view, detail, sheet_delete_cb, sheet_cancel_cb);
     lv_screen_load(s_sheet_screen);
     bsp_display_unlock();
+
+    xSemaphoreGive(s_app_mutex);
 }
 
 /* ---- The face surface ---------------------------------------------------
@@ -1181,6 +1295,90 @@ static void build_launcher_ui(void)
         lv_obj_delete(old);
     }
     bsp_display_unlock();
+}
+
+/* Rebuild the home screen for a caller that changed the app set without
+ * pressing Refresh -- today that is a serial PUSH or DELETE, which rescans the
+ * registry but had no way to say so to the UI, so a pushed app stayed invisible
+ * until someone tapped Refresh on the panel. See launcher_main.h.
+ *
+ * THE LOCK ORDER IS THE WHOLE DESIGN HERE. The first version of this ran the
+ * rebuild inline on the serial task, taking s_app_mutex and then the display
+ * lock -- the exact inverse of the order every LVGL event callback uses, since
+ * esp_lvgl_port holds the display lock across the whole of lv_timer_handler()
+ * and app_row_clicked/refresh_clicked/view_toggle_clicked/app_row_long_pressed
+ * all take s_app_mutex from inside it. A finger on a row during a PUSH
+ * deadlocked both tasks on portMAX_DELAY waits, with no watchdog to break it
+ * (both block cleanly, so the idle task keeps running) -- a dead board needing
+ * the physical PWR/BOOT recovery dance.
+ *
+ * So: never rebuild from the calling task. Post the work to the LVGL task with
+ * lv_async_call and let it run there, where the display lock is already held
+ * and taking s_app_mutex is the same order as every other callback. The one
+ * global rule is now "display lock is outermost, always"; see s_app_mutex's
+ * declaration.
+ *
+ * Deliberately NOT refresh_clicked(): that also invalidates and remounts the
+ * card, which a PUSH has no reason to do (it just wrote through the same
+ * mount) and which would unmount the filesystem out from under a second
+ * queued push. */
+static void refresh_ui_async_cb(void *arg)
+{
+    (void)arg;
+    /* Runs on the LVGL task from lv_timer_handler(), so the display lock is
+     * already held (recursively re-entered by build_launcher_ui below) and
+     * this take is display -> s_app_mutex, matching every event callback. */
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    s_refresh_pending = false;
+
+    if (s_app_task != NULL || s_sheet_screen != NULL) {
+        /* Not a good moment: an app owns the screen, or the info sheet is up.
+         * Remember that the list on screen no longer matches the card, and
+         * rebuild when the launcher next becomes visible. Without this flag the
+         * update was simply LOST: returning home lands on the face, which never
+         * consults the registry, so a push during a run stayed invisible even
+         * after the app exited. */
+        s_home_stale = true;
+        xSemaphoreGive(s_app_mutex);
+        return;
+    }
+
+    lv_obj_t *old = s_launcher_screen;
+    build_launcher_ui();
+    if (old != NULL && old != s_launcher_screen) {
+        bsp_display_lock(0);
+        lv_obj_delete(old);
+        bsp_display_unlock();
+    }
+    s_home_stale = false;
+    xSemaphoreGive(s_app_mutex);
+}
+
+bool launcher_refresh_ui(void)
+{
+    /* Coalesce a burst. tools/push.py sends one PUSH per FILE, so installing a
+     * folder app (main.lua + icon.bin + assets) used to run a full
+     * build-load-delete of the whole screen tree once per file. One pending
+     * request is enough -- the rebuild reads the registry when it runs, so it
+     * always reflects the final state. */
+    if (s_refresh_pending) {
+        return true;
+    }
+    s_refresh_pending = true;
+
+    /* lv_async_call touches LVGL's own list, so it needs the display lock --
+     * and taking ONLY the display lock here (never s_app_mutex) is what keeps
+     * the caller out of the inversion described above. */
+    bsp_display_lock(0);
+    lv_res_t res = lv_async_call(refresh_ui_async_cb, NULL);
+    bsp_display_unlock();
+
+    if (res != LV_RESULT_OK) {
+        s_refresh_pending = false;
+        ESP_LOGW(TAG, "lv_async_call failed -- home screen not refreshed");
+        return false;
+    }
+    return true;
 }
 
 /* BOOT (GPIO0, top right) is Home: the universal way back to the launcher.

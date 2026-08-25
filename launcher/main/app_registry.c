@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>   /* qsort(), used by scan_locked() below */
 #include <string.h>
 #include <strings.h>
 #include <dirent.h>
@@ -82,6 +83,30 @@ static void sweep_push_tmp(const char *dir)
     if (snprintf(tmp, sizeof(tmp), "%s/.push.tmp", dir) < (int)sizeof(tmp)) {
         remove(tmp);
     }
+}
+
+/* readdir() hands entries back in FAT directory order -- which is creation
+ * order, reshuffled by every delete-and-re-add. That made the launcher list
+ * arbitrary and, worse, unstable: pushing an app moved unrelated rows. Sort by
+ * display name so a row stays where the user last saw it.
+ *
+ * strcasecmp so "Breathe" and "breathe" sort together rather than all
+ * upper-case names sorting ahead of all lower-case ones.
+ *
+ * The id tie-break is what actually makes the order STABLE, which is the whole
+ * point. Comparing display names alone is not a total order: pretty_name()
+ * maps both '_' and '-' to a space and truncates at APP_NAME_MAX (48), so
+ * "my_app.lua" and "my-app.lua" -- or any two ids sharing a 47-character
+ * prefix -- compare equal. qsort is not stable, so those rows could still swap
+ * on every rescan, reintroducing exactly the "pushing an app moved unrelated
+ * rows" symptom this sort exists to remove. Ids are unique within a directory,
+ * so falling back to them is a total order. */
+static int app_cmp_by_name(const void *a, const void *b)
+{
+    const app_entry_t *x = (const app_entry_t *)a;
+    const app_entry_t *y = (const app_entry_t *)b;
+    int c = strcasecmp(x->name, y->name);
+    return c ? c : strcmp(x->id, y->id);
 }
 
 /* Body of app_registry_scan(), without the lock. Callers that already hold
@@ -168,6 +193,8 @@ static esp_err_t scan_locked(void)
     }
     closedir(dir);
 
+    qsort(s_apps, s_count, sizeof(s_apps[0]), app_cmp_by_name);
+
     ESP_LOGI(TAG, "%u app(s) found", (unsigned)s_count);
     return ESP_OK;
 }
@@ -220,6 +247,23 @@ bool app_registry_sd_mounted(void)
     bool mounted = s_mounted;
     registry_unlock();
     return mounted;
+}
+
+uint32_t app_registry_signature(void)
+{
+    registry_lock();
+    /* FNV-1a over the count and every id. Ids are unique per directory and the
+     * array is sorted, so equal hashes mean the same set in the same order. */
+    uint32_t hz = 2166136261u;
+    hz = (hz ^ (uint32_t)s_count) * 16777619u;
+    for (size_t i = 0; i < s_count; i++) {
+        for (const char *p = s_apps[i].id; *p; p++) {
+            hz = (hz ^ (uint32_t)(unsigned char)*p) * 16777619u;
+        }
+        hz = (hz ^ 0xffu) * 16777619u;   /* separator: "ab","c" != "a","bc" */
+    }
+    registry_unlock();
+    return hz;
 }
 
 void app_registry_invalidate(void)

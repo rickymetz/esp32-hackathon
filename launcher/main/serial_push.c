@@ -17,12 +17,22 @@
 
 static const char *TAG = "serial_push";
 
+/* Bumped when a command is added or a reply format changes, so a host
+ * tool can tell whether this firmware speaks what it needs. Reported by
+ * PING. */
+#define LAUNCHER_PROTOCOL_VERSION "1"
+
 /* NAME_MAX covers a full app id (APP_ID_MAX is 128): a shorter cap would let
  * the registry list and launch an app by tap that RUN/DELETE then reject as
  * "bad_name". LINE_MAX must hold the longest command line ("DELETE " + id). */
 #define LINE_MAX     256
 #define NAME_MAX     128
 #define PAYLOAD_MAX (64 * 1024)
+
+/* SHOT payload chunking -- see handle_shot(). A multiple of 3 encodes to
+ * exactly 4/3 the bytes with no padding; +4 covers the NUL and rounding. */
+#define SHOT_CHUNK   720
+#define SHOT_B64_MAX (((SHOT_CHUNK + 2) / 3) * 4 + 4)
 
 /* Stringify NAME_MAX for the sscanf field width, so the width can never drift
  * from the buffer size (name[NAME_MAX + 1]). */
@@ -78,6 +88,32 @@ static bool registry_has_id(const char *id)
     return app_registry_find_by_id(id, &app);
 }
 
+/* True for a line that is almost certainly an orphaned PUSH body line rather
+ * than a mistyped command: long, and made only of base64 characters.
+ *
+ * The length floor is load-bearing. Base64 is [A-Za-z0-9+/=], so a bare
+ * alphabetic typo like "FROB" is *also* valid base64 -- testing the charset
+ * alone would silently swallow exactly the typos the unknown-command reply
+ * exists to make loud. tools/push.py emits 76-character lines (57 bytes per
+ * line), so 32 sits far above any plausible hand-typed command and far below
+ * a real body line. A short trailing chunk from a desynced stream can still
+ * draw one reply; that is the acceptable side of the trade, and
+ * drain_push_payload() means it should not arise in the first place. */
+#define BODY_LINE_MIN 32
+
+static bool looks_like_base64(const char *line)
+{
+    size_t n = 0;
+    for (const char *p = line; *p; p++, n++) {
+        bool ok = (*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+                  (*p >= '0' && *p <= '9') || *p == '+' || *p == '/' || *p == '=';
+        if (!ok) {
+            return false;
+        }
+    }
+    return n >= BODY_LINE_MIN;
+}
+
 static bool read_line(char *out, size_t cap)
 {
     size_t n = 0;
@@ -115,26 +151,57 @@ static bool read_line(char *out, size_t cap)
     return false;
 }
 
+/* Swallow the body of a PUSH we are rejecting, up to and including ENDPUSH.
+ *
+ * Every early PUSH_ERR return used to leave the base64 body sitting in the
+ * stream. That was invisible while unrecognised lines were silently dropped --
+ * but the new unknown-command reply answers each one, so a rejected 64 KB push
+ * (1150 lines at push.py's 57 bytes/line) produced ~1150 "ERR unknown_command
+ * <base64>" replies, ~60 KB of console spew. push.py writes the whole body
+ * before reading any reply, so this is the normal shape of a rejection, not a
+ * corner case. A 4-character final chunk could even literally be "PING" and
+ * draw a spurious PONG.
+ *
+ * Bounded so a malformed stream cannot pin the task here forever: PAYLOAD_MAX
+ * base64 lines is already far more than any legal push. */
+static void drain_push_payload(void)
+{
+    char line[LINE_MAX];
+    for (unsigned i = 0; i < (PAYLOAD_MAX / 3) + 16; i++) {
+        if (!read_line(line, sizeof(line))) {
+            continue;   /* oversized line; read_line already resynced */
+        }
+        if (strcmp(line, "ENDPUSH") == 0) {
+            return;
+        }
+    }
+    ESP_LOGW(TAG, "drain: no ENDPUSH after a rejected push");
+}
+
 static void handle_push(const char *header)
 {
     char name[NAME_MAX + 1];
     unsigned expect_len = 0, expect_crc = 0;
 
     if (sscanf(header, "PUSH %" STR(NAME_MAX) "s %u %x", name, &expect_len, &expect_crc) != 3) {
+        drain_push_payload();
         printf("PUSH_ERR bad_header\n");
         return;
     }
     if (!push_path_is_safe(name)) {
+        drain_push_payload();
         printf("PUSH_ERR bad_name\n");
         return;
     }
     if (expect_len == 0 || expect_len > PAYLOAD_MAX) {
+        drain_push_payload();
         printf("PUSH_ERR bad_length\n");
         return;
     }
 
     uint8_t *buf = malloc(expect_len);
     if (buf == NULL) {
+        drain_push_payload();
         printf("PUSH_ERR no_memory\n");
         return;
     }
@@ -158,6 +225,13 @@ static void handle_push(const char *header)
 
     if (!ok || got != expect_len) {
         free(buf);
+        /* A decode failure `break`s out of the loop above with the rest of the
+         * body still queued -- same storm as the early returns. A short push
+         * that ended with ENDPUSH has nothing left and the drain returns on
+         * its first line. */
+        if (!ok) {
+            drain_push_payload();
+        }
         printf("PUSH_ERR truncated\n");
         return;
     }
@@ -174,12 +248,31 @@ static void handle_push(const char *header)
      * Refresh cannot pull the filesystem out from under this write. The
      * lock is held only for the write/rescan, never across the multi-second
      * base64 receive above. */
+    uint32_t sig_before = app_registry_signature();
     bool wrote = app_registry_write_app(name, buf, got);
     free(buf);
 
     if (!wrote) {
         printf("PUSH_ERR write_failed\n");
         return;
+    }
+
+    /* The registry now knows about the new app, but the home screen was built
+     * from the old list and would keep showing it until someone tapped Refresh
+     * on the panel -- a physical step in the middle of an otherwise hands-off
+     * push/run loop.
+     *
+     * Only when the app SET actually changed, though. push.py sends one PUSH
+     * per file, so a folder app (main.lua + icon.bin + assets) would otherwise
+     * do a full build-load-delete of the whole screen tree once per file, and
+     * re-pushing an existing app -- the common case in an edit/push/run loop --
+     * would rebuild for no visible change while resetting the user's scroll
+     * position. The signature covers ids, not contents; see its docs.
+     *
+     * The rebuild itself is asynchronous and deferred if the launcher is not on
+     * screen; see launcher_refresh_ui(). */
+    if (app_registry_signature() != sig_before) {
+        launcher_refresh_ui();
     }
 
     ESP_LOGI(TAG, "received %s (%u bytes)", name, (unsigned)got);
@@ -252,6 +345,8 @@ static void handle_delete(const char *header)
         return;
     }
 
+    launcher_refresh_ui();   /* same staleness as PUSH -- see handle_push() */
+
     ESP_LOGI(TAG, "DELETE %s", name);
     printf("DELETE_OK %s\n", name);
 }
@@ -282,10 +377,21 @@ static void handle_shot(void)
     size_t total = (size_t)h * stride;
     printf("SHOT %u %u %u\n", (unsigned)w, (unsigned)h, (unsigned)stride);
 
+    /* 720 rather than the original 90: a full 368x448 frame is 329,728 bytes,
+     * so this is 458 fputs/fputc pairs instead of 3,664. Worth ~6% (1.63 s ->
+     * 1.54 s round trip, measured) and no more -- see the note on the real
+     * bottleneck above serial_push_start(). Kept a multiple of 3 so every line
+     * but the last encodes without base64 padding, and well within the host's
+     * line reader, which has no length limit. */
+    /* static, not a stack local: at SHOT_CHUNK=720 this is ~1 KB, and putting
+     * it on serial_push's stack overflowed the task outright (verified --
+     * "***ERROR*** A stack overflow in task serial_push"). Safe as a static
+     * because handle_shot() is only ever called from serial_push_task, which
+     * is the single task servicing this protocol. */
     const unsigned char *d = buf->data;
-    unsigned char line[132];   /* 90 bytes -> 120 b64 chars + NUL + slack */
-    for (size_t off = 0; off < total; off += 90) {
-        size_t chunk = total - off < 90 ? total - off : 90;
+    static unsigned char line[SHOT_B64_MAX];
+    for (size_t off = 0; off < total; off += SHOT_CHUNK) {
+        size_t chunk = total - off < SHOT_CHUNK ? total - off : SHOT_CHUNK;
         size_t olen = 0;
         if (mbedtls_base64_encode(line, sizeof(line), &olen, d + off, chunk) != 0) {
             break;
@@ -512,11 +618,75 @@ static void serial_push_task(void *arg)
             handle_mem();
         } else if (strcmp(line, "STATS") == 0) {
             handle_stats();
+        } else if (strcmp(line, "PING") == 0) {
+            /* Identifies this port as the launcher. tools/ pick the first
+             * /dev/cu.usbmodem* and hope; with this they can confirm what
+             * answered, and the version tells a host tool whether the
+             * firmware predates a command it wants to use. */
+            printf("PONG launcher %s lvgl %d.%d.%d\n", LAUNCHER_PROTOCOL_VERSION,
+                   LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
+        } else if (line[0] != '\0' && !looks_like_base64(line)) {
+            /* Anything else got silently dropped, so a typo'd command left the
+             * host waiting out its full timeout with no clue why. Echo back
+             * the first whitespace-delimited token.
+             *
+             * Two things this deliberately does NOT do:
+             *
+             * - It does not echo the whole line. Note the token is only the
+             *   first SPACE-delimited word, so a space-free argument (a path)
+             *   still lands in it -- the truncation to 31 bytes is the real
+             *   bound, not the tokenizer. Do not describe this as "never
+             *   echoes a path"; it can.
+             * - It does not answer a line that looks like base64. A rejected
+             *   PUSH is drained now (see drain_push_payload), but a stream
+             *   desynced some other way would otherwise turn every orphaned
+             *   body line into a reply. Belt and braces, cheap. */
+            char verb[32];
+            size_t i = 0;
+            while (i + 1 < sizeof(verb) && line[i] != '\0' && line[i] != ' ') {
+                /* Printable ASCII only. The raw byte could be ESC, and the
+                 * docs tell people to watch this console with idf.py monitor
+                 * or screen -- both of which would act on an escape sequence
+                 * echoed back at them. */
+                unsigned char c = (unsigned char)line[i];
+                verb[i] = (c >= 0x20 && c < 0x7f) ? (char)c : '?';
+                i++;
+            }
+            verb[i] = '\0';
+            printf("ERR unknown_command %s\n", verb);
         }
     }
 }
 
+/* Why SHOT still costs ~1.5 s, and what does NOT fix it.
+ *
+ * Measured breakdown of one 368x448 capture: 1.445 s to get the base64 to the
+ * host, 0.016 s to build the host's decode table, 0.005 s to convert pixels.
+ * The transfer is ~94% of it, at roughly 306 KB/s.
+ *
+ * That is not per-line overhead. With CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG and
+ * no driver installed, usb_serial_jtag_write() (ESP-IDF
+ * esp_driver_usb_serial_jtag/src/usb_serial_jtag_vfs.c) loops
+ * `s_ctx.tx_func(fd, c)` one character at a time straight at the peripheral
+ * registers. The cost is per BYTE, which is why raising the base64 chunk size
+ * in handle_shot() bought only ~6%.
+ *
+ * Installing the usb_serial_jtag driver and calling
+ * usb_serial_jtag_vfs_use_driver() looks like the obvious fix -- buffered,
+ * USB-sized packets instead of a register poll per byte. It was tried on this
+ * board and it is 4-5x WORSE: the same capture went from 1.5 s to 7-10 s. That
+ * is a measured dead end, not an untried idea; do not re-attempt it without
+ * measuring first.
+ *
+ * If SHOT throughput ever matters enough to spend on, the untried directions
+ * are framing raw bytes with an escape scheme instead of base64 (-25% payload)
+ * or compressing the frame on-device before encoding. */
 void serial_push_start(void)
 {
-    xTaskCreate(serial_push_task, "serial_push", 6144, NULL, 4, NULL);
+    /* 8192, not 6144. The SHOT stack overflow above showed the old margin was
+     * under 832 bytes -- closer to the edge than anyone had measured, since
+     * STATS samples the high-water mark and nothing had run STATS immediately
+     * after a SHOT. Check it with `STATS` right after a SHOT (the deepest
+     * path here) rather than trusting this number. */
+    xTaskCreate(serial_push_task, "serial_push", 8192, NULL, 4, NULL);
 }

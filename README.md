@@ -158,7 +158,8 @@ know them.
 | `docs/APP_CONTRACT.md` | The app API — the one doc app authors need |
 | `docs/DESIGN_GUIDE.md` | Type, targets, colour, navigation, components |
 | `tools/push.py` · `drive.py` · `screenshot.py` | Install, drive, and see the device over USB |
-| `CLAUDE.md` | Shared context for Claude Code sessions |
+| `codemaps/` | Generated architecture maps — task model, per-file breakdown, limits, tooling |
+| `CLAUDE.md` | Shared context for Claude Code sessions — rules and constraints, not architecture |
 
 ---
 

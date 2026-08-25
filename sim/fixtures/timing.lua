@@ -1,15 +1,19 @@
 -- Timing regression fixture. Not an app -- it lives outside apps/ so the
 -- launcher never lists it, and it prints results for sim/timing_test.py.
 --
--- Guards the bug class that hit six apps at once: a periodic timer re-arms
--- AFTER its callback, so timer.every always runs slow and the error
--- accumulates in one direction. Correct code derives from timer.now_ms()
--- and its error stays bounded no matter how long it runs.
+-- Guards the bug class that hit six apps at once: app_timer.c used to re-arm
+-- a periodic timer from the moment its callback RETURNED, so timer.every
+-- always ran slow and the error accumulated in one direction. That is fixed
+-- (the deadline now advances by the period), so BOTH patterns below should
+-- now come out accurate -- and this fixture is what proves it stayed that way.
 --
--- The test is drift-over-time, not per-tick accuracy, because that is what
--- separates the two: tick-counting drifts LINEARLY, so a long enough run
--- makes the difference unmistakable even on a host where per-tick overhead
--- is small.
+-- The measurement is drift-over-time, not per-tick accuracy: the old bug
+-- drifted LINEARLY, so a 4 s run makes a regression unmistakable even on a
+-- host where per-tick overhead is small.
+--
+-- Pattern (B) is still the right thing to write in an app. It is robust
+-- whatever the launcher does underneath, and it is what you need anyway when
+-- pacing against something other than a fixed period.
 
 local lvgl = require("lvgl")
 local timer = require("timer")
@@ -23,7 +27,8 @@ scr:load()
 local INTERVAL = 100
 local BEATS = 40                      -- 4 seconds of run
 
--- (A) The WRONG pattern, measured so the test proves it can tell them apart.
+-- (A) Tick-counting: what an app believes vs what the clock says. This was
+-- the WRONG pattern and is now accurate, because timer.every itself is.
 local ticks, accum_started = 0, timer.now_ms()
 local h_bad
 h_bad = timer.every(INTERVAL, function()
@@ -38,7 +43,7 @@ h_bad = timer.every(INTERVAL, function()
     end
 end)
 
--- (B) The RIGHT pattern: chain timer.after against an absolute target.
+-- (B) Chain timer.after against an absolute target. Accurate regardless.
 local n, started = 0, timer.now_ms()
 local next_at = started + INTERVAL
 
