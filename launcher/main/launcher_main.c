@@ -904,11 +904,7 @@ static void sheet_cancel_cb(lv_event_t *e)
     if (s_home_stale) {
         /* Same reasoning as the app-exit path: re-loading the old screen would
          * silently discard a registry change made while the sheet was open. */
-        lv_obj_t *old = s_launcher_screen;
-        build_launcher_ui();
-        bsp_display_lock(0);
-        if (old && old != s_launcher_screen) lv_obj_delete(old);
-        bsp_display_unlock();
+        build_launcher_ui();   /* frees the screen it replaces */
         s_home_stale = false;
     } else {
         bsp_display_lock(0);
@@ -1343,13 +1339,7 @@ static void refresh_ui_async_cb(void *arg)
         return;
     }
 
-    lv_obj_t *old = s_launcher_screen;
-    build_launcher_ui();
-    if (old != NULL && old != s_launcher_screen) {
-        bsp_display_lock(0);
-        lv_obj_delete(old);
-        bsp_display_unlock();
-    }
+    build_launcher_ui();   /* frees the screen it replaces */
     s_home_stale = false;
     xSemaphoreGive(s_app_mutex);
 }
