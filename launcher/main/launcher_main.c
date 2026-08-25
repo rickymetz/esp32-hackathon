@@ -606,7 +606,17 @@ static void lua_app_task(void *arg)
         lua_setglobal(L, "__APP_STORE__");
     }
 
-    if (luaL_loadfile(L, app->path) != LUA_OK ||
+    /* A built-in's source is a NUL-terminated blob in flash, not a file, so
+     * app->path is a label and cannot be opened. strlen() rather than the
+     * _end symbol on purpose: whether _end sits before or after the
+     * terminator that EMBED_TXTFILES appends is exactly the off-by-one that
+     * shows up as "unexpected symbol near '<eof>'". Treat it as a C string
+     * and the question does not arise. */
+    int loaded = (app->builtin_src != NULL)
+        ? luaL_loadbuffer(L, app->builtin_src, strlen(app->builtin_src), app->id)
+        : luaL_loadfile(L, app->path);
+
+    if (loaded != LUA_OK ||
         lua_pcall(L, 0, 0, errfunc) != LUA_OK) {
         const char *msg = lua_tostring(L, -1);
 
@@ -893,6 +903,7 @@ static void fill_home_app(const app_entry_t *app, launcher_home_app_t *out,
 {
     out->name = app->name;
     out->basename = app->id;   /* the stable RUN/DELETE identity, folder or flat */
+    out->deletable = (app->builtin_src == NULL);
     out->icon = launcher_home_default_icon(app->id);
     if (app->in_folder && icon_buf &&
         snprintf(icon_buf, icon_buf_sz, "D:/apps/%s/icon.bin", app->id) < (int)icon_buf_sz) {
@@ -1010,10 +1021,15 @@ static void app_row_long_pressed(lv_event_t *e)
         return;
     }
 
-    /* Detail line: the code file's size, and "Folder" for a folder app. */
+    /* Detail line: the code file's size, and "Folder" for a folder app. A
+     * built-in has no file -- stat() on its label path fails -- so say what it
+     * is rather than leaving the line blank and looking like a failed read. */
     char detail[64] = "";
     struct stat st;
-    if (stat(match.path, &st) == 0) {
+    if (match.builtin_src != NULL) {
+        snprintf(detail, sizeof(detail), "Built-in  -  %.1f KB",
+                 (double)strlen(match.builtin_src) / 1024.0);
+    } else if (stat(match.path, &st) == 0) {
         double kb = (double)st.st_size / 1024.0;
         snprintf(detail, sizeof(detail), "%s%.1f KB",
                  match.in_folder ? "Folder app  -  " : "", kb);

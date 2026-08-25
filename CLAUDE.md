@@ -166,6 +166,14 @@ These cost an hour each if you don't know them. Most were hit for real in this r
 Structure, module graph and lifecycle are in `codemaps/architecture.md` and
 `codemaps/firmware.md`. What follows is only what you can get *wrong*.
 
+**Five apps are baked into the binary** (`EMBED_TXTFILES` in
+`launcher/main/CMakeLists.txt`; the table is in `app_registry.c`): settings,
+counter, stopwatch, countdown, flashlight. They are seeded BEFORE the card is
+mounted, so they survive the no-card path -- that is the whole point. A card app
+with the same id replaces its built-in **in place** (append and the list shows
+the app twice); delete the card copy and the built-in resurfaces. Built-ins load
+with `luaL_loadbuffer` from flash, not `luaL_loadfile`, and cannot be deleted.
+
 One thing those maps predate: **watch faces are not in `apps/`** — they are part of the
 shell, in `launcher/main/launcher_face.c`. `apps/` holds only real apps, each a flat
 `apps/<name>.lua` or a folder `apps/<name>/main.lua` shipping its own `icon.bin`

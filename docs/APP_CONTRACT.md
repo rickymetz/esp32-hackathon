@@ -162,6 +162,20 @@ folder. The launcher scans it at boot and after every push, and lists every `.lu
 finds. **The filename becomes the name in the list**: `weather_clock.lua` shows as
 "Weather clock".
 
+### Some apps are built into the firmware
+
+A handful of apps are baked into the binary so the device is useful **with no SD
+card**: `settings.lua`, `counter.lua`, `stopwatch.lua`, `countdown.lua`,
+`flashlight.lua`. They appear in the list like any other app and run the same
+way; the app-info sheet marks them **Built-in** and offers no Delete, and
+`DELETE` over serial answers `DELETE_ERR builtin`.
+
+**A card app with the same filename shadows its built-in.** So pushing your own
+`settings.lua` works exactly as before — the card copy is what runs. Delete that
+copy and the built-in comes back on the next scan, which is how you undo a push
+that broke something. You cannot get into a state where the device has no
+Settings app.
+
 ### Or ship a folder, with its own icon
 
 An app can also be a **folder** — `apps/<name>/main.lua` — so it can carry its
@@ -1275,7 +1289,8 @@ The same serial link can launch and stop apps without touching the screen:
 RUN myapp.lua        ->  RUN_OK myapp.lua   (or RUN_ERR bad_name|not_found|already_running)
 STOP                 ->  STOP_OK            (or STOP_ERR not_running)
 LIST                 ->  APP <name> per line, then LIST_OK <n>
-DELETE myapp.lua     ->  DELETE_OK          (or DELETE_ERR not_found|delete_failed)
+DELETE myapp.lua     ->  DELETE_OK          (or DELETE_ERR
+                         bad_name|not_found|builtin|delete_failed)
 SHOT                 ->  screenshot of the live screen (see tools/screenshot.py)
 TAP <x> <y>          ->  synthetic tap, same event pipeline as a finger
 SWIPE x0 y0 x1 y1 [ms] -> synthetic swipe/drag (a long press is a

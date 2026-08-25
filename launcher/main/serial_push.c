@@ -340,6 +340,12 @@ static void handle_delete(const char *header)
         printf("DELETE_ERR not_found\n");
         return;
     }
+    if (app_registry_is_builtin(name)) {
+        /* Distinct from delete_failed: this one is never going to succeed, and
+         * a tool should say "built in" rather than retry. */
+        printf("DELETE_ERR builtin\n");
+        return;
+    }
     if (!app_registry_delete_app(name)) {
         printf("DELETE_ERR delete_failed\n");
         return;

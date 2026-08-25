@@ -444,6 +444,7 @@ static bool sim_home_get_app(size_t index, launcher_home_app_t *out, void *ctx)
     const char *name = s_fake_apps[index];
     out->name = name;
     out->basename = name;   /* callbacks are NULL in the sim */
+    out->deletable = true;  /* the fake list stands in for card apps */
     out->icon = launcher_home_default_icon(name);
     out->icon_path = NULL;  /* the fixed fake list ships no card icons, so the
                              * home render stays a pure function of the fixture */
@@ -491,16 +492,20 @@ static void sim_home_render(void)
  * so its layout is drivable/reviewable without a board. `icon_path` (a D: card
  * path to a committed .bin) is optional -- passing one exercises the card-icon
  * decode path deterministically. Non-interactive. */
-static void sim_sheet_render(const char *name, const char *icon_path)
+static void sim_sheet_render(const char *name, const char *icon_path, bool deletable)
 {
     launcher_home_app_t app = { .name = name, .basename = name,
                                 .icon = launcher_home_default_icon(name),
-                                .icon_path = icon_path };
+                                .icon_path = icon_path,
+                                .deletable = deletable };
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_pad_all(scr, 0, LV_PART_MAIN);
     lv_obj_set_style_border_width(scr, 0, LV_PART_MAIN);
-    launcher_home_app_sheet(scr, &app, "Folder app  -  1.4 KB", NULL, NULL);
+    launcher_home_app_sheet(scr, &app,
+                            deletable ? "Folder app  -  1.4 KB"
+                                      : "Built-in  -  1.1 KB",
+                            NULL, NULL);
     lv_screen_load(scr);
     lv_timer_handler();
     lv_timer_handler();
@@ -708,7 +713,10 @@ static void exec_cmd(int argc, char **argv)
          * default "Metronome" (a custom-image app); an icon path exercises the
          * card-icon decode. */
         if (s_app) app_stop();
-        sim_sheet_render(argc >= 2 ? argv[1] : "Metronome", argc >= 3 ? argv[2] : NULL);
+        /* A trailing "builtin" renders the no-Delete variant. */
+        bool deletable = !(argc >= 2 && !strcmp(argv[argc - 1], "builtin"));
+        const char *icon = (argc >= 3 && strcmp(argv[2], "builtin")) ? argv[2] : NULL;
+        sim_sheet_render(argc >= 2 ? argv[1] : "Metronome", icon, deletable);
         printf("SHEET_OK\n");
     } else {
         fprintf(stderr, "unknown command: %s\n", cmd);

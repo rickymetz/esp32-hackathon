@@ -121,6 +121,9 @@ FRAMES = [
     # (the fixture the removed home-preview probe used to reach).
     ("sheet",        ["sheet", "Metronome"]),
     ("sheet_card",   ["sheet", "Quicktap", "D:/apps/quicktap/icon.bin"]),
+    # A built-in has no file to delete, so the sheet drops Delete entirely and
+    # Cancel takes its place -- a control that must refuse is worse than none.
+    ("sheet_builtin", ["sheet", "Settings", "builtin"]),
 
     # The built-in watch face -- the shell's home screen, so the most-seen
     # surface on the device. Three cases because its degraded states are where

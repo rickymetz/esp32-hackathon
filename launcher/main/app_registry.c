@@ -113,14 +113,90 @@ static int app_cmp_by_name(const void *a, const void *b)
  * registry_lock() (namely app_registry_write_app()) must call this directly
  * -- s_lock is a plain mutex, not a recursive one, so taking it twice from
  * the same task deadlocks instead of succeeding. */
+/* ---- Built-in apps ---------------------------------------------------
+ *
+ * Baked into the binary by EMBED_TXTFILES (see main/CMakeLists.txt), so the
+ * device has a usable app set with no SD card in the slot -- which is the
+ * point: every device SETTING already survives a missing card (NVS), and
+ * until now the app that changes them did not.
+ *
+ * A card app with the same id SHADOWS its built-in, so an author can iterate
+ * on settings.lua by pushing over it exactly as before. Delete the card copy
+ * and the built-in comes back; the built-in itself cannot be deleted.
+ *
+ * The slate is deliberately small. clock.lua, faces.lua and wifi_setup.lua
+ * were on the original list and are all gone -- the faces are C now and
+ * wifi_setup was folded into settings -- so three slots are free. What (if
+ * anything) rides in flash forever is a product decision, not a technical
+ * one, so they are left free rather than filled to a number. */
+#define BUILTIN_DECL(sym) \
+    extern const char sym##_start[] asm("_binary_" #sym "_start")
+
+BUILTIN_DECL(settings_lua);
+BUILTIN_DECL(counter_lua);
+BUILTIN_DECL(stopwatch_lua);
+BUILTIN_DECL(countdown_lua);
+BUILTIN_DECL(flashlight_lua);
+
+static const struct {
+    const char *id;
+    const char *src;
+} k_builtins[] = {
+    { "settings.lua",   settings_lua_start   },
+    { "counter.lua",    counter_lua_start    },
+    { "stopwatch.lua",  stopwatch_lua_start  },
+    { "countdown.lua",  countdown_lua_start  },
+    { "flashlight.lua", flashlight_lua_start },
+};
+#define BUILTIN_COUNT (sizeof(k_builtins) / sizeof(k_builtins[0]))
+
+_Static_assert(BUILTIN_COUNT < APP_MAX_COUNT,
+               "built-ins alone must not fill the registry");
+
+/* Seeded before the card is even mounted, so they survive every early return
+ * in scan_locked() -- the no-card path is exactly the case they exist for. */
+static void seed_builtins_locked(void)
+{
+    for (size_t i = 0; i < BUILTIN_COUNT && s_count < APP_MAX_COUNT; i++) {
+        app_entry_t *app = &s_apps[s_count];
+        memset(app, 0, sizeof(*app));
+        snprintf(app->id, sizeof(app->id), "%s", k_builtins[i].id);
+        pretty_name(k_builtins[i].id, app->name, sizeof(app->name));
+        /* Not openable. Kept human-readable because it reaches the log and
+         * the app-info sheet. */
+        snprintf(app->path, sizeof(app->path), "<built-in>/%s", k_builtins[i].id);
+        app->builtin_src = k_builtins[i].src;
+        s_count++;
+    }
+}
+
+/* A card app replaces its built-in IN PLACE rather than appending, or the
+ * list would show the same app twice. Returns the slot to fill, which is the
+ * shadowed built-in's if there is one and a fresh slot otherwise. */
+static app_entry_t *slot_for_locked(const char *id)
+{
+    for (size_t i = 0; i < s_count; i++) {
+        if (s_apps[i].builtin_src != NULL && strcmp(s_apps[i].id, id) == 0) {
+            return &s_apps[i];
+        }
+    }
+    return (s_count < APP_MAX_COUNT) ? &s_apps[s_count] : NULL;
+}
+
 static esp_err_t scan_locked(void)
 {
     s_count = 0;
 
+    /* Before the mount, deliberately: everything below can return early, and
+     * the no-card path is precisely the one the built-ins exist to serve. */
+    seed_builtins_locked();
+
     if (!s_mounted) {
         esp_err_t err = bsp_sdcard_mount();
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "no SD card (%s) -- no apps to load", esp_err_to_name(err));
+            ESP_LOGW(TAG, "no SD card (%s) -- built-in apps only",
+                     esp_err_to_name(err));
+            qsort(s_apps, s_count, sizeof(s_apps[0]), app_cmp_by_name);
             return ESP_ERR_NOT_FOUND;
         }
         s_mounted = true;
@@ -136,6 +212,7 @@ static esp_err_t scan_locked(void)
         } else {
             ESP_LOGW(TAG, "cannot open or create %s", APPS_DIR);
         }
+        qsort(s_apps, s_count, sizeof(s_apps[0]), app_cmp_by_name);
         return ESP_OK;
     }
 
@@ -159,7 +236,19 @@ static esp_err_t scan_locked(void)
         struct stat st;
         bool is_dir = (stat(entry_path, &st) == 0 && S_ISDIR(st.st_mode));
 
-        app_entry_t *app = &s_apps[s_count];
+        /* Resolve the slot from the id BEFORE filling it, so a card app lands
+         * on top of the built-in it shadows instead of beside it. */
+        char cand_id[APP_ID_MAX];
+        if (snprintf(cand_id, sizeof(cand_id), "%s", ent->d_name) >= (int)sizeof(cand_id)) {
+            ESP_LOGW(TAG, "skipping '%s': id too long", ent->d_name);
+            continue;
+        }
+        app_entry_t *app = slot_for_locked(cand_id);
+        if (app == NULL) {
+            continue;   /* registry full */
+        }
+        bool shadowing = (app->builtin_src != NULL);
+        app->builtin_src = NULL;   /* a card app is never a built-in */
 
         if (is_dir) {
             sweep_push_tmp(entry_path);   /* stray temp from a failed folder push */
@@ -183,13 +272,13 @@ static esp_err_t scan_locked(void)
             app->in_folder = false;
         }
 
-        if (snprintf(app->id, sizeof(app->id), "%s", ent->d_name) >= (int)sizeof(app->id)) {
-            ESP_LOGW(TAG, "skipping '%s': id too long", ent->d_name);
-            continue;
-        }
+        memcpy(app->id, cand_id, sizeof(app->id));
         pretty_name(ent->d_name, app->name, sizeof(app->name));
-        ESP_LOGI(TAG, "found app '%s' (%s)", app->name, app->path);
-        s_count++;
+        ESP_LOGI(TAG, "found app '%s' (%s)%s", app->name, app->path,
+                 shadowing ? " [shadows built-in]" : "");
+        if (!shadowing) {
+            s_count++;
+        }
     }
     closedir(dir);
 
@@ -234,6 +323,20 @@ bool app_registry_find_by_id(const char *id, app_entry_t *out)
         if (strcmp(s_apps[i].id, id) == 0) {
             *out = s_apps[i];
             found = true;
+            break;
+        }
+    }
+    registry_unlock();
+    return found;
+}
+
+bool app_registry_is_builtin(const char *id)
+{
+    registry_lock();
+    bool found = false;
+    for (size_t i = 0; i < s_count; i++) {
+        if (strcmp(s_apps[i].id, id) == 0) {
+            found = (s_apps[i].builtin_src != NULL);
             break;
         }
     }
@@ -391,6 +494,18 @@ static int remove_app_folder(const char *dir_path)
 bool app_registry_delete_app(const char *id)
 {
     registry_lock();
+
+    /* A built-in lives in flash and has no file to unlink. If a card app is
+     * shadowing it the id refers to the CARD copy, which is deletable -- and
+     * removing it makes the built-in resurface on the next scan, which is the
+     * intended way to undo a bad push of settings.lua. */
+    for (size_t i = 0; i < s_count; i++) {
+        if (strcmp(s_apps[i].id, id) == 0 && s_apps[i].builtin_src != NULL) {
+            ESP_LOGW(TAG, "refusing to delete built-in '%s'", id);
+            registry_unlock();
+            return false;
+        }
+    }
 
     if (!s_mounted) {
         registry_unlock();

@@ -644,6 +644,25 @@ void launcher_home_app_sheet(lv_obj_t *screen, const launcher_home_app_t *app,
         lv_obj_align(d, LV_ALIGN_TOP_MID, 0, 214);
     }
 
+    /* A built-in cannot be deleted, so it gets no Delete button at all --
+     * Cancel then sits where Delete would have been, and the sheet reads as
+     * information rather than a dead control. */
+    if (!app->deletable) {
+        lv_obj_t *only_cancel = lv_button_create(screen);
+        lv_obj_set_size(only_cancel, 320, 96);
+        lv_obj_align(only_cancel, LV_ALIGN_BOTTOM_MID, 0, -8);
+        lv_obj_set_style_radius(only_cancel, 16, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(only_cancel, lv_color_hex(0x24303C), LV_PART_MAIN);
+        lv_obj_t *ocl = lv_label_create(only_cancel);
+        lv_label_set_text(ocl, "Cancel");
+        lv_obj_set_style_text_color(ocl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        lv_obj_center(ocl);
+        if (on_cancel) {
+            lv_obj_add_event_cb(only_cancel, on_cancel, LV_EVENT_CLICKED, NULL);
+        }
+        return;
+    }
+
     /* Delete: armed (grey + non-clickable) for 400ms, then red + live. */
     lv_obj_t *del = lv_button_create(screen);
     lv_obj_set_size(del, 320, 96);
