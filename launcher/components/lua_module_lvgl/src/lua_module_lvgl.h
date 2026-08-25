@@ -5,6 +5,7 @@
  */
 #pragma once
 
+#include <stdbool.h>
 #include "esp_err.h"
 #include "lua.h"
 
@@ -33,6 +34,15 @@ struct _lv_font_t;
 void lua_module_lvgl_set_font_scale(float scale);
 float lua_module_lvgl_get_font_scale(void);
 const struct _lv_font_t *lua_module_lvgl_scaled_builtin_font(int base_size);
+
+/* Screen-timeout opt-out, set by an app via lvgl.keep_awake(). Lives in the
+ * binding rather than the launcher so the simulator gets it from the same
+ * definition -- see the note at s_keep_awake in lua_lvgl_runtime.c. */
+bool lua_lvgl_keep_awake(void);
+
+/* Clear the keep-awake flag. Called on app teardown so a crashed app cannot
+ * pin the backlight on until reboot. */
+void lua_lvgl_keep_awake_reset(void);
 
 #ifdef __cplusplus
 }

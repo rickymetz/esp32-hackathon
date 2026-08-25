@@ -415,8 +415,37 @@ void lua_lvgl_exit_cleanup(lua_State *L)
     }
 }
 
+/* Screen-timeout opt-out. An app that owns the screen -- a watch face, a
+ * countdown, a metronome -- can hold the panel lit against the launcher's
+ * 30s dim / 2min blank.
+ *
+ * Deliberately a plain flag HERE rather than a call into the BSP: this file is
+ * compiled into the headless simulator as-is (sim/CMakeLists.txt globs the
+ * binding source dir), and the sim has no panel. The launcher's
+ * button_poll_task reads it via lua_lvgl_keep_awake() and acts; in the sim
+ * nothing reads it and it is harmlessly inert.
+ *
+ * Keeping it in the shared binding is what stops the device and sim APIs
+ * drifting apart -- a hand-written sim stub is the failure mode the wifi
+ * module in this repo needed a parity test to guard against. One definition,
+ * nothing to keep in sync. */
+static bool s_keep_awake;
+
+bool lua_lvgl_keep_awake(void)       { return s_keep_awake; }
+void lua_lvgl_keep_awake_reset(void) { s_keep_awake = false; }
+
+static int lua_lvgl_keep_awake_lua(lua_State *L)
+{
+    if (!lua_isnoneornil(L, 1)) {
+        s_keep_awake = lua_toboolean(L, 1);
+    }
+    lua_pushboolean(L, s_keep_awake);
+    return 1;
+}
+
 const luaL_Reg lua_lvgl_runtime_funcs[] = {
     {"init", lua_lvgl_init},
     {"deinit", lua_lvgl_deinit},
+    {"keep_awake", lua_lvgl_keep_awake_lua},
     {NULL, NULL},
 };
