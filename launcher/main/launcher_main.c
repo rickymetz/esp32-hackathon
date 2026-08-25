@@ -58,6 +58,7 @@
 #include "app_voice.h"
 #include "app_sensors.h"
 #include "app_audio.h"
+#include "log_ring.h"
 #include "app_wifi.h"
 #include "driver/gpio.h"
 #include "launcher_main.h"
@@ -606,7 +607,17 @@ static void lua_app_task(void *arg)
         lua_setglobal(L, "__APP_STORE__");
     }
 
-    if (luaL_loadfile(L, app->path) != LUA_OK ||
+    /* A built-in's source is a NUL-terminated blob in flash, not a file, so
+     * app->path is a label and cannot be opened. strlen() rather than the
+     * _end symbol on purpose: whether _end sits before or after the
+     * terminator that EMBED_TXTFILES appends is exactly the off-by-one that
+     * shows up as "unexpected symbol near '<eof>'". Treat it as a C string
+     * and the question does not arise. */
+    int loaded = (app->builtin_src != NULL)
+        ? luaL_loadbuffer(L, app->builtin_src, strlen(app->builtin_src), app->id)
+        : luaL_loadfile(L, app->path);
+
+    if (loaded != LUA_OK ||
         lua_pcall(L, 0, 0, errfunc) != LUA_OK) {
         const char *msg = lua_tostring(L, -1);
 
@@ -893,6 +904,7 @@ static void fill_home_app(const app_entry_t *app, launcher_home_app_t *out,
 {
     out->name = app->name;
     out->basename = app->id;   /* the stable RUN/DELETE identity, folder or flat */
+    out->deletable = (app->builtin_src == NULL);
     out->icon = launcher_home_default_icon(app->id);
     if (app->in_folder && icon_buf &&
         snprintf(icon_buf, icon_buf_sz, "D:/apps/%s/icon.bin", app->id) < (int)icon_buf_sz) {
@@ -1010,10 +1022,15 @@ static void app_row_long_pressed(lv_event_t *e)
         return;
     }
 
-    /* Detail line: the code file's size, and "Folder" for a folder app. */
+    /* Detail line: the code file's size, and "Folder" for a folder app. A
+     * built-in has no file -- stat() on its label path fails -- so say what it
+     * is rather than leaving the line blank and looking like a failed read. */
     char detail[64] = "";
     struct stat st;
-    if (stat(match.path, &st) == 0) {
+    if (match.builtin_src != NULL) {
+        snprintf(detail, sizeof(detail), "Built-in  -  %.1f KB",
+                 (double)strlen(match.builtin_src) / 1024.0);
+    } else if (stat(match.path, &st) == 0) {
         double kb = (double)st.st_size / 1024.0;
         snprintf(detail, sizeof(detail), "%s%.1f KB",
                  match.in_folder ? "Folder app  -  " : "", kb);
@@ -1284,9 +1301,18 @@ static void shell_toggle_view(void)
      * calls knows about it. Left behind it leaked, AND app_row_long_pressed()
      * bails on `s_sheet_screen != NULL`, so long-press-to-delete stayed dead
      * for the rest of the boot. Dispose of it before the face loads. */
-    if (s_sheet_screen != NULL) {
-        lv_obj_t *sheet = s_sheet_screen;
-        s_sheet_screen = NULL;
+    /* s_sheet_screen is guarded by s_app_mutex (see its declaration), and
+     * capture-and-NULL must happen under it or a Cancel tap on the LVGL task
+     * racing a BOOT press lets both sides take the same pointer and both
+     * delete it. That race is now reachable from a script, since serial BOOT
+     * runs this on the serial task. Lock order holds: no display lock is held
+     * here, and it is released before the delete. */
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    lv_obj_t *sheet = s_sheet_screen;
+    s_sheet_screen = NULL;
+    xSemaphoreGive(s_app_mutex);
+
+    if (sheet != NULL) {
         bsp_display_lock(0);
         lv_obj_delete(sheet);
         bsp_display_unlock();
@@ -1436,15 +1462,30 @@ bool launcher_refresh_ui(void)
  * already exiting. */
 void launcher_boot_press(void)
 {
-    bool was_dark = (s_screen != SCREEN_AWAKE);
+    /* ASLEEP only, NOT dimmed. Dimming happens after 30s of no touch, which is
+     * the normal resting state of a watch face or any app left alone for half
+     * a minute -- and touch stays enabled while dimmed, so the screen is both
+     * legible and live. Treating that as "dark" made BOOT a wake-only press in
+     * the common case, so escaping an app took two presses, against the
+     * contract's "returns you to the launcher -- almost always instantly".
+     * Confirmed on hardware before this fix: 35s idle, BOOT, app still up.
+     * Only a genuinely black screen may swallow the press. */
+    bool was_asleep = (s_screen == SCREEN_ASLEEP);
+
+    /* Stop request BEFORE the wake, because the wake takes the display lock
+     * (wait-forever) and the stop is a lock-free atomic flag. Ordered the
+     * other way, the escape hatch would queue behind whatever holds that lock
+     * -- which is exactly the bus dependency BOOT is documented not to have. */
+    if (!was_asleep) {
+        launcher_lua_request_stop(true);
+    }
+
     launcher_screen_wake();
 
-    if (was_dark) {
+    if (was_asleep) {
         ESP_LOGI(TAG, "BOOT -- waking the screen");
         return;
     }
-
-    launcher_lua_request_stop(true);
 
     xSemaphoreTake(s_app_mutex, portMAX_DELAY);
     bool app_running = (s_app_task != NULL);
@@ -1589,7 +1630,15 @@ static void button_poll_task(void *arg)
 
         /* Screen timeout. Reuses this task rather than adding a fourth one: it
          * already ticks at 20 ms and already owns BOOT, and this repo has
-         * already shipped an AB-BA deadlock by giving a new task the display. */
+         * already shipped an AB-BA deadlock by giving a new task the display.
+         *
+         * Read AFTER the buttons, deliberately. CLAUDE.md sells BOOT as a
+         * direct GPIO read with no bus dependency, and taking a wait-forever
+         * display lock at the TOP of this loop would put the escape hatch
+         * behind whatever holds that lock -- a card-backed font_load, a slow
+         * flush -- long enough for the two-sample debounce to miss a quick
+         * tap. Sampling the button first keeps the guarantee; a late
+         * brightness step is invisible. */
         bsp_display_lock(0);
         uint32_t idle = lv_display_get_inactive_time(NULL);
         bsp_display_unlock();
@@ -1646,11 +1695,18 @@ static void apply_persisted_font_scale(lv_display_t *disp)
      * hide rather than relying on a default. It lives on the display's system
      * layer, so it is unaffected by every screen swap below. */
 #if LV_USE_SYSMON && LV_USE_PERF_MONITOR
+    /* Not flag writes: show_performance() creates an object, a subject, an
+     * observer, an lv_timer and a display event callback. This function runs
+     * at boot AND on every app exit, concurrently with the LVGL task inside
+     * lv_timer_handler(), so it needs the display lock like the theme call
+     * immediately below it. */
+    bsp_display_lock(0);
     if (shell_nvs_get_i32("fps", 0) == 1) {
         lv_sysmon_show_performance(disp);
     } else {
         lv_sysmon_hide_performance(disp);
     }
+    bsp_display_unlock();
 #endif
 
     bsp_display_lock(0);
@@ -1672,6 +1728,11 @@ void app_main(void)
     /* Created before anything that can launch an app (UI build, serial
      * task): app_row_clicked, launcher_run_app_by_name, launcher_stop_app,
      * and lua_app_task's own exit path all take this. */
+    /* Before anything that can log something worth reading. The console is
+     * only readable by resetting the board, which destroys what you were
+     * trying to see -- this keeps a copy the LOG serial verb can hand back. */
+    log_ring_init();
+
     s_app_mutex = xSemaphoreCreateMutex();
     if (s_app_mutex == NULL) {
         ESP_LOGE(TAG, "failed to create app mutex");

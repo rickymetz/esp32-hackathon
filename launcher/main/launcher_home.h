@@ -28,6 +28,11 @@ typedef struct {
                             * ("D:/apps/<id>/icon.bin"). Tried first when set and
                             * the file exists; otherwise the icon/letter fallback
                             * chain below runs. NULL for apps without one. */
+
+    /* False for an app baked into the firmware: the info sheet then omits
+     * Delete entirely rather than offering a control that must refuse. A
+     * button you are not allowed to press is worse than no button. */
+    bool deletable;
 } launcher_home_app_t;
 
 /* Curated default icon for a known app basename (case-insensitive substring

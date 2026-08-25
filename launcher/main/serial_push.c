@@ -5,6 +5,7 @@
 #include "app_registry.h"
 #include "launcher_main.h"
 #include "app_button.h"
+#include "log_ring.h"
 #include "esp_heap_caps.h"
 #include "lvgl.h"
 #include "bsp/esp-bsp.h"
@@ -114,6 +115,61 @@ static bool looks_like_base64(const char *line)
     return n >= BODY_LINE_MIN;
 }
 
+/* read_line() with a deadline. ONLY the drain uses it: the command loop must
+ * block forever waiting for the next command, but the drain is recovering from
+ * a stream that has already proven malformed, and SILENCE is one of the shapes
+ * that takes -- `PUSH` typed with no body, or a header whose sscanf failed.
+ *
+ * The drain's own loop counter does not cover that: it counts lines RECEIVED,
+ * so with nothing arriving it never advances and read_line's EOF path spins
+ * forever. One malformed header then pinned serial_push_task permanently --
+ * no RUN, STOP, SHOT, BOOT or PING answered again until a reboot. */
+static bool read_line_until(char *out, size_t cap, int timeout_ms)
+{
+    size_t n = 0;
+    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+
+    while (n + 1 < cap) {
+        int c = fgetc(stdin);
+        if (c == EOF) {
+            if (esp_timer_get_time() >= deadline) {
+                return false;
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        if (c == '\r') {
+            continue;
+        }
+        if (c == '\n') {
+            out[n] = '\0';
+            return true;
+        }
+        out[n++] = (char)c;
+    }
+    out[cap - 1] = '\0';
+
+    /* Same resync read_line() does, and for the same reason -- omitting it
+     * here was a real bug. Returning now would leave the REST of this physical
+     * line queued, so the command loop would parse from mid-line and then
+     * answer every remaining body line with "ERR unknown_command <base64>":
+     * exactly the console-spew storm the drain exists to prevent. */
+    for (;;) {
+        int c = fgetc(stdin);
+        if (c == EOF) {
+            if (esp_timer_get_time() >= deadline) {
+                return false;   /* the sender went quiet mid-line */
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        if (c == '\n') {
+            break;
+        }
+    }
+    return false;
+}
+
 static bool read_line(char *out, size_t cap)
 {
     size_t n = 0;
@@ -162,14 +218,26 @@ static bool read_line(char *out, size_t cap)
  * corner case. A 4-character final chunk could even literally be "PING" and
  * draw a spurious PONG.
  *
- * Bounded so a malformed stream cannot pin the task here forever: PAYLOAD_MAX
- * base64 lines is already far more than any legal push. */
+ * Bounded TWO ways, because the line counter alone is not a bound: it counts
+ * lines RECEIVED, so a stream that simply stops never advances it and the task
+ * hung forever on one malformed header. The silence deadline is what actually
+ * caps this; it is generous next to push.py, which writes the whole body
+ * without pausing. */
+#define DRAIN_SILENCE_MS 2000
+
+/* A stalled body transfer, not a rejected one -- see handle_push(). */
+#define BODY_SILENCE_MS  10000
+
 static void drain_push_payload(void)
 {
     char line[LINE_MAX];
     for (unsigned i = 0; i < (PAYLOAD_MAX / 3) + 16; i++) {
-        if (!read_line(line, sizeof(line))) {
-            continue;   /* oversized line; read_line already resynced */
+        if (!read_line_until(line, sizeof(line), DRAIN_SILENCE_MS)) {
+            /* Silence, or an oversized line. Either way stop draining and go
+             * back to answering commands -- staying here is what wedged it. */
+            ESP_LOGW(TAG, "drain: giving up after %d ms of silence",
+                     DRAIN_SILENCE_MS);
+            return;
         }
         if (strcmp(line, "ENDPUSH") == 0) {
             return;
@@ -210,7 +278,16 @@ static void handle_push(const char *header)
     char line[LINE_MAX];
     bool ok = true;
 
-    while (read_line(line, sizeof(line))) {
+    /* Same deadline as the drain, and for the same reason: read_line() spins
+     * forever on EOF, so a well-formed header followed by silence -- host
+     * killed, cable pulled mid-body, a human typing the header by hand --
+     * pinned this task permanently, holding the malloc'd buffer the whole
+     * time. The earlier fix bounded the REJECTED path and left this one, which
+     * is the branch that actually holds memory.
+     *
+     * Longer than the drain's: this is a real transfer, and push.py can pause
+     * between chunks in a way it never does when a push has been rejected. */
+    while (read_line_until(line, sizeof(line), BODY_SILENCE_MS)) {
         if (strcmp(line, "ENDPUSH") == 0) {
             break;
         }
@@ -222,6 +299,9 @@ static void handle_push(const char *header)
         }
         got += produced;
     }
+    /* Falling out of the loop without seeing ENDPUSH now also means "the
+     * sender went quiet". The length/CRC check below rejects it either way,
+     * which is the behaviour we want: an incomplete body is not a valid push. */
 
     if (!ok || got != expect_len) {
         free(buf);
@@ -338,6 +418,12 @@ static void handle_delete(const char *header)
     }
     if (!registry_has_id(name)) {
         printf("DELETE_ERR not_found\n");
+        return;
+    }
+    if (app_registry_is_builtin(name)) {
+        /* Distinct from delete_failed: this one is never going to succeed, and
+         * a tool should say "built in" rather than retry. */
+        printf("DELETE_ERR builtin\n");
         return;
     }
     if (!app_registry_delete_app(name)) {
@@ -648,6 +734,11 @@ static void serial_push_task(void *arg)
             handle_pwr();
         } else if (strcmp(line, "BOOT") == 0) {
             handle_boot();
+        } else if (strcmp(line, "LOG") == 0) {
+            /* Everything ESP_LOG has printed since boot, oldest first. The
+             * point of it: trigger a fault, then ask what happened, over the
+             * port the harness already owns. */
+            log_ring_dump();
         } else if (strcmp(line, "MEM") == 0) {
             handle_mem();
         } else if (strncmp(line, "BRIGHT ", 7) == 0) {

@@ -1,6 +1,7 @@
 #include "app_sandbox.h"
 #include "cap_lua.h"
 #include "esp_log.h"
+#include "log_ring.h"
 #include "lauxlib.h"
 #include "lualib.h"
 
@@ -101,6 +102,42 @@ static void nil_field(lua_State *L, const char *table, const char *field)
     lua_pop(L, 1);
 }
 
+/* An app's print() replaced, so its output reaches the LOG ring.
+ *
+ * Lua's own print writes with fwrite() straight to stdout, which the ring's
+ * esp_log_set_vprintf() hook never sees -- so an app author's print(), the
+ * single most useful thing to read when an app misbehaves, was the one thing
+ * `LOG` could not hand back. This routes it through the same path as
+ * everything else and still prints it, so nothing changes for a human
+ * watching the console.
+ *
+ * Semantics kept identical to Lua's print: tostring() on every argument (so
+ * __tostring metamethods work), tabs between, newline at the end. */
+static int sandboxed_print(lua_State *L)
+{
+    int n = lua_gettop(L);
+
+    for (int i = 1; i <= n; i++) {
+        size_t len = 0;
+        const char *piece = luaL_tolstring(L, i, &len);   /* honours __tostring */
+        log_ring_puts(piece, len);
+        fwrite(piece, 1, len, stdout);
+        if (i < n) {
+            log_ring_puts("\t", 1);
+            fputc('\t', stdout);
+        }
+        lua_pop(L, 1);   /* the string luaL_tolstring pushed */
+    }
+    log_ring_puts("\n", 1);
+    fputc('\n', stdout);
+    /* Lua's print ends with lua_writeline(), which is a newline AND an
+     * fflush (luaconf.h). Without this the claim of identical semantics above
+     * was false, and a buffered stdout would delay an author's print() off the
+     * console -- the very latency this is meant to avoid. */
+    fflush(stdout);
+    return 0;
+}
+
 void app_sandbox_apply(lua_State *L)
 {
     /* debug.sethook would let an app remove our interrupt hook in one line.
@@ -135,6 +172,12 @@ void app_sandbox_apply(lua_State *L)
         lua_setfield(L, -2, "package");
     }
     lua_pop(L, 1);
+
+    /* Not a restriction like the rest of this function -- print() stays fully
+     * usable. It is replaced only so its output is capturable; see
+     * sandboxed_print(). */
+    lua_pushcfunction(L, sandboxed_print);
+    lua_setglobal(L, "print");
 
     sandbox_wrap_coroutines(L);
 

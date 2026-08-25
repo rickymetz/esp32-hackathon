@@ -28,13 +28,25 @@ typedef struct {
                                 *   a flat app's file basename ("counter.lua"),
                                 *   or a folder app's directory name ("counter") */
     bool in_folder;            /**< true when the app is apps/<id>/main.lua */
+
+    /** Non-NULL for an app baked into the firmware: points at its Lua source
+     *  in flash (EMBED_TXTFILES, NUL-terminated), and `path` is then a label
+     *  rather than something openable. A built-in cannot be deleted, and a
+     *  card app with the same id SHADOWS it -- delete that and the built-in
+     *  comes back. This is what lets the device be useful with no card. */
+    const char *builtin_src;
 } app_entry_t;
 
 /**
- * @brief Mount the SD card and scan the apps directory.
+ * @brief Seed the built-in apps, then mount the SD card and scan for more.
  *
- * Safe to call when no card is present: returns ESP_ERR_NOT_FOUND and leaves
- * the app list empty rather than failing the boot.
+ * The built-ins are seeded FIRST and unconditionally, so they survive every
+ * early return below them -- a device with no card still has apps, which is
+ * the whole point of baking them in. A card app whose id matches replaces the
+ * built-in in place.
+ *
+ * Still returns ESP_ERR_NOT_FOUND when no card is present, because callers use
+ * that to report card state; it no longer means "no apps".
  */
 esp_err_t app_registry_scan(void);
 
@@ -55,6 +67,14 @@ bool app_registry_get_copy(size_t index, app_entry_t *out);
 
 /** Whether the SD card is currently mounted. */
 bool app_registry_sd_mounted(void);
+
+/**
+ * @brief True when `id` names a built-in that no card app is shadowing.
+ *
+ * Lets a caller say WHY a delete will fail before attempting it, instead of
+ * reporting the generic failure that any unlink error produces.
+ */
+bool app_registry_is_builtin(const char *id);
 
 /**
  * @brief A cheap hash of the current app SET -- the count and every id, not

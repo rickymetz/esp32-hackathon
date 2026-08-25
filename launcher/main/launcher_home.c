@@ -288,10 +288,11 @@ static void row_icon(lv_obj_t *row, const launcher_home_app_t *app)
 static void build_list(lv_obj_t *screen, size_t count, size_t max_visible,
                        launcher_home_get_app_t get_app, void *ctx,
                        lv_event_cb_t on_row_click, lv_event_cb_t on_row_delete,
-                       lv_event_cb_t on_row_long_press, lv_event_cb_t on_refresh)
+                       lv_event_cb_t on_row_long_press, lv_event_cb_t on_refresh,
+                       int height_pct)
 {
     lv_obj_t *list = lv_obj_create(screen);
-    lv_obj_set_size(list, LV_PCT(100), LV_PCT(84));
+    lv_obj_set_size(list, LV_PCT(100), LV_PCT(height_pct));
     lv_obj_align(list, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(list, 0, LV_PART_MAIN);
@@ -542,14 +543,62 @@ void launcher_home_build(lv_obj_t *screen, size_t count, bool sd_mounted,
         return;
     }
 
-    /* With apps present, the top-right toggle switches list <-> grid. */
-    add_toggle(screen, view, on_toggle);
+    /* No card, but apps present -- which is now the NORMAL cardless state,
+     * because the built-ins are seeded before the mount. That made the
+     * count == 0 branch above unreachable and took its "No SD card" message
+     * and its Refresh button with it: a card-less boot looked completely
+     * ordinary, and after inserting a card there was no way to rescan.
+     *
+     * Say so, and force LIST view. The grid has no Refresh control (it fills
+     * the screen with tiles), and with only built-ins there is nothing for a
+     * grid to be good at -- so the view that carries the rescan button is the
+     * right one until a card shows up. */
+    /* No card but apps present -- the NORMAL cardless state, since built-ins
+     * are seeded before the mount. That made the count == 0 branch above
+     * unreachable and took its "No SD card" message and Refresh button with
+     * it: a cardless boot looked ordinary, and after inserting a card there
+     * was no way to rescan.
+     *
+     * The note needs its OWN space. The header's line box runs to about y=74
+     * and the list is bottom-aligned at 84% (top edge ~72), so there is no gap
+     * to drop a label into -- a first attempt at y=68 was painted over by the
+     * first row's opaque background, and at the 1.3 font scale it overlapped
+     * the header's ink as well. Shrinking the list opens a real strip.
+     *
+     * LIST is forced because the grid carries no Refresh, and with only
+     * built-ins there is nothing for a grid to be good at. The toggle is
+     * suppressed rather than left rendered: it would flip s_view_mode and
+     * rebuild straight back to LIST -- a dead control, which is the same
+     * argument that removed Delete from a built-in's sheet, and the invisible
+     * flips would decide which view you got the moment a card appeared. */
+    int list_pct = 84;
+    if (!sd_mounted) {
+        view = LAUNCHER_VIEW_LIST;
+        list_pct = 72;
+
+        /* Short, width-limited and wrapping. The full sentence
+         * ("built-in apps only") spans nearly the whole panel at scale 1.0 and
+         * runs off it at 1.3 -- and the strip opened above only fits one line.
+         * "No SD card" is the part that is not already obvious from a list
+         * with five apps and a Refresh button in it. */
+        lv_obj_t *note = lv_label_create(screen);
+        lv_label_set_text(note, "No SD card");
+        lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
+        lv_obj_set_width(note, LV_PCT(92));
+        lv_obj_set_style_text_align(note, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        lv_obj_set_style_text_color(note, lv_color_hex(0x8A8A99), LV_PART_MAIN);
+        lv_obj_set_style_text_font(note, lua_module_lvgl_scaled_builtin_font(24), LV_PART_MAIN);
+        lv_obj_align(note, LV_ALIGN_TOP_MID, 0, 82);
+    } else {
+        /* With a card, the top-right toggle switches list <-> grid. */
+        add_toggle(screen, view, on_toggle);
+    }
 
     if (view == LAUNCHER_VIEW_GRID) {
         build_grid(screen, count, get_app, ctx, on_row_click, on_row_delete, on_row_long_press);
     } else {
         build_list(screen, count, max_visible, get_app, ctx,
-                   on_row_click, on_row_delete, on_row_long_press, on_refresh);
+                   on_row_click, on_row_delete, on_row_long_press, on_refresh, list_pct);
     }
 }
 
@@ -642,6 +691,25 @@ void launcher_home_app_sheet(lv_obj_t *screen, const launcher_home_app_t *app,
         lv_obj_set_style_text_color(d, lv_color_hex(0x8A8A99), LV_PART_MAIN);
         lv_obj_set_style_text_font(d, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
         lv_obj_align(d, LV_ALIGN_TOP_MID, 0, 214);
+    }
+
+    /* A built-in cannot be deleted, so it gets no Delete button at all --
+     * Cancel then sits where Delete would have been, and the sheet reads as
+     * information rather than a dead control. */
+    if (!app->deletable) {
+        lv_obj_t *only_cancel = lv_button_create(screen);
+        lv_obj_set_size(only_cancel, 320, 96);
+        lv_obj_align(only_cancel, LV_ALIGN_BOTTOM_MID, 0, -8);
+        lv_obj_set_style_radius(only_cancel, 16, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(only_cancel, lv_color_hex(0x24303C), LV_PART_MAIN);
+        lv_obj_t *ocl = lv_label_create(only_cancel);
+        lv_label_set_text(ocl, "Cancel");
+        lv_obj_set_style_text_color(ocl, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+        lv_obj_center(ocl);
+        if (on_cancel) {
+            lv_obj_add_event_cb(only_cancel, on_cancel, LV_EVENT_CLICKED, NULL);
+        }
+        return;
     }
 
     /* Delete: armed (grey + non-clickable) for 400ms, then red + live. */
