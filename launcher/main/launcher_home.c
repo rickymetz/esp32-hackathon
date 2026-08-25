@@ -593,6 +593,14 @@ static void sheet_icon(lv_obj_t *parent, const launcher_home_app_t *app, int siz
     lv_obj_center(lbl);
 }
 
+/* The arm timer holds a raw pointer to the Delete button, and the sheet can be
+ * dismissed inside its 400ms window -- the sheet appears mid-long-press with a
+ * finger still down, so releasing and tapping Cancel (or pressing BOOT) in that
+ * window is easy. The button would then be freed with the screen and the timer
+ * would style dead memory. Tracked here so whichever happens first cancels the
+ * other; one sheet exists at a time, which launcher_main.c enforces. */
+static lv_timer_t *s_arm_timer;
+
 /* Arms the Delete button after the delay: makes it clickable and full red. The
  * 400ms disarm is the same guard ui.confirm uses, so a stray tap can't delete. */
 static void sheet_arm_cb(lv_timer_t *t)
@@ -600,7 +608,18 @@ static void sheet_arm_cb(lv_timer_t *t)
     lv_obj_t *btn = (lv_obj_t *)lv_timer_get_user_data(t);
     lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(btn, lv_color_hex(0xEB5757), LV_PART_MAIN);
+    s_arm_timer = NULL;
     lv_timer_delete(t);
+}
+
+/* The button is going away. If the timer has not fired yet, kill it now. */
+static void sheet_arm_cancel_cb(lv_event_t *e)
+{
+    (void)e;
+    if (s_arm_timer != NULL) {
+        lv_timer_delete(s_arm_timer);
+        s_arm_timer = NULL;
+    }
 }
 
 void launcher_home_app_sheet(lv_obj_t *screen, const launcher_home_app_t *app,
@@ -638,7 +657,8 @@ void launcher_home_app_sheet(lv_obj_t *screen, const launcher_home_app_t *app,
     lv_obj_center(dl);
     if (on_delete) {
         lv_obj_add_event_cb(del, on_delete, LV_EVENT_CLICKED, NULL);
-        lv_timer_create(sheet_arm_cb, 400, del);
+        s_arm_timer = lv_timer_create(sheet_arm_cb, 400, del);
+        lv_obj_add_event_cb(del, sheet_arm_cancel_cb, LV_EVENT_DELETE, NULL);
     } else {
         /* Non-interactive (sim): show it armed so the render matches the device. */
         lv_obj_set_style_bg_color(del, lv_color_hex(0xEB5757), LV_PART_MAIN);

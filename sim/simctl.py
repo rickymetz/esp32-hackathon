@@ -41,7 +41,7 @@ Example:
   sim/simctl.py run apps/counter.lua : sleep 1 : tap 184 224 : shot out.png
   sim/simctl.py run apps/tip.lua : tap 184 130 : typenum 4250 : shot tip.png
   sim/simctl.py run apps/level.lua : accel 0.5 0 0.866 : sleep 0.2 : shot tilt.png
-  sim/simctl.py rtc unset : run apps/clock.lua : shot noclock.png
+  sim/simctl.py face unset : shot noclock.png
 
 Options:
   --sdroot DIR   SD-card root that app/font paths resolve against

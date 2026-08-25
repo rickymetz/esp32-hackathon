@@ -48,7 +48,11 @@ end
 -- --------------------------------------------------------------------- Wi-Fi
 local function page_wifi()
     scr:clean()
-    ui.header(scr, { title = "Wi-Fi", on_back = show_menu })
+    local poll   -- declared before the header so on_back can cancel it
+    ui.header(scr, { title = "Wi-Fi", on_back = function()
+        if poll then poll:cancel(); poll = nil end
+        show_menu()
+    end })
 
     local ssid = prefs.get("wifi_ssid", "")
     local pass = prefs.get("wifi_pass", "")
@@ -84,7 +88,13 @@ local function page_wifi()
     -- wifi.connect() never blocks -- it starts the attempt and returns -- so
     -- the result has to be polled. "failed" means five attempts, usually a
     -- wrong password.
-    timer.every(500, function()
+    --
+    -- Cancelled on the way out. Leaving it running meant scr:clean() deleted
+    -- the `status` label under it, so every tick raised "lvgl object has been
+    -- deleted" -- logged, not fatal, and it does NOT cancel the timer, so it
+    -- kept firing twice a second for the rest of the app's life while holding
+    -- one of only 16 slots. Sixteen visits to this page and timer.every raises.
+    poll = timer.every(500, function()
         local st = wifi.status()
         if st == "connected" then
             status:set_text(wifi.time_synced() and ("connected  clock synced")

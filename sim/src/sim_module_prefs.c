@@ -89,7 +89,14 @@ static int l_prefs_clear(lua_State *L)
     for (int i = 0; i < s_count; i++) {
         if (strcmp(s_entries[i].key, key) == 0) {
             free(s_entries[i].str);
+            /* Move the last entry down, then blank the slot it came from.
+             * Without the blanking two slots hold the SAME char*, and the
+             * next set() to reuse that slot free()s a string the live entry
+             * is still pointing at -- get() then reads freed memory and a
+             * later clear() double-frees it. */
             s_entries[i] = s_entries[--s_count];
+            s_entries[s_count].str = NULL;
+            s_entries[s_count].key[0] = '\0';
             break;
         }
     }

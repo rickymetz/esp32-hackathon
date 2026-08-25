@@ -753,27 +753,9 @@ static void refresh_clicked(lv_event_t *e)
         return;   /* never rescan or rebuild under a running app */
     }
 
-    lv_obj_t *old = s_launcher_screen;
-
     app_registry_invalidate();
     app_registry_scan();
-    build_launcher_ui();
-
-    /* build_launcher_ui() already loaded the new screen; delete the old one
-     * now that it is no longer the active screen. Never delete the screen
-     * that is currently on-screen -- that path is only reached here because
-     * the new screen has already replaced it.
-     *
-     * Explicitly locked even though refresh_clicked() only ever runs inside
-     * the LVGL task's own (recursive) lock today: that is an implicit
-     * invariant, not something lv_obj_delete() enforces, and it would break
-     * silently if Refresh is ever triggered from elsewhere -- e.g. a future
-     * serial REFRESH command, alongside the existing RUN/STOP. */
-    if (old != NULL && old != s_launcher_screen) {
-        bsp_display_lock(0);
-        lv_obj_delete(old);
-        bsp_display_unlock();
-    }
+    build_launcher_ui();   /* frees the screen it replaces */
 
     xSemaphoreGive(s_app_mutex);
 }
@@ -795,13 +777,7 @@ static void view_toggle_clicked(lv_event_t *e)
     s_view_mode = (s_view_mode == LAUNCHER_VIEW_LIST) ? LAUNCHER_VIEW_GRID
                                                       : LAUNCHER_VIEW_LIST;
 
-    lv_obj_t *old = s_launcher_screen;
-    build_launcher_ui();
-    if (old != NULL && old != s_launcher_screen) {
-        bsp_display_lock(0);
-        lv_obj_delete(old);
-        bsp_display_unlock();
-    }
+    build_launcher_ui();   /* frees the screen it replaces */
 
     xSemaphoreGive(s_app_mutex);
 }
@@ -861,13 +837,11 @@ static void sheet_delete_cb(lv_event_t *e)
     (void)e;
     app_registry_delete_app(s_sheet_id);     /* unlink + rescan under the lock */
 
-    lv_obj_t *old_home = s_launcher_screen;
     lv_obj_t *sheet = s_sheet_screen;
     s_sheet_screen = NULL;
-    build_launcher_ui();                      /* creates + loads a new home screen */
+    build_launcher_ui();   /* creates + loads a new home screen, frees the old */
 
     bsp_display_lock(0);
-    if (old_home && old_home != s_launcher_screen) lv_obj_delete(old_home);
     if (sheet) lv_obj_delete(sheet);
     bsp_display_unlock();
 }
@@ -1151,16 +1125,37 @@ static void shell_toggle_view(void)
 {
     if (s_shell_view == SHELL_VIEW_FACE) {
         show_apps_screen();
-    } else {
-        show_face_screen();
+        return;
     }
+
+    /* Leaving the app list. A long-press info sheet may be open over it, and
+     * it is a screen of its own -- neither show_face_screen() nor anything it
+     * calls knows about it. Left behind it leaked, AND app_row_long_pressed()
+     * bails on `s_sheet_screen != NULL`, so long-press-to-delete stayed dead
+     * for the rest of the boot. Dispose of it before the face loads. */
+    if (s_sheet_screen != NULL) {
+        lv_obj_t *sheet = s_sheet_screen;
+        s_sheet_screen = NULL;
+        bsp_display_lock(0);
+        lv_obj_delete(sheet);
+        bsp_display_unlock();
+    }
+    show_face_screen();
 }
 
+/* Builds the app list and leaves it loaded, freeing whatever screen it
+ * replaced -- the same contract build_face_ui() has. It used to be the
+ * CALLER's job, which three of the four callers did and show_apps_screen()
+ * did not, so every BOOT toggle from the face to the app list leaked a whole
+ * screen tree: rows, their strdup'd basenames and their decoded card icons.
+ * Owning it here means a new caller cannot get it wrong. */
 static void build_launcher_ui(void)
 {
     size_t count = app_registry_count();
 
     bsp_display_lock(0);
+
+    lv_obj_t *old = s_launcher_screen;
 
     s_launcher_screen = lv_obj_create(NULL);
     /* True black, not near-black: watchOS/Wear OS are dark-theme only, and on
@@ -1178,6 +1173,13 @@ static void build_launcher_ui(void)
                         refresh_clicked, view_toggle_clicked);
 
     lv_screen_load(s_launcher_screen);
+
+    /* Only now that the new screen is active is the old one safe to free:
+     * lv_screen_load() does not free what it replaces, and deleting the screen
+     * that is still on-screen is the crash this ordering exists to prevent. */
+    if (old != NULL && old != s_launcher_screen) {
+        lv_obj_delete(old);
+    }
     bsp_display_unlock();
 }
 
@@ -1284,6 +1286,12 @@ static void apply_persisted_font_scale(lv_display_t *disp)
     if (pct >= 70 && pct <= 130) {
         lua_module_lvgl_set_font_scale((float)pct / 100.0f);
     }
+
+    /* Same story for the speaker level: Settings wrote "volume" to NVS and
+     * nothing read it back, so the choice never survived a reboot even though
+     * APP_CONTRACT lists it among the keys the shell must know about. -1 is
+     * "never set", which app_audio_set_volume() ignores. */
+    app_audio_set_volume((int)shell_nvs_get_i32("volume", -1));
 
     bsp_display_lock(0);
     lv_display_set_theme(disp,

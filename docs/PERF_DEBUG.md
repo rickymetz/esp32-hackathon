@@ -21,7 +21,7 @@ It also chains inside `drive.py`, which is how you measure a *specific*
 interaction rather than the idle device:
 
 ```bash
-./.venv/bin/python tools/drive.py run faces.lua : stats : sleep 5 : stats
+./.venv/bin/python tools/drive.py run stopwatch.lua : stats : sleep 5 : stats
 ```
 
 **CPU is a delta between consecutive `STATS` calls, not a since-boot

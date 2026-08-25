@@ -5,14 +5,14 @@ The launch/exit cycle is known leak-free; SUSTAINED running is not, and
 a watch face ticking every second with per-minute repaints is exactly
 the shape of thing that leaks slowly.
 
-    tools/soak.py faces.lua 120     # minutes
+    tools/soak.py stopwatch.lua 120     # minutes
 
 Samples free PSRAM and internal DRAM via a MEM serial command, appending
 CSV so a run survives interruption.
 """
 import sys, glob, time, serial, datetime
 
-app = sys.argv[1] if len(sys.argv) > 1 else 'faces.lua'
+app = sys.argv[1] if len(sys.argv) > 1 else 'stopwatch.lua'
 minutes = float(sys.argv[2]) if len(sys.argv) > 2 else 60.0
 out = sys.argv[3] if len(sys.argv) > 3 else 'soak.csv'
 

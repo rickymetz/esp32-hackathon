@@ -48,6 +48,7 @@ struct launcher_face {
 
     /* analog */
     hand_t h, m, s;
+    lv_obj_t *pin;          /* the pinion, hidden with the hands */
 
     /* rings */
     lv_obj_t *ring_h, *ring_m, *ring_s;
@@ -229,6 +230,7 @@ static void build_analog(struct launcher_face *f, lv_obj_t *p)
     /* The pinion, created last so it draws above every hand. Without it the
      * three tails merge into a wedge and the eye reads that as the centre. */
     lv_obj_t *pin = lv_obj_create(p);
+    f->pin = pin;
     lv_obj_set_size(pin, 22, 22);
     lv_obj_align(pin, LV_ALIGN_CENTER, 0, 0);
     lv_obj_set_style_bg_color(pin, lv_color_hex(COL_TEXT), LV_PART_MAIN);
@@ -408,6 +410,27 @@ void launcher_face_destroy(launcher_face_t *face)
     lv_free(face);   /* widgets belong to the screen */
 }
 
+/* Every widget that shows a time, across all five styles. Hidden together
+ * when the clock has no trustworthy value. Each is NULL on the styles that
+ * do not use it, which lv_obj_* would not tolerate, hence the guard. */
+static void show_time_widgets(struct launcher_face *f, bool show)
+{
+    lv_obj_t *const w[] = {
+        f->big, f->small, f->words, f->ampm,
+        f->ring_h, f->ring_m, f->ring_s,
+        f->h.body, f->h.tail, f->m.body, f->m.tail, f->s.body, f->s.tail,
+        f->pin,
+    };
+    for (size_t i = 0; i < sizeof(w) / sizeof(w[0]); i++) {
+        if (w[i] == NULL) continue;
+        if (show) {
+            lv_obj_remove_flag(w[i], LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(w[i], LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
 void launcher_face_update(launcher_face_t *f, const launcher_face_data_t *d)
 {
     if (f == NULL || d == NULL) return;
@@ -427,11 +450,21 @@ void launcher_face_update(launcher_face_t *f, const launcher_face_data_t *d)
             lv_obj_align(f->unset, LV_ALIGN_CENTER, 0, 0);
         }
         lv_obj_remove_flag(f->unset, LV_OBJ_FLAG_HIDDEN);
+        /* Hide the time itself, or the message lands ON TOP of it. Adding the
+         * label was not enough: the builders seed their readouts with "--:--"
+         * / "--", and in the 120px face -- digits and ".:" only, a full charset
+         * there costs ~2 MB -- those dashes are missing glyphs, so a fresh
+         * board drew tofu boxes through "Clock not set". The other faces left
+         * a live-looking placeholder or a set of hands behind it, which is the
+         * same mistake in a politer form: on an unset clock nothing that looks
+         * like a time may be on screen. */
+        show_time_widgets(f, false);
         return;
     }
     if (f->unset != NULL) {
         lv_obj_add_flag(f->unset, LV_OBJ_FLAG_HIDDEN);
     }
+    show_time_widgets(f, true);
 
     char buf[64];
 

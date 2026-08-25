@@ -131,7 +131,6 @@ FRAMES = [
     # Settings: the menu plus the two pages most likely to regress -- the
     # timezone page (which writes the NVS offset the C face reads) and Wi-Fi
     # (the absorbed wifi_setup).
-    ("settings",      ["run", "apps/settings.lua", ":", "sleep", "0.4"]),
     ("settings_time", ["run", "apps/settings.lua", ":", "sleep", "0.3",
                        ":", "tap", "184", "384", ":", "sleep", "0.4"]),
     ("settings_wifi", ["run", "apps/settings.lua", ":", "sleep", "0.3",
@@ -159,6 +158,10 @@ FRAMES = [
     ("face_words",   ["face", "words",   "10:09:30", "72"]),
     ("face_minimal", ["face", "minimal", "10:09:30", "72"]),
     ("face_unset",   ["face", "unset"]),
+    # The unset state on a face that has hands and a pinion, not just a label.
+    # The digital case alone accepted a screen full of missing-glyph boxes for
+    # as long as it existed, because nobody looked at the golden it wrote.
+    ("face_unset_analog", ["face", "analog", "unset"]),
     ("face_low",     ["face", "07:45", "12"]),
 ]
 

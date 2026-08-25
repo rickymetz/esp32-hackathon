@@ -9,7 +9,7 @@
  *
  *   rtc     -- a fixed wall clock (2026-08-22 14:30:00, Saturday), settable
  *              via rtc.set and by the NTP path (app_sensors_rtc_set_tm), so
- *              clock.lua and the watch faces render a real time.
+ *              the watch faces render a real time.
  *   imu     -- the board lying flat and still: accel (0,0,1) g, gyro (0,0,0),
  *              die_temp ~25.9 C. Orientation maths that reads gravity works.
  *   battery -- 76%, 4.05 V, not charging, on external power.

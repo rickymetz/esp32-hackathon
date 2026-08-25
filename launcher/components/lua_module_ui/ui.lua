@@ -112,31 +112,30 @@ M.ZONES = {
     { "Auckland", 720 },
 }
 
-local TZ_PATH = "/sdcard/tz.txt"
+-- The zone lives in NVS, in the same keys apps/settings.lua writes and the C
+-- watch face reads. It used to be a file at /sdcard/tz.txt; nothing writes
+-- that file any more, so this kept returning London/UTC no matter what the
+-- user had chosen -- a silently wrong timezone rather than an error, in the
+-- one helper the contract points apps at.
+local prefs = require("prefs")
 
 -- Returns city index, dst flag, offset in minutes. Defaults to London,
 -- so an unconfigured device reads as UTC rather than as a guess.
 function M.zone()
-    local idx, dst = 11, false
-    local f = io.open(TZ_PATH, "r")
-    if f then
-        local name = f:read("*l")
-        local d = f:read("*l")
-        f:close()
-        for i, z in ipairs(M.ZONES) do
-            if z[1] == name then idx = i break end
-        end
-        dst = (d == "1")
-    end
+    local idx = prefs.get("tz_city", 11)
+    if type(idx) ~= "number" or idx < 1 or idx > #M.ZONES then idx = 11 end
+    local dst = prefs.get("tz_dst", 0) == 1
     return idx, dst, M.ZONES[idx][2] + (dst and 60 or 0)
 end
 
+-- Writes all three keys together. tz_min is the EFFECTIVE offset (summer time
+-- already folded in) because the C face applies it directly and has no city
+-- table; the other two are what let this function reconstruct the choice.
 function M.save_zone(idx, dst)
-    local f = io.open(TZ_PATH, "w")
-    if f then
-        f:write(M.ZONES[idx][1] .. "\n" .. (dst and "1" or "0") .. "\n")
-        f:close()
-    end
+    if type(idx) ~= "number" or idx < 1 or idx > #M.ZONES then return end
+    prefs.set("tz_city", idx)
+    prefs.set("tz_dst", dst and 1 or 0)
+    prefs.set("tz_min", M.ZONES[idx][2] + (dst and 60 or 0))
 end
 
 local function leap(y) return (y % 4 == 0 and y % 100 ~= 0) or y % 400 == 0 end
