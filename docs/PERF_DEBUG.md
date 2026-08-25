@@ -55,6 +55,13 @@ parse its three fields positionally, and widening it would have broken both.
 `CONFIG_LV_USE_SYSMON` + `CONFIG_LV_USE_PERF_MONITOR` paint LVGL's own
 frame-rate and CPU figure into the corner of the live screen.
 
+**`PERF_MONITOR` is off by default.** It paints onto the live panel, and
+`release.yml` builds release firmware from `sdkconfig.defaults`, so leaving it
+on shipped a debug overlay over the watch face on every board flashed from a
+release. Turn it on for a perf session — `idf.py menuconfig`, Components →
+LVGL → Others → sysmon, or add `CONFIG_LV_USE_PERF_MONITOR=y` to `sdkconfig` —
+and leave it out of anything you tag.
+
 **`SHOT` does not capture it, and cannot.** `handle_shot()` calls
 `lv_snapshot_take(lv_screen_active())`, but sysmon builds its label on the
 *system layer* — `lv_label_create(lv_display_get_layer_sys(disp))`, at

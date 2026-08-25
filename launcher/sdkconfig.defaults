@@ -158,13 +158,28 @@ CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
 # 1626, LV_USE_PERF_MONITOR at 1630) rather than guessed -- the same
 # check that CONFIG_LV_USE_CLIB_MALLOC above needed.
 #
-# PERF_MONITOR draws FPS and CPU into the corner of the live screen, so
-# SHOT captures it automatically: every screenshot the harness takes
-# carries the frame rate with it, with no extra plumbing.
-# Set CONFIG_LV_USE_PERF_MONITOR_LOG_MODE=y instead to send it to the log
-# rather than paint it, if the overlay ever gets in the way of UI review.
+# SYSMON stays on -- it is the subsystem, and costs nothing unattached.
+#
+# PERF_MONITOR is OFF by default, for two reasons.
+#
+# It draws FPS and CPU into the corner of the LIVE SCREEN, and .github/
+# workflows/release.yml builds release firmware straight from this file --
+# so leaving it on shipped a debug overlay painted over the watch face to
+# every board flashed from a release.
+#
+# And the benefit it was turned on for does not exist: the comment here used
+# to claim "SHOT captures it automatically". It cannot. handle_shot() calls
+# lv_snapshot_take(lv_screen_active()), while sysmon builds its label on the
+# SYSTEM LAYER (lv_sysmon.c:91), which is a sibling of the screen rather than
+# a child -- so no screenshot can ever contain it. docs/PERF_DEBUG.md section
+# 2 has the detail. It was visible on the physical panel only, which is the
+# one place it hurt.
+#
+# Turn it on for a perf session with `idf.py menuconfig` (Components -> LVGL
+# -> Others -> sysmon) or by adding the line below to sdkconfig; STATS
+# already reports per-task CPU and heap without touching the display.
+# CONFIG_LV_USE_PERF_MONITOR=y
 CONFIG_LV_USE_SYSMON=y
-CONFIG_LV_USE_PERF_MONITOR=y
 # Deliberately NOT enabling CONFIG_LV_USE_MEM_MONITOR: it reports
 # lv_mem_monitor(), whose core is a no-op under CONFIG_LV_USE_CLIB_MALLOC
 # (set above), so it would paint a permanent 0/0 on screen. STATS reports
