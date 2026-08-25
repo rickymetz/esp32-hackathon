@@ -46,61 +46,128 @@ local function page_face()
 end
 
 -- --------------------------------------------------------------------- Wi-Fi
+-- Pick a network from a scan; type only the password. Typing an SSID blind is
+-- how this used to work, and it made every typo look like a wrong password.
+-- Ported here from the retired apps/wifi_setup.lua, which this page absorbed.
 local function page_wifi()
     scr:clean()
-    local poll   -- declared before the header so on_back can cancel it
+
+    local poll      -- declared first: on_back and the closures below all use it
+    local scanning = true
+
     ui.header(scr, { title = "Wi-Fi", on_back = function()
+        -- Cancel on the way out. A live timer whose widgets scr:clean() has
+        -- deleted raises on every tick -- logged, not fatal, and it never frees
+        -- its slot, so 16 visits exhaust the app's timers.
         if poll then poll:cancel(); poll = nil end
         show_menu()
     end })
 
-    local ssid = prefs.get("wifi_ssid", "")
-    local pass = prefs.get("wifi_pass", "")
+    local status = ui.note(scr, "", { align = "bottom_mid", y = -108, size = 26 })
+    local list = ui.list(scr, { y = 96, h = 226, pad_row = 12 })
 
-    local status = ui.note(scr, "", { y = 150, size = 26 })
-    local list = ui.list(scr, { y = 96, h = 210, pad_row = 12 })
+    local function connect_to(ssid, pass)
+        prefs.set("wifi_ssid", ssid)
+        prefs.set("wifi_pass", pass or "")
+        status:set_text("connecting...")
+        wifi.connect(ssid, pass or "")
+    end
 
-    local row_ssid = ui.row(list, { text = ssid ~= "" and ssid or "Network...", kind = "nav" })
-    local row_pass = ui.row(list, { text = pass ~= "" and "Password set" or "Password...", kind = "nav" })
-
-    -- Nothing typed here ever leaves the board: the on-screen keyboard writes
-    -- straight to prefs. A password must never be asked for over the serial
-    -- link, which is why this app exists rather than a host-side tool.
-    row_ssid.row:on("clicked", function()
-        keyboard.open({ title = "Network", mode = "text", initial = ssid }, function(t)
-            if t then ssid = t; prefs.set("wifi_ssid", t); row_ssid.label:set_text(t) end
+    -- Nothing typed here leaves the board: the on-screen keyboard writes
+    -- straight to NVS. A password must never be asked for over the serial
+    -- link, which is why this page exists rather than a host-side tool.
+    local function ask_password(ssid)
+        keyboard.open({ title = ssid, mode = "text" }, function(t)
+            if t then connect_to(ssid, t) end
         end)
-    end)
-    row_pass.row:on("clicked", function()
-        keyboard.open({ title = "Password", mode = "text", initial = pass }, function(t)
-            if t then pass = t; prefs.set("wifi_pass", t); row_pass.label:set_text("Password set") end
-        end)
-    end)
+    end
 
-    ui.button(scr, { text = "Connect", kind = "primary", align = "bottom_mid", y = -8,
-                     w = 344, h = 96,
+    -- A scan omits hidden networks, so manual entry has to stay reachable.
+    local function manual_entry()
+        keyboard.open({ title = "Network", mode = "text" }, function(name)
+            if not name or name == "" then return end
+            keyboard.open({ title = "Password", mode = "text" }, function(pass)
+                connect_to(name, pass or "")
+            end)
+        end)
+    end
+
+    local function render(nets)
+        list:clean()
+        if nets == nil then
+            ui.note(list, "scanning...", { size = 26 })
+        elseif #nets == 0 then
+            ui.note(list, "no networks found", { size = 26 })
+        else
+            for _, net in ipairs(nets) do
+                -- There is no padlock in the symbol roster (APP_CONTRACT);
+                -- eye_close is the nearest "closed" glyph. Swap it if a lock
+                -- is ever added to the font.
+                local label = net.secure
+                    and (lvgl.symbol.eye_close .. "  " .. net.ssid) or net.ssid
+                ui.row(list, {
+                    text = label, kind = "nav",
+                    on_click = function()
+                        if net.secure then ask_password(net.ssid)
+                        else connect_to(net.ssid, "") end
+                    end,
+                })
+            end
+        end
+        ui.row(list, { text = "Other network...", kind = "nav", on_click = manual_entry })
+    end
+
+    ui.button(scr, {
+        text = "Rescan", kind = "secondary",
+        align = "bottom_left", x = 12, y = -10, w = 164, h = 88,
         on_click = function()
-            if ssid == "" then status:set_text("Enter a network first"); return end
-            status:set_text("connecting...")
-            wifi.connect(ssid, pass)
-        end })
+            scanning = true
+            render(nil)
+            wifi.scan_start()
+        end,
+    })
 
-    -- wifi.connect() never blocks -- it starts the attempt and returns -- so
-    -- the result has to be polled. "failed" means five attempts, usually a
-    -- wrong password.
-    --
-    -- Cancelled on the way out. Leaving it running meant scr:clean() deleted
-    -- the `status` label under it, so every tick raised "lvgl object has been
-    -- deleted" -- logged, not fatal, and it does NOT cancel the timer, so it
-    -- kept firing twice a second for the rest of the app's life while holding
-    -- one of only 16 slots. Sixteen visits to this page and timer.every raises.
-    poll = timer.every(500, function()
+    ui.button(scr, {
+        text = "Forget", kind = "danger",
+        align = "bottom_right", x = -12, y = -10, w = 164, h = 88,
+        on_click = function()
+            ui.confirm({
+                title = "Forget network?",
+                message = "The board will stop connecting on its own.",
+                confirm_label = "Forget",
+                destructive = true,
+            }, function(yes)
+                if yes then
+                    wifi.forget()
+                    wifi.disconnect()
+                    ui.toast(scr, "forgotten")
+                end
+            end)
+        end,
+    })
+
+    render(nil)
+    wifi.scan_start()
+
+    -- One timer for both jobs. Polls faster than either thing it watches and
+    -- repaints only on change: a poll matched to the source's own rate misses
+    -- updates (APP_CONTRACT, timer section).
+    poll = timer.every(250, function()
+        if scanning then
+            local nets = wifi.scan_results()
+            if nets then
+                scanning = false
+                render(nets)
+            end
+        end
         local st = wifi.status()
         if st == "connected" then
-            status:set_text(wifi.time_synced() and ("connected  clock synced")
-                                               or ("connected  " .. (wifi.ip() or "")))
+            status:set_text(wifi.time_synced() and "connected  clock synced"
+                                                or ("connected  " .. (wifi.ip() or "")))
         elseif st == "failed" then
-            status:set_text("failed - check the password")
+            status:set_text("failed - " .. (wifi.error() or "check the password"))
+        elseif st == "retrying" then
+            status:set_text("retrying - " .. (wifi.error() or "network not found"))
         elseif st == "connecting" then
             status:set_text("connecting...")
         end

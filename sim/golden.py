@@ -133,8 +133,12 @@ FRAMES = [
     # (the absorbed wifi_setup).
     ("settings_time", ["run", "apps/settings.lua", ":", "sleep", "0.3",
                        ":", "tap", "184", "384", ":", "sleep", "0.4"]),
+    # 1.5s, not the usual 0.4: the scan stub resolves after ~3 polls of the
+    # page's 250ms timer (~0.75s), so 0.4 captures "scanning..." -- the least
+    # informative state, and only ~2x from flipping to the populated list if
+    # timings ever shift. 1.5s is clear of both boundaries.
     ("settings_wifi", ["run", "apps/settings.lua", ":", "sleep", "0.3",
-                       ":", "tap", "184", "268", ":", "sleep", "0.4"]),
+                       ":", "tap", "184", "268", ":", "sleep", "1.5"]),
 
     # The same two pages at the 1.3 font scale -- the accessibility ceiling, and
     # the state the simulator could not reach until --scale existed. Everything

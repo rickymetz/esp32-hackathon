@@ -761,11 +761,53 @@ local wifi = require("wifi")
 
 wifi.connect()                  -- use the saved network
 wifi.connect(ssid, password)    -- use these, and save them for next boot
-wifi.status()                   -- "off" | "connecting" | "connected" | "failed"
+wifi.status()                   -- "off" | "connecting" | "connected"
+                                --   | "retrying" | "failed"
+wifi.error()                    -- why it failed or is retrying, or nil
 wifi.ip()                       -- "192.168.1.42", or nil
+wifi.scan_start()               -- begin an async scan
+wifi.scan_results()             -- nil while scanning; else a list of
+                                --   { ssid=, rssi=, secure= }
 wifi.time_synced()              -- true once NTP has set the clock this boot
 wifi.disconnect() / wifi.forget()
 ```
+
+**`"retrying"` is new, and it changes what `"failed"` means.** The board used to
+give up permanently after five attempts. Now a **wrong password** still gives up
+— retrying it would only keep the radio busy — but an **absent network** backs
+off (30s → 5 min) and keeps trying, so the board reconnects on its own after a
+router reboot or a walk back into range.
+
+If you wrote `if wifi.status() == "failed"`, that branch no longer fires when the
+network is simply out of range; it reports `"retrying"` instead. Test both, or
+test `wifi.error() ~= nil`.
+
+**Scanning is polled, like `status()`:**
+
+```lua
+wifi.scan_start()
+
+timer.every(250, function()
+    local nets = wifi.scan_results()
+    if not nets then return end          -- still scanning
+    for _, n in ipairs(nets) do
+        print(n.ssid, n.rssi, n.secure)  -- strongest first, deduped
+    end
+end)
+```
+
+Results are sorted strongest-first, deduped by name (a dual-band AP or repeater
+appears once, not three times), and hidden networks are omitted — offer manual
+entry for those. `scan_results()` does not consume: reading twice gives the same
+answer until the next `scan_start()`.
+
+**A scan briefly interrupts an active connection.** That is accepted so you can
+switch networks without disconnecting first. `scan_start()` returns
+`nil, "connecting"` if a connection attempt is already in flight.
+
+**`apps/settings.lua`'s Wi-Fi page is the worked example for all of this** — it
+absorbed the old `apps/wifi_setup.lua`, so that is where the scan-then-pick flow,
+the manual-entry fallback for hidden networks, and the retry states now live.
 
 Poll `status()` from a `timer.every`, the same way you would poll anything
 else. `"failed"` means it gave up after five attempts — usually a wrong
