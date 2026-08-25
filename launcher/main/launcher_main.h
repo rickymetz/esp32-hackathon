@@ -71,6 +71,14 @@ bool launcher_refresh_ui(void);
  */
 void launcher_input_inject(int x0, int y0, int x1, int y1, int duration_ms);
 
+/**
+ * @brief Wake the panel and restart the inactivity ladder from the top.
+ *
+ * Safe from any task. Sets brightness to 100%, re-enables the touch indev,
+ * and resets LVGL's inactivity clock. Takes no launcher mutex.
+ */
+void launcher_screen_wake(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -576,6 +576,28 @@ static void handle_swipe(const char *header)
 }
 
 /* STOP -- ask the running app to stop, exactly as pressing BOOT does. */
+/* BRIGHT <pct> -- set panel brightness directly, 0-100.
+ *
+ * Exists because the screen timeout is otherwise miserable to test: the blank
+ * step is two minutes away, and SHOT cannot see brightness at all (it renders
+ * the LVGL framebuffer, not the panel). This makes the whole ladder reachable
+ * in seconds, and it is four lines.
+ *
+ * bsp_display_brightness_set() validates 0-100 itself and returns
+ * ESP_ERR_INVALID_ARG outside it, so the reply carries that rather than
+ * duplicating the check here. */
+static void handle_bright(const char *header)
+{
+    int pct = -1;
+
+    if (sscanf(header, "BRIGHT %d", &pct) != 1) {
+        printf("BRIGHT_ERR bad_args\n");
+        return;
+    }
+    esp_err_t err = bsp_display_brightness_set(pct);
+    printf("BRIGHT_OK %d err=%s\n", pct, esp_err_to_name(err));
+}
+
 static void handle_stop(void)
 {
     if (!launcher_stop_app()) {
@@ -616,6 +638,8 @@ static void serial_push_task(void *arg)
             handle_pwr();
         } else if (strcmp(line, "MEM") == 0) {
             handle_mem();
+        } else if (strncmp(line, "BRIGHT ", 7) == 0) {
+            handle_bright(line);
         } else if (strcmp(line, "STATS") == 0) {
             handle_stats();
         } else if (strcmp(line, "PING") == 0) {

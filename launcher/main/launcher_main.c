@@ -93,6 +93,41 @@ static const char *TAG = "launcher";
  * limit. A truncated list still says so rather than silently hiding apps. */
 #define MAX_VISIBLE_ROWS 64
 
+/* ---- Screen timeout ---------------------------------------------------
+ *
+ * The panel is the dominant load on this board. A device left lit and idle for
+ * ~32 minutes measured ~68 C actual silicon (hot to the touch), and it is what
+ * drains a 200 mAh cell. On OLED, brightness IS emission -- a black pixel is an
+ * off pixel -- so dimming is a real power lever rather than a cosmetic one.
+ *
+ * 50% was chosen by eye against real UI: clearly dimmer than full, still very
+ * legible. Do not substitute a guessed number.
+ *
+ * SCREEN_ASLEEP_PCT is 0, which stops emission but is NOT device-off: the panel
+ * controller stays clocked and LVGL keeps flushing dirty regions. A true
+ * panel-off needs esp_lcd_panel_disp_on_off(), and the BSP calls that once
+ * internally and never exposes the panel handle -- so 0 is the deepest sleep
+ * reachable without patching a managed component. */
+#define SCREEN_DIM_MS     30000
+#define SCREEN_SLEEP_MS   120000
+#define SCREEN_AWAKE_PCT  100
+#define SCREEN_DIM_PCT    50
+#define SCREEN_ASLEEP_PCT 0
+
+typedef enum { SCREEN_AWAKE, SCREEN_DIMMED, SCREEN_ASLEEP } screen_state_t;
+
+/* Written by button_poll_task and by launcher_screen_wake() (which the serial
+ * task calls). Deliberately unlocked: it is a word-sized enum so it cannot
+ * tear, and the two writers cannot disagree for long -- the poll loop
+ * recomputes the correct state from LVGL's inactivity clock every 20 ms, and
+ * a wake resets that clock, so a lost update self-heals within one tick.
+ *
+ * A mutex here would be the wrong trade: this is reached from the serial task
+ * while screen_set() touches the display, which is exactly the shape of the
+ * AB-BA inversion this codebase already shipped once. A 20 ms transient in
+ * panel brightness is not worth that risk. */
+static screen_state_t s_screen = SCREEN_AWAKE;
+
 static lv_obj_t *s_launcher_screen;
 
 /* ---- Shell navigation ---------------------------------------------------
@@ -153,6 +188,11 @@ static int64_t s_synth_idle_since;
 
 void launcher_input_inject(int x0, int y0, int x1, int y1, int duration_ms)
 {
+    /* A serial TAP/SWIPE wakes the screen, so tools/drive.py keeps working
+     * across a chain that idles past the sleep timeout. Explicit, rather than
+     * inferred from the inactivity counter going small. */
+    launcher_screen_wake();
+
     if (duration_ms < 60) duration_ms = 60;
     if (duration_ms > 2000) duration_ms = 2000;
 
@@ -655,6 +695,7 @@ close:
     app_button_reset(L);
     app_voice_reset(L);
     app_audio_reset(L);
+    lua_lvgl_keep_awake_reset();   /* a crashed app must not pin the backlight on */
     /* Re-read the persisted font scale: an app that called
      * lvgl.font_scale() without persisting must not restyle every later
      * app (Settings persists first, so its change survives). Also
@@ -1380,6 +1421,52 @@ bool launcher_refresh_ui(void)
  * Runs whether or not an app is up: pressing BOOT with no app running is a
  * harmless no-op. */
 
+/* The one place the panel's brightness and the touch indev change together.
+ *
+ * Disabling the touch indev on sleep does two jobs at once: a finger on a dark
+ * screen cannot press a button it cannot see, and a disabled indev generates no
+ * activity, so it cannot reset LVGL's inactivity timer and wake the screen it
+ * just failed to touch. */
+static void screen_set(screen_state_t next)
+{
+    if (next == s_screen) {
+        return;               /* idempotent: this runs every 20 ms */
+    }
+    lv_indev_t *touch = bsp_display_get_input_dev();
+
+    switch (next) {
+    case SCREEN_AWAKE:
+        bsp_display_brightness_set(SCREEN_AWAKE_PCT);
+        if (touch) lv_indev_enable(touch, true);
+        break;
+    case SCREEN_DIMMED:
+        bsp_display_brightness_set(SCREEN_DIM_PCT);
+        if (touch) lv_indev_enable(touch, true);
+        break;
+    case SCREEN_ASLEEP:
+        bsp_display_brightness_set(SCREEN_ASLEEP_PCT);
+        if (touch) lv_indev_enable(touch, false);
+        break;
+    }
+    s_screen = next;
+    ESP_LOGI(TAG, "screen -> %s",
+             next == SCREEN_AWAKE ? "awake" :
+             next == SCREEN_DIMMED ? "dimmed" : "asleep");
+}
+
+/* Wake and restart the ladder from the top.
+ *
+ * Safe from any task: it takes the display lock briefly for LVGL's activity
+ * reset and takes NO launcher mutex, so it cannot participate in a lock-order
+ * inversion (see the note at s_app_mutex). */
+void launcher_screen_wake(void)
+{
+    bsp_display_lock(0);
+    lv_display_trigger_activity(NULL);   /* reset LVGL's inactivity clock */
+    bsp_display_unlock();
+    screen_set(SCREEN_AWAKE);
+}
+
 /* Two-consecutive-sample debounce on the 20 ms poll tick. Returns true
  * exactly when the stable level changes, with the new level in *stable. */
 typedef struct {
@@ -1421,29 +1508,44 @@ static void button_poll_task(void *arg)
     bool level;
 
     for (;;) {
-        /* BOOT: active low. Three-way (see the shell navigation notes above).
+        /* BOOT: active low. Two jobs, in this order.
          *
-         * The stop request stays unconditional -- it must never gate on
-         * s_app_task being assigned, which is what stopped the very first
-         * version from ever returning. Reading s_app_task afterwards only
-         * decides whether this press ALSO toggles the shell surface: with an
-         * app up the stop request is the whole action, and lua_app_task's
-         * exit path lands on the face by itself. A press that races an app
-         * already exiting merely stops nothing and toggles, which is the
-         * behaviour you want anyway. */
+         * WAKE FIRST. A press on a dark screen lights it and does nothing
+         * else -- it must not silently stop an app the user cannot see. Only
+         * a press on an already-lit screen is navigation.
+         *
+         * Then the three-way toggle (see the shell navigation notes above).
+         * Within that branch the stop request stays UNCONDITIONAL: it must
+         * never gate on s_app_task being assigned, which is what stopped the
+         * very first version from ever returning. s_app_task is read only
+         * afterwards, to decide whether the press ALSO toggles the surface.
+         *
+         * The wake gate is a different condition and a deliberate one, but it
+         * has the same failure shape if it ever sticks: a screen state wedged
+         * at not-AWAKE would make BOOT stop nothing. It self-heals because
+         * launcher_screen_wake() sets AWAKE unconditionally, so the second
+         * press is always navigation -- worst case you press BOOT twice, and
+         * the escape hatch cannot be lost. */
         if (debounce_step(&boot_db, gpio_get_level(GPIO_NUM_0) == 0, &level) && level) {
-            launcher_lua_request_stop(true);
+            bool was_dark = (s_screen != SCREEN_AWAKE);
+            launcher_screen_wake();
 
-            xSemaphoreTake(s_app_mutex, portMAX_DELAY);
-            bool app_running = (s_app_task != NULL);
-            xSemaphoreGive(s_app_mutex);
-
-            if (app_running) {
-                ESP_LOGI(TAG, "BOOT pressed -- stopping app, returning home");
+            if (was_dark) {
+                ESP_LOGI(TAG, "BOOT pressed -- waking the screen");
             } else {
-                ESP_LOGI(TAG, "BOOT pressed -- %s",
-                         s_shell_view == SHELL_VIEW_FACE ? "face -> apps" : "apps -> face");
-                shell_toggle_view();
+                launcher_lua_request_stop(true);
+
+                xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+                bool app_running = (s_app_task != NULL);
+                xSemaphoreGive(s_app_mutex);
+
+                if (app_running) {
+                    ESP_LOGI(TAG, "BOOT pressed -- stopping app, returning home");
+                } else {
+                    ESP_LOGI(TAG, "BOOT pressed -- %s",
+                             s_shell_view == SHELL_VIEW_FACE ? "face -> apps" : "apps -> face");
+                    shell_toggle_view();
+                }
             }
         }
 
@@ -1455,6 +1557,26 @@ static void button_poll_task(void *arg)
                     app_button_record_edge(level);
                 }
             }
+        }
+
+        /* Screen timeout. Reuses this task rather than adding a fourth one: it
+         * already ticks at 20 ms and already owns BOOT, and this repo has
+         * already shipped an AB-BA deadlock by giving a new task the display. */
+        bsp_display_lock(0);
+        uint32_t idle = lv_display_get_inactive_time(NULL);
+        bsp_display_unlock();
+
+        /* keep_awake suppresses the BLANK but not the DIM. A watch face still
+         * drops to 50% after 30s, which is readable at a glance and roughly
+         * half the power; holding 100% indefinitely would recreate exactly the
+         * always-lit idle state this feature exists to remove -- reachable by
+         * launching the most obvious app on the device. */
+        if (idle >= SCREEN_SLEEP_MS && !lua_lvgl_keep_awake()) {
+            screen_set(SCREEN_ASLEEP);
+        } else if (idle >= SCREEN_DIM_MS) {
+            screen_set(SCREEN_DIMMED);
+        } else {
+            screen_set(SCREEN_AWAKE);
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }
