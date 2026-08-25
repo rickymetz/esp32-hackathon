@@ -54,6 +54,8 @@ local function page_wifi()
 
     local poll      -- declared first: on_back and the closures below all use it
     local scanning = true
+    local scan_deferred = false   -- a scan refused with "connecting"; retry later
+    local begin_scan
 
     ui.header(scr, { title = "Wi-Fi", on_back = function()
         -- Cancel on the way out. A live timer whose widgets scr:clean() has
@@ -133,21 +135,29 @@ local function page_wifi()
         ui.row(list, { text = "Other network...", kind = "nav", on_click = manual_entry })
     end
 
+    -- scan_start refuses while a connect is in flight, which is exactly the
+    -- state during the boot auto-connect -- the common case, not an edge. Two
+    -- things must happen on refusal and the first attempt only did the second:
+    -- CLEAR THE LIST, because render(nil) has just filled it with
+    -- "scanning..." and leaving it there reproduces the very stuck-forever bug
+    -- this was meant to fix; and remember to try again, because "connecting"
+    -- is temporary and the poll retries once it resolves.
+    begin_scan = function()
+        scanning = true
+        render(nil)
+        local ok, err = wifi.scan_start()
+        if not ok then
+            scanning = false
+            scan_deferred = (err == "connecting")
+            render({})                      -- "no networks found" + Other...
+            set_status("cannot scan - " .. tostring(err))
+        end
+    end
+
     ui.button(scr, {
         text = "Rescan", kind = "secondary",
         align = "bottom_left", x = 12, y = -10, w = 164, h = 88,
-        on_click = function()
-            scanning = true
-            render(nil)
-            -- scan_start refuses while a connect is in flight, which is the
-            -- state during the boot auto-connect. Discarding that left the
-            -- page on "scanning..." forever with no way to tell why.
-            local ok, err = wifi.scan_start()
-            if not ok then
-                scanning = false
-                set_status("cannot scan - " .. tostring(err))
-            end
-        end,
+        on_click = function() begin_scan() end,
     })
 
     ui.button(scr, {
@@ -169,19 +179,18 @@ local function page_wifi()
         end,
     })
 
-    render(nil)
-    do
-        local ok, err = wifi.scan_start()
-        if not ok then
-            scanning = false
-            set_status("cannot scan - " .. tostring(err))
-        end
-    end
+    begin_scan()
 
     -- One timer for both jobs. Polls faster than either thing it watches and
     -- repaints only on change: a poll matched to the source's own rate misses
     -- updates (APP_CONTRACT, timer section).
     poll = timer.every(250, function()
+        -- A scan refused because a connect was in flight: retry once that
+        -- resolves, instead of leaving the user to guess and tap Rescan.
+        if scan_deferred and wifi.status() ~= "connecting" then
+            scan_deferred = false
+            begin_scan()
+        end
         if scanning then
             local nets = wifi.scan_results()
             if nets then

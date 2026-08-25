@@ -206,6 +206,9 @@ static bool read_line(char *out, size_t cap)
  * without pausing. */
 #define DRAIN_SILENCE_MS 2000
 
+/* A stalled body transfer, not a rejected one -- see handle_push(). */
+#define BODY_SILENCE_MS  10000
+
 static void drain_push_payload(void)
 {
     char line[LINE_MAX];
@@ -256,7 +259,16 @@ static void handle_push(const char *header)
     char line[LINE_MAX];
     bool ok = true;
 
-    while (read_line(line, sizeof(line))) {
+    /* Same deadline as the drain, and for the same reason: read_line() spins
+     * forever on EOF, so a well-formed header followed by silence -- host
+     * killed, cable pulled mid-body, a human typing the header by hand --
+     * pinned this task permanently, holding the malloc'd buffer the whole
+     * time. The earlier fix bounded the REJECTED path and left this one, which
+     * is the branch that actually holds memory.
+     *
+     * Longer than the drain's: this is a real transfer, and push.py can pause
+     * between chunks in a way it never does when a push has been rejected. */
+    while (read_line_until(line, sizeof(line), BODY_SILENCE_MS)) {
         if (strcmp(line, "ENDPUSH") == 0) {
             break;
         }
@@ -268,6 +280,9 @@ static void handle_push(const char *header)
         }
         got += produced;
     }
+    /* Falling out of the loop without seeing ENDPUSH now also means "the
+     * sender went quiet". The length/CRC check below rejects it either way,
+     * which is the behaviour we want: an incomplete body is not a valid push. */
 
     if (!ok || got != expect_len) {
         free(buf);

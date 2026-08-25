@@ -151,15 +151,23 @@ for c in chains(args):
         s.write(b"LOG\n"); s.flush()
         # Streamed between markers rather than a single reply line, so read
         # until LOG_END instead of using cmd_and_wait.
-        out, deadline = [], time.time() + 8
+        out, deadline, ended = [], time.time() + 8, False
         while time.time() < deadline:
             ln = s.readline().decode("utf-8", "replace").rstrip("\r\n")
             if not ln:
                 continue
+            if ln.startswith("LOG_ERR"):
+                # The ring is designed to degrade (no PSRAM -> capture off), so
+                # this is a real answer, not log content. Printing it as if it
+                # were and exiting 0 is the failure this tool exists to avoid.
+                fail(f"log: {ln}")
             if ln.startswith("LOG_END"):
+                ended = True
                 break
             out.append(ln)
         print("\n".join(out))
+        if not ended:
+            fail("log: no LOG_END (dump truncated)")
     elif op == "boot":
         got = cmd_and_wait(s, "BOOT", "BOOT_OK", None)
         print("boot:", got)

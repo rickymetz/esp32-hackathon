@@ -248,7 +248,6 @@ static esp_err_t scan_locked(void)
             continue;   /* registry full */
         }
         bool shadowing = (app->builtin_src != NULL);
-        app->builtin_src = NULL;   /* a card app is never a built-in */
 
         if (is_dir) {
             sweep_push_tmp(entry_path);   /* stray temp from a failed folder push */
@@ -272,6 +271,14 @@ static esp_err_t scan_locked(void)
             app->in_folder = false;
         }
 
+        /* Cleared HERE, not at slot resolution: several paths above `continue`
+         * after the slot is chosen (a directory with no main.lua, a path too
+         * long). Clearing early meant a directory literally named
+         * "settings.lua" wiped the built-in's source pointer and then skipped
+         * the fill, leaving a listed entry whose path is the "<built-in>"
+         * label and whose loader is luaL_loadfile -- a permanently broken
+         * Settings for as long as that directory existed. */
+        app->builtin_src = NULL;   /* a card app is never a built-in */
         memcpy(app->id, cand_id, sizeof(app->id));
         pretty_name(ent->d_name, app->name, sizeof(app->name));
         ESP_LOGI(TAG, "found app '%s' (%s)%s", app->name, app->path,

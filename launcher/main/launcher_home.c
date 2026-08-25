@@ -542,6 +542,25 @@ void launcher_home_build(lv_obj_t *screen, size_t count, bool sd_mounted,
         return;
     }
 
+    /* No card, but apps present -- which is now the NORMAL cardless state,
+     * because the built-ins are seeded before the mount. That made the
+     * count == 0 branch above unreachable and took its "No SD card" message
+     * and its Refresh button with it: a card-less boot looked completely
+     * ordinary, and after inserting a card there was no way to rescan.
+     *
+     * Say so, and force LIST view. The grid has no Refresh control (it fills
+     * the screen with tiles), and with only built-ins there is nothing for a
+     * grid to be good at -- so the view that carries the rescan button is the
+     * right one until a card shows up. */
+    if (!sd_mounted) {
+        lv_obj_t *note = lv_label_create(screen);
+        lv_label_set_text(note, "No SD card -- built-in apps only");
+        lv_obj_set_style_text_color(note, lv_color_hex(0x8A8A99), LV_PART_MAIN);
+        lv_obj_set_style_text_font(note, lua_module_lvgl_scaled_builtin_font(24), LV_PART_MAIN);
+        lv_obj_align(note, LV_ALIGN_TOP_MID, 0, 68);
+        view = LAUNCHER_VIEW_LIST;
+    }
+
     /* With apps present, the top-right toggle switches list <-> grid. */
     add_toggle(screen, view, on_toggle);
 

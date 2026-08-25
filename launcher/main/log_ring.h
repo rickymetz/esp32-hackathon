@@ -18,11 +18,11 @@
  * happened, over the same port the harness already owns. No reset, no second
  * channel, no sharing.
  *
- * LIMIT worth knowing: this hooks esp_log_set_vprintf(), so it captures
- * ESP_LOGx only -- which includes the launcher's "app '<name>' failed:" and
- * its Lua traceback. It does NOT capture an app's own print(), which Lua
- * writes straight to stdout. If you need those, print via the launcher or
- * hook stdout as well.
+ * Captures BOTH: ESP_LOGx via the vprintf hook -- including the launcher's
+ * "app '<name>' failed:" and its Lua traceback -- and an app's own print(),
+ * which Lua writes straight to stdout and the hook therefore never sees. The
+ * sandbox installs a print() that tees through log_ring_puts() for exactly
+ * that reason; print() is what an app author actually wants to read back.
  */
 
 #pragma once
