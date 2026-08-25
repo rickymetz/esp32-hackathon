@@ -1166,6 +1166,9 @@ SWIPE x0 y0 x1 y1 [ms] -> synthetic swipe/drag
 MEM                  ->  MEM <psram_free> <internal_free> <largest_internal>
 PING                 ->  PONG launcher <proto> lvgl <x.y.z>  (confirm the port
                          really is the launcher before driving it)
+BRIGHT <pct>         ->  BRIGHT_OK <pct> err=<code>   (panel brightness 0-100;
+                         mainly for testing the screen timeout without waiting
+                         out its 30s/2min steps)
 <anything else>      ->  ERR unknown_command <verb>  (so a typo answers at once
                          instead of timing out silently)
 STATS                ->  heap low-water marks, per-task CPU and stack
