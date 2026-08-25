@@ -158,24 +158,29 @@ CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
 # 1626, LV_USE_PERF_MONITOR at 1630) rather than guessed -- the same
 # check that CONFIG_LV_USE_CLIB_MALLOC above needed.
 #
-# PERF_MONITOR draws FPS and CPU into the corner of the live screen.
+# SYSMON stays on -- it is the subsystem, and costs nothing unattached.
+#
+# PERF_MONITOR is compiled IN but HIDDEN AT BOOT, and toggled at runtime:
+# Settings -> Display & sound -> "FPS overlay", remembered in NVS as `fps`.
+# lv_sysmon_show_performance() / lv_sysmon_hide_performance() do the work. So
+# you get a frame rate on the board in front of you without a reflash, and a
+# release still boots clean -- .github/workflows/release.yml builds release
+# firmware straight from this file, and leaving the overlay on shipped a debug
+# readout painted over the watch face to every board flashed from a release.
 #
 # The comment that used to sit here claimed "SHOT captures it automatically:
 # every screenshot the harness takes carries the frame rate with it". That is
-# FALSE, and was re-verified on hardware: lv_sysmon_create() builds its label
-# on the system layer (lv_label_create(lv_display_get_layer_sys(disp)), see
+# FALSE, and has now been established twice independently: lv_sysmon builds its
+# label on the SYSTEM LAYER (lv_label_create(lv_display_get_layer_sys(disp)),
 # lvgl/src/debugging/sysmon/lv_sysmon.c), while handle_shot() snapshots
 # lv_screen_active(). The system layer is a sibling of the screen, not a child,
-# so the overlay can never appear in a SHOT. docs/PERF_DEBUG.md section 2 has
-# always documented this correctly; only this comment was wrong.
-#
-# So the overlay is readable on the physical panel and nowhere else. It is left
-# ON because that is still worth something to whoever is holding the board, and
-# because it provably cannot contaminate a golden-frame diff.
+# so the overlay can never appear in a SHOT. docs/PERF_DEBUG.md section 2 always
+# documented this correctly; only this comment was wrong. One upside: it
+# provably cannot contaminate a golden-frame diff.
 #
 # If you want a frame rate the HARNESS can read, LOG_MODE is the mechanism --
-# but it is not a one-line switch, which is the trap here. lv_sysmon emits it
-# with bare LV_LOG(), which compiles to nothing unless LV_USE_LOG is on, and
+# but it is not a one-line switch, which is the trap. lv_sysmon emits it with
+# bare LV_LOG(), which compiles to nothing unless LV_USE_LOG is on, and
 # LV_USE_LOG is off in this build. Setting LOG_MODE alone therefore removes the
 # overlay and prints NOTHING -- strictly worse than either state. The full
 # change is four symbols, and turns LVGL's own logging on globally:
@@ -185,7 +190,7 @@ CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
 #                                   # also surfaces LVGL's own WARN/ERROR
 #     CONFIG_LV_LOG_PRINTF=y        # route it to the console
 # Symbols verified against launcher/managed_components/lvgl__lvgl/Kconfig and
-# src/misc/lv_log.h. NOT yet tried on hardware -- the console-volume impact of
+# src/misc/lv_log.h. NOT tried on hardware -- the console-volume impact of
 # turning LVGL logging on is unmeasured, so measure before committing to it.
 CONFIG_LV_USE_SYSMON=y
 CONFIG_LV_USE_PERF_MONITOR=y

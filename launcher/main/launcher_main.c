@@ -1599,7 +1599,16 @@ static void button_poll_task(void *arg)
          * half the power; holding 100% indefinitely would recreate exactly the
          * always-lit idle state this feature exists to remove -- reachable by
          * launching the most obvious app on the device. */
-        if (idle >= SCREEN_SLEEP_MS && !lua_lvgl_keep_awake()) {
+        /* `dim_only` (Settings -> Display & sound) suppresses the blank exactly
+         * the way an app's keep_awake does. Task #40 asked for the timeout to
+         * be "user-configurable to dim-only", and the argument for wanting it
+         * is the watch face itself: a watch you must press a button to read is
+         * a worse watch, even though blanking is the better default for
+         * battery. Read fresh each tick rather than cached, so the choice
+         * applies the moment it is made -- an NVS read is cheap next to the SD
+         * and I2C work this same task already does every 20 ms. */
+        if (idle >= SCREEN_SLEEP_MS && !lua_lvgl_keep_awake() &&
+            shell_nvs_get_i32("dim_only", 0) != 1) {
             screen_set(SCREEN_ASLEEP);
         } else if (idle >= SCREEN_DIM_MS) {
             screen_set(SCREEN_DIMMED);
@@ -1630,6 +1639,19 @@ static void apply_persisted_font_scale(lv_display_t *disp)
      * APP_CONTRACT lists it among the keys the shell must know about. -1 is
      * "never set", which app_audio_set_volume() ignores. */
     app_audio_set_volume((int)shell_nvs_get_i32("volume", -1));
+
+    /* The FPS overlay is compiled in but starts hidden, so a release boots
+     * clean; Settings turns it on and remembers the choice here. LVGL creates
+     * it during lv_init when LV_USE_PERF_MONITOR is set, hence the explicit
+     * hide rather than relying on a default. It lives on the display's system
+     * layer, so it is unaffected by every screen swap below. */
+#if LV_USE_SYSMON && LV_USE_PERF_MONITOR
+    if (shell_nvs_get_i32("fps", 0) == 1) {
+        lv_sysmon_show_performance(disp);
+    } else {
+        lv_sysmon_hide_performance(disp);
+    }
+#endif
 
     bsp_display_lock(0);
     lv_display_set_theme(disp,

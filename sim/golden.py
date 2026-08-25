@@ -150,6 +150,14 @@ FRAMES = [
     ("settings_time_13", ["--scale", "1.3",
                           "run", "apps/settings.lua", ":", "sleep", "0.3",
                           ":", "tap", "184", "384", ":", "sleep", "0.4"]),
+    # The same page at the DEFAULT scale. There was no 1.0 golden for it, only
+    # the 1.3 one below, which is how "Display & sound" wrapped and was clipped
+    # by its own list -- at the default scale, on a shipped page -- without any
+    # test noticing. Long strings overflow independently of the font scale.
+    ("settings_disp", ["run", "apps/settings.lua", ":", "sleep", "0.3",
+                       ":", "swipe", "184", "380", "184", "120", "400",
+                       ":", "sleep", "0.4",
+                       ":", "tap", "184", "265", ":", "sleep", "0.4"]),
     ("settings_disp_13", ["--scale", "1.3",
                           "run", "apps/settings.lua", ":", "sleep", "0.3",
                           ":", "swipe", "184", "380", "184", "120", "400",

@@ -45,6 +45,32 @@ end
 
 M.chrome_font = chrome_font
 
+-- Largest chrome face whose rendered text actually FITS a given width.
+--
+-- chrome_font alone only caps GROWTH, so it fixed the scale>1.0 cases and left
+-- a long string broken at 1.0: "Display & sound" at the 40px header face is
+-- ~300px against 256px of room, so it wrapped and was clipped by the list
+-- below -- at the default scale, on a shipped page, with no golden covering
+-- it. Length matters as much as scale, and only one of the two was handled.
+--
+-- Lexend's average advance is ~0.55em; the 0.64 here is that plus margin, and
+-- it only ever errs toward a smaller face. Exact metrics would need a
+-- measure-text binding, which is not worth adding for chrome.
+local function chrome_fit(text, avail_w, nominal)
+    local n = #(text or "")
+    if n == 0 then return chrome_font(nominal) end
+    local scale = lvgl.font_scale() or 1.0
+    local pick = FONT_SIZES[1]
+    for _, size in ipairs(FONT_SIZES) do
+        if size <= nominal and (size * scale) * 0.64 * n <= avail_w then
+            pick = size
+        end
+    end
+    return lvgl.font(pick)
+end
+
+M.chrome_fit = chrome_fit
+
 -- A corner control drawn at watch scale but hit at ours: watchOS corner
 -- buttons read ~60px on this panel, and Apple can hit them -- our
 -- digitizer cannot. Two stacked widgets do the split: a 60px visual
@@ -188,7 +214,7 @@ function M.title(scr, text)
         text = text,
         align = "top_mid", y = 26,
         text_color = "#FFFFFF",
-        font = chrome_font(40),
+        font = chrome_fit(text, 336, 40),
     })
 end
 
@@ -214,13 +240,14 @@ function M.header(scr, opts)
             -- with it ("Delete all?" ran into the x on device). Apple's
             -- grammar: the title sits NEXT to the corner control,
             -- leading-aligned.
+            local tw = 368 - 104 - (opts.action and 112 or 8)
             h.title = lvgl.label(scr, {
                 text = opts.title,
                 x = 104, y = 26,
                 text_color = "#FFFFFF",
-                font = chrome_font(40),
+                font = chrome_fit(opts.title, tw, 40),
                 -- Clamp so a long title can't run under a top-right action.
-                w = 368 - 104 - (opts.action and 112 or 8),
+                w = tw,
             })
         else
             h.title = M.title(scr, opts.title)
@@ -569,11 +596,17 @@ function M.stepper(parent, opts, cb)
         pad = 0,   -- let the +/- slabs and their hit areas reach the row edges
     })
 
+    -- The readout sits BETWEEN the two 96px hit areas, so it has 152px, not
+    -- 344. Sized to that: unbounded, "Volume 100%" simply drew over its own
+    -- +/- slabs and lost characters at both ends.
+    local READOUT_W = 344 - 96 * 2
     h.label = lvgl.label(h.row, {
         text = string.format(fmt, value),
         align = "center",
         text_color = "#FFFFFF",
-        font = chrome_font(40),
+        w = READOUT_W,
+        text_align = "center",
+        font = chrome_fit(string.format(fmt, max), READOUT_W, 40),
     })
 
     local function apply(v)

@@ -590,10 +590,55 @@ static int lua_lvgl_active_screen(lua_State *L)
     return 1;
 }
 
+/* lvgl.perf_overlay([on]) -> boolean
+ *
+ * LVGL's frame-rate/CPU readout. Compiled in but hidden at boot, and toggled
+ * here at runtime rather than by a rebuild, so it is a Settings switch on the
+ * board in front of you and a release still boots clean.
+ *
+ * It draws on the display's SYSTEM LAYER, which is a sibling of the active
+ * screen rather than a child -- so it survives every screen swap on its own,
+ * and equally it can never appear in a SHOT (lv_snapshot_take() walks the
+ * active screen). On the panel only; see docs/PERF_DEBUG.md.
+ *
+ * This is the Settings app's control, like the other device-wide prefs keys.
+ * Nothing stops an app calling it, and nothing good comes of one doing so.
+ */
+static int lua_lvgl_perf_overlay(lua_State *L)
+{
+#if LV_USE_SYSMON && LV_USE_PERF_MONITOR
+    static bool s_shown;   /* LVGL exposes no getter, so track it here */
+    esp_err_t err = lua_lvgl_lock();
+
+    if (err != ESP_OK) {
+        return lua_lvgl_error_esp(L, "lock", err);
+    }
+    if (!lua_isnoneornil(L, 1)) {
+        bool on = lua_toboolean(L, 1);
+        lv_display_t *disp = lv_display_get_default();
+        if (disp != NULL) {
+            if (on) {
+                lv_sysmon_show_performance(disp);
+            } else {
+                lv_sysmon_hide_performance(disp);
+            }
+            s_shown = on;
+        }
+    }
+    lua_lvgl_unlock();
+    lua_pushboolean(L, s_shown);
+#else
+    (void)L;
+    lua_pushboolean(L, 0);   /* not compiled in: honestly always off */
+#endif
+    return 1;
+}
+
 const luaL_Reg lua_lvgl_core_widget_funcs[] = {
     {"screen", lua_lvgl_screen},
     {"create_screen", lua_lvgl_create_screen},
     {"active_screen", lua_lvgl_active_screen},
+    {"perf_overlay", lua_lvgl_perf_overlay},
     {"object", lua_lvgl_object},
     {"container", lua_lvgl_container},
     {"label", lua_lvgl_label},
