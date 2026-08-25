@@ -1246,20 +1246,21 @@ static void button_poll_task(void *arg)
         /* Screen timeout. Reuses this task rather than adding a fourth one: it
          * already ticks at 20 ms and already owns BOOT, and this repo has
          * already shipped an AB-BA deadlock by giving a new task the display. */
-        if (lua_lvgl_keep_awake()) {
-            screen_set(SCREEN_AWAKE);        /* an app owns the screen */
-        } else {
-            bsp_display_lock(0);
-            uint32_t idle = lv_display_get_inactive_time(NULL);
-            bsp_display_unlock();
+        bsp_display_lock(0);
+        uint32_t idle = lv_display_get_inactive_time(NULL);
+        bsp_display_unlock();
 
-            if (idle >= SCREEN_SLEEP_MS) {
-                screen_set(SCREEN_ASLEEP);
-            } else if (idle >= SCREEN_DIM_MS) {
-                screen_set(SCREEN_DIMMED);
-            } else {
-                screen_set(SCREEN_AWAKE);
-            }
+        /* keep_awake suppresses the BLANK but not the DIM. A watch face still
+         * drops to 50% after 30s, which is readable at a glance and roughly
+         * half the power; holding 100% indefinitely would recreate exactly the
+         * always-lit idle state this feature exists to remove -- reachable by
+         * launching the most obvious app on the device. */
+        if (idle >= SCREEN_SLEEP_MS && !lua_lvgl_keep_awake()) {
+            screen_set(SCREEN_ASLEEP);
+        } else if (idle >= SCREEN_DIM_MS) {
+            screen_set(SCREEN_DIMMED);
+        } else {
+            screen_set(SCREEN_AWAKE);
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }

@@ -11,6 +11,12 @@ local battery = require("battery")
 local timer = require("timer")
 local ui = require("ui")
 
+-- The screen is this app's whole point, so stop the launcher blanking it after
+-- 2 minutes. It still dims to 50% after 30s -- readable at a glance, and far
+-- less power than holding full brightness forever. Released automatically when
+-- the app exits, including on a crash.
+lvgl.keep_awake(true)
+
 lvgl.init({ buffer_lines = 40 })
 
 -- Timezone data, persistence and the date-rolling shift all live in the ui

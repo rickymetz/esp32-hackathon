@@ -576,6 +576,35 @@ lvgl.init({ buffer_lines = 40, font_path = "apps/big.ttf", font_size = 64 })
 `font_path` there resolves the same way, relative to the SD card root. If you skip all of
 this, you get the theme default — Lexend 32 — which is the right answer for most apps.
 
+### Keeping the screen on
+
+The launcher dims the panel to 50% after 30 seconds of inactivity and blanks it
+after 2 minutes, waking on the BOOT button. This is a power and heat measure,
+not a style choice: on OLED the panel is the dominant load, and a board left lit
+and idle measured ~68 °C — hot to the touch.
+
+If the screen **is** your app — a watch face, a clock, a countdown someone
+glances at — stop it blanking:
+
+```lua
+lvgl.keep_awake(true)     -- never blanks; STILL dims to 50% after 30s
+lvgl.keep_awake(false)    -- back to normal
+lvgl.keep_awake()         -- read the current state
+```
+
+**It suppresses the blank, not the dim.** A watch face at 50% is still a watch
+face; one held at full brightness forever is the always-lit idle state this
+exists to remove. Released automatically when your app exits — including if it
+crashes — so you never need to clear it.
+
+Do **not** reach for it just because your app redraws. `metronome.lua` and
+`countdown.lua` both deliberately skip it: their alarms are audible, so a dark
+screen loses nothing, and both can run for tens of minutes.
+
+While the screen is fully asleep, a finger on it does nothing — you cannot press
+buttons you cannot see. **BOOT is the way back**, and a BOOT press on a dark
+screen only wakes it; it does not exit your app. Press it again to leave.
+
 ### Shared UI: `require("ui")`
 
 The building blocks every watch app needs, with the design guide's sizes baked
