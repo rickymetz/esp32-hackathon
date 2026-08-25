@@ -93,6 +93,41 @@ static const char *TAG = "launcher";
  * limit. A truncated list still says so rather than silently hiding apps. */
 #define MAX_VISIBLE_ROWS 64
 
+/* ---- Screen timeout ---------------------------------------------------
+ *
+ * The panel is the dominant load on this board. A device left lit and idle for
+ * ~32 minutes measured ~68 C actual silicon (hot to the touch), and it is what
+ * drains a 200 mAh cell. On OLED, brightness IS emission -- a black pixel is an
+ * off pixel -- so dimming is a real power lever rather than a cosmetic one.
+ *
+ * 50% was chosen by eye against real UI: clearly dimmer than full, still very
+ * legible. Do not substitute a guessed number.
+ *
+ * SCREEN_ASLEEP_PCT is 0, which stops emission but is NOT device-off: the panel
+ * controller stays clocked and LVGL keeps flushing dirty regions. A true
+ * panel-off needs esp_lcd_panel_disp_on_off(), and the BSP calls that once
+ * internally and never exposes the panel handle -- so 0 is the deepest sleep
+ * reachable without patching a managed component. */
+#define SCREEN_DIM_MS     30000
+#define SCREEN_SLEEP_MS   120000
+#define SCREEN_AWAKE_PCT  100
+#define SCREEN_DIM_PCT    50
+#define SCREEN_ASLEEP_PCT 0
+
+typedef enum { SCREEN_AWAKE, SCREEN_DIMMED, SCREEN_ASLEEP } screen_state_t;
+
+/* Written by button_poll_task and by launcher_screen_wake() (which the serial
+ * task calls). Deliberately unlocked: it is a word-sized enum so it cannot
+ * tear, and the two writers cannot disagree for long -- the poll loop
+ * recomputes the correct state from LVGL's inactivity clock every 20 ms, and
+ * a wake resets that clock, so a lost update self-heals within one tick.
+ *
+ * A mutex here would be the wrong trade: this is reached from the serial task
+ * while screen_set() touches the display, which is exactly the shape of the
+ * AB-BA inversion this codebase already shipped once. A 20 ms transient in
+ * panel brightness is not worth that risk. */
+static screen_state_t s_screen = SCREEN_AWAKE;
+
 static lv_obj_t *s_launcher_screen;
 
 /* ---- Shell navigation ---------------------------------------------------
@@ -153,6 +188,11 @@ static int64_t s_synth_idle_since;
 
 void launcher_input_inject(int x0, int y0, int x1, int y1, int duration_ms)
 {
+    /* A serial TAP/SWIPE wakes the screen, so tools/drive.py keeps working
+     * across a chain that idles past the sleep timeout. Explicit, rather than
+     * inferred from the inactivity counter going small. */
+    launcher_screen_wake();
+
     if (duration_ms < 60) duration_ms = 60;
     if (duration_ms > 2000) duration_ms = 2000;
 
@@ -216,8 +256,32 @@ static esp_io_expander_handle_t s_expander;
 /* Guards s_app_task's check-then-act (launch/stop) across the three tasks
  * that touch it: the LVGL/UI task (app_row_clicked), the serial task
  * (launcher_run_app_by_name / launcher_stop_app), and lua_app_task itself
- * clearing it on exit. Created in app_main() before anything can launch. */
+ * clearing it on exit. Created in app_main() before anything can launch.
+ *
+ * It also guards s_sheet_screen and s_launcher_screen -- see below.
+ *
+ * ==== LOCK ORDER: the display lock is ALWAYS outermost. ====
+ *
+ * esp_lvgl_port holds the display lock across the whole of lv_timer_handler(),
+ * so every LVGL event callback already runs inside it and then takes this
+ * mutex: display -> s_app_mutex. Any other task that needs both MUST use the
+ * same order, or take neither and post the work to the LVGL task with
+ * lv_async_call (see launcher_refresh_ui).
+ *
+ * Taking s_app_mutex first and then blocking on the display lock is an AB-BA
+ * deadlock with any concurrent tap, and neither task is late enough for the
+ * watchdog to notice -- they both block cleanly, so the board simply stops.
+ * That shipped once. Do not reintroduce it. */
 static SemaphoreHandle_t s_app_mutex;
+
+/* True when the app set on the card changed but the home screen could not be
+ * rebuilt at the time (an app was running, or the info sheet was open). The
+ * next moment the launcher becomes visible, it is rebuilt rather than merely
+ * re-loaded. Written only under s_app_mutex. */
+static bool s_home_stale;
+
+/* One rebuild request in flight at a time; see launcher_refresh_ui(). */
+static volatile bool s_refresh_pending;
 
 /* Single-app-at-a-time means a single static copy is enough: the launch
  * path fills this in (under s_app_mutex) from app_registry_find_by_id()
@@ -601,7 +665,26 @@ static void lua_app_task(void *arg)
         if (!pump_events(L, wait_ms)) {
             break;
         }
-        vTaskDelay(pdMS_TO_TICKS(5));
+        /* Only yield when pump_events did not already sleep.
+         *
+         * The yield is REQUIRED when wait_ms is 0: pump_events returns
+         * immediately in that case, so without this the loop spins and
+         * starves the idle task into a watchdog reset (file header, note 3).
+         *
+         * When wait_ms > 0, pump_events USUALLY blocked for it -- but not
+         * always, and the earlier version of this comment stated the guarantee
+         * as fact, which it is not. The drain loop only sleeps when the queue
+         * goes empty; while events keep arriving it dispatches back-to-back
+         * until the deadline and returns without ever blocking. What actually
+         * bounds that is task priority: the LVGL task (producer, prio 4) runs
+         * BELOW lua_app (consumer, prio 5), so it cannot outrun the drain and
+         * the queue must reach empty. The residual risk is an app whose own
+         * callbacks synchronously re-enqueue events on this task; that is a
+         * pathological app, and it is the one case where this loop can now go
+         * a whole 100 ms window without yielding. */
+        if (wait_ms <= 0) {
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
     }
 
 close:
@@ -612,6 +695,7 @@ close:
     app_button_reset(L);
     app_voice_reset(L);
     app_audio_reset(L);
+    lua_lvgl_keep_awake_reset();   /* a crashed app must not pin the backlight on */
     /* Re-read the persisted font scale: an app that called
      * lvgl.font_scale() without persisting must not restyle every later
      * app (Settings persists first, so its change survives). Also
@@ -638,12 +722,28 @@ close:
     }
 
 out:
+    /* Clear s_app_task BEFORE asking for any refresh: refresh_ui_async_cb
+     * bails (and re-flags stale) while an app is still registered as running,
+     * so requesting first would just re-defer the rebuild we are here to do. */
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    s_app_task = NULL;
+    bool stale = s_home_stale;
+    xSemaphoreGive(s_app_mutex);
+
     /* Home is the face: leaving an app lands you on the watch, the way a
      * watch behaves, not back in the app list you launched from. */
     show_face_screen();
-    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
-    s_app_task = NULL;
-    xSemaphoreGive(s_app_mutex);
+
+    /* A PUSH or DELETE that arrived while this app was running could not touch
+     * the screen at the time, and we have just landed on the FACE, not the app
+     * list -- so nothing has consulted the registry yet. Without this the
+     * change stayed invisible until someone tapped Refresh, which is the exact
+     * bug the refresh feature exists to remove. In the documented
+     * `drive.py push : run` loop every push after the first lands while an app
+     * is running, so this is the common path, not the corner case. */
+    if (stale) {
+        launcher_refresh_ui();
+    }
     vTaskDelete(NULL);
 }
 
@@ -756,6 +856,7 @@ static void refresh_clicked(lv_event_t *e)
     app_registry_invalidate();
     app_registry_scan();
     build_launcher_ui();   /* frees the screen it replaces */
+    s_home_stale = false;   /* an explicit Refresh satisfies any deferred one */
 
     xSemaphoreGive(s_app_mutex);
 }
@@ -778,6 +879,7 @@ static void view_toggle_clicked(lv_event_t *e)
                                                       : LAUNCHER_VIEW_LIST;
 
     build_launcher_ui();   /* frees the screen it replaces */
+    s_home_stale = false;   /* the rebuild picks up any deferred change too */
 
     xSemaphoreGive(s_app_mutex);
 }
@@ -821,14 +923,41 @@ static void build_launcher_ui(void);
 static lv_obj_t *s_sheet_screen;             /* the sheet, over the home screen */
 static char s_sheet_id[APP_ID_MAX];          /* which app the open sheet acts on */
 
-/* Cancel: drop the sheet, return to the (still-live) home screen. */
+/* Both sheet callbacks run on the LVGL task with the display lock already
+ * held, so they take s_app_mutex in the sanctioned order (display first) --
+ * and they MUST take it. They capture s_launcher_screen, publish a new one and
+ * delete the old; refresh_ui_async_cb does the same. Unsynchronised, the two
+ * could both capture the same `old`, both build, and both lv_obj_delete() it:
+ * a double free of an lv_obj_t and its whole subtree, plus row_data_delete_cb
+ * free()ing each row's strdup'd basename twice. Deleting a folder app from the
+ * sheet while a push was in flight could hit it. */
+
+/* Cancel: drop the sheet, return to the home screen -- rebuilding it first if
+ * a push/delete landed while the sheet was up. */
 static void sheet_cancel_cb(lv_event_t *e)
 {
     (void)e;
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+
+    lv_obj_t *sheet = s_sheet_screen;
+    s_sheet_screen = NULL;
+
+    if (s_home_stale) {
+        /* Same reasoning as the app-exit path: re-loading the old screen would
+         * silently discard a registry change made while the sheet was open. */
+        build_launcher_ui();   /* frees the screen it replaces */
+        s_home_stale = false;
+    } else {
+        bsp_display_lock(0);
+        if (s_launcher_screen) lv_screen_load(s_launcher_screen);
+        bsp_display_unlock();
+    }
+
     bsp_display_lock(0);
-    if (s_launcher_screen) lv_screen_load(s_launcher_screen);
-    if (s_sheet_screen) { lv_obj_delete(s_sheet_screen); s_sheet_screen = NULL; }
+    if (sheet) lv_obj_delete(sheet);
     bsp_display_unlock();
+
+    xSemaphoreGive(s_app_mutex);
 }
 
 /* Delete: remove the app from the card, then rebuild the home list fresh. */
@@ -837,13 +966,18 @@ static void sheet_delete_cb(lv_event_t *e)
     (void)e;
     app_registry_delete_app(s_sheet_id);     /* unlink + rescan under the lock */
 
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+
     lv_obj_t *sheet = s_sheet_screen;
     s_sheet_screen = NULL;
-    build_launcher_ui();   /* creates + loads a new home screen, frees the old */
+    build_launcher_ui();   /* loads a new home screen and frees the old */
+    s_home_stale = false;  /* this rebuild IS the refresh */
 
     bsp_display_lock(0);
     if (sheet) lv_obj_delete(sheet);
     bsp_display_unlock();
+
+    xSemaphoreGive(s_app_mutex);
 }
 
 /* Long-press a home row/tile: open the app-info sheet for it. */
@@ -852,14 +986,29 @@ static void app_row_long_pressed(lv_event_t *e)
     const char *id = (const char *)lv_event_get_user_data(e);
     if (id == NULL) return;
 
+    /* Held across the WHOLE function, not just the running check. The first
+     * version released here, then did a registry lookup and an SD stat() --
+     * milliseconds -- before assigning s_sheet_screen. A refresh landing in
+     * that gap saw s_sheet_screen == NULL, rebuilt, and loaded the new home
+     * screen over the sheet being created. The sheet then survived off-screen
+     * with s_sheet_screen still set: its buttons unreachable, no new sheet
+     * openable, and every later refresh bailing forever while pushes kept
+     * reporting OK. A silent, permanent wedge until reboot.
+     *
+     * We already hold the display lock here (LVGL callback), so the SD I/O
+     * below blocks the UI either way; adding s_app_mutex costs nothing extra
+     * and the order is the sanctioned display -> s_app_mutex. */
     xSemaphoreTake(s_app_mutex, portMAX_DELAY);
-    bool running = (s_app_task != NULL);
-    xSemaphoreGive(s_app_mutex);
-    if (running) return;                      /* never manage apps while one runs */
-    if (s_sheet_screen != NULL) return;       /* a sheet is already open */
+    if (s_app_task != NULL || s_sheet_screen != NULL) {
+        xSemaphoreGive(s_app_mutex);
+        return;   /* an app is running, or a sheet is already open */
+    }
 
     app_entry_t match;
-    if (!app_registry_find_by_id(id, &match)) return;
+    if (!app_registry_find_by_id(id, &match)) {
+        xSemaphoreGive(s_app_mutex);
+        return;
+    }
 
     /* Detail line: the code file's size, and "Folder" for a folder app. */
     char detail[64] = "";
@@ -883,6 +1032,8 @@ static void app_row_long_pressed(lv_event_t *e)
     launcher_home_app_sheet(s_sheet_screen, &view, detail, sheet_delete_cb, sheet_cancel_cb);
     lv_screen_load(s_sheet_screen);
     bsp_display_unlock();
+
+    xSemaphoreGive(s_app_mutex);
 }
 
 /* ---- The face surface ---------------------------------------------------
@@ -1183,6 +1334,131 @@ static void build_launcher_ui(void)
     bsp_display_unlock();
 }
 
+/* Rebuild the home screen for a caller that changed the app set without
+ * pressing Refresh -- today that is a serial PUSH or DELETE, which rescans the
+ * registry but had no way to say so to the UI, so a pushed app stayed invisible
+ * until someone tapped Refresh on the panel. See launcher_main.h.
+ *
+ * THE LOCK ORDER IS THE WHOLE DESIGN HERE. The first version of this ran the
+ * rebuild inline on the serial task, taking s_app_mutex and then the display
+ * lock -- the exact inverse of the order every LVGL event callback uses, since
+ * esp_lvgl_port holds the display lock across the whole of lv_timer_handler()
+ * and app_row_clicked/refresh_clicked/view_toggle_clicked/app_row_long_pressed
+ * all take s_app_mutex from inside it. A finger on a row during a PUSH
+ * deadlocked both tasks on portMAX_DELAY waits, with no watchdog to break it
+ * (both block cleanly, so the idle task keeps running) -- a dead board needing
+ * the physical PWR/BOOT recovery dance.
+ *
+ * So: never rebuild from the calling task. Post the work to the LVGL task with
+ * lv_async_call and let it run there, where the display lock is already held
+ * and taking s_app_mutex is the same order as every other callback. The one
+ * global rule is now "display lock is outermost, always"; see s_app_mutex's
+ * declaration.
+ *
+ * Deliberately NOT refresh_clicked(): that also invalidates and remounts the
+ * card, which a PUSH has no reason to do (it just wrote through the same
+ * mount) and which would unmount the filesystem out from under a second
+ * queued push. */
+static void refresh_ui_async_cb(void *arg)
+{
+    (void)arg;
+    /* Runs on the LVGL task from lv_timer_handler(), so the display lock is
+     * already held (recursively re-entered by build_launcher_ui below) and
+     * this take is display -> s_app_mutex, matching every event callback. */
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    s_refresh_pending = false;
+
+    /* s_shell_view is the post-#7 condition #8 could not have known about: it
+     * was written when the launcher list WAS home, so rebuilding and loading
+     * it was always the right answer. Home is the watch face now, and
+     * build_launcher_ui() ends in lv_screen_load() -- so without this a serial
+     * PUSH would yank the screen off the face and onto the app list while
+     * someone was looking at the time. Defer instead; show_apps_screen()
+     * rebuilds from the registry every time it runs, so nothing is lost. */
+    if (s_app_task != NULL || s_sheet_screen != NULL ||
+        s_shell_view != SHELL_VIEW_APPS) {
+        /* Not a good moment: an app owns the screen, the info sheet is up, or
+         * the user is looking at the face.
+         * Remember that the list on screen no longer matches the card, and
+         * rebuild when the launcher next becomes visible. Without this flag the
+         * update was simply LOST: returning home lands on the face, which never
+         * consults the registry, so a push during a run stayed invisible even
+         * after the app exited. */
+        s_home_stale = true;
+        xSemaphoreGive(s_app_mutex);
+        return;
+    }
+
+    build_launcher_ui();   /* frees the screen it replaces */
+    s_home_stale = false;
+    xSemaphoreGive(s_app_mutex);
+}
+
+bool launcher_refresh_ui(void)
+{
+    /* Coalesce a burst. tools/push.py sends one PUSH per FILE, so installing a
+     * folder app (main.lua + icon.bin + assets) used to run a full
+     * build-load-delete of the whole screen tree once per file. One pending
+     * request is enough -- the rebuild reads the registry when it runs, so it
+     * always reflects the final state. */
+    if (s_refresh_pending) {
+        return true;
+    }
+    s_refresh_pending = true;
+
+    /* lv_async_call touches LVGL's own list, so it needs the display lock --
+     * and taking ONLY the display lock here (never s_app_mutex) is what keeps
+     * the caller out of the inversion described above. */
+    bsp_display_lock(0);
+    lv_res_t res = lv_async_call(refresh_ui_async_cb, NULL);
+    bsp_display_unlock();
+
+    if (res != LV_RESULT_OK) {
+        s_refresh_pending = false;
+        ESP_LOGW(TAG, "lv_async_call failed -- home screen not refreshed");
+        return false;
+    }
+    return true;
+}
+
+/* One BOOT press. Factored out so the serial BOOT command drives exactly the
+ * same path as the physical button -- the alternative is a second copy of this
+ * logic that drifts from the real one, which would make the harness prove
+ * something the button does not do.
+ *
+ * Callable from any task that holds NEITHER lock. The s_app_mutex take below
+ * is released BEFORE shell_toggle_view(), which is what keeps this off the
+ * s_app_mutex -> display order that the lock-order note warns about.
+ *
+ * Two presses racing (a finger and a serial command at once) can interleave
+ * into one stop plus one toggle. That is the same outcome as pressing twice,
+ * and no worse than the existing race between a press and an app that is
+ * already exiting. */
+void launcher_boot_press(void)
+{
+    bool was_dark = (s_screen != SCREEN_AWAKE);
+    launcher_screen_wake();
+
+    if (was_dark) {
+        ESP_LOGI(TAG, "BOOT -- waking the screen");
+        return;
+    }
+
+    launcher_lua_request_stop(true);
+
+    xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+    bool app_running = (s_app_task != NULL);
+    xSemaphoreGive(s_app_mutex);
+
+    if (app_running) {
+        ESP_LOGI(TAG, "BOOT -- stopping app, returning home");
+    } else {
+        ESP_LOGI(TAG, "BOOT -- %s",
+                 s_shell_view == SHELL_VIEW_FACE ? "face -> apps" : "apps -> face");
+        shell_toggle_view();
+    }
+}
+
 /* BOOT (GPIO0, top right) is Home: the universal way back to the launcher.
  * It is deliberately hardware: no app can consume it or paint over it, so a
  * misbehaving app can always be escaped. PWR (EXIO4, bottom right) belongs
@@ -1191,6 +1467,52 @@ static void build_launcher_ui(void)
  *
  * Runs whether or not an app is up: pressing BOOT with no app running is a
  * harmless no-op. */
+
+/* The one place the panel's brightness and the touch indev change together.
+ *
+ * Disabling the touch indev on sleep does two jobs at once: a finger on a dark
+ * screen cannot press a button it cannot see, and a disabled indev generates no
+ * activity, so it cannot reset LVGL's inactivity timer and wake the screen it
+ * just failed to touch. */
+static void screen_set(screen_state_t next)
+{
+    if (next == s_screen) {
+        return;               /* idempotent: this runs every 20 ms */
+    }
+    lv_indev_t *touch = bsp_display_get_input_dev();
+
+    switch (next) {
+    case SCREEN_AWAKE:
+        bsp_display_brightness_set(SCREEN_AWAKE_PCT);
+        if (touch) lv_indev_enable(touch, true);
+        break;
+    case SCREEN_DIMMED:
+        bsp_display_brightness_set(SCREEN_DIM_PCT);
+        if (touch) lv_indev_enable(touch, true);
+        break;
+    case SCREEN_ASLEEP:
+        bsp_display_brightness_set(SCREEN_ASLEEP_PCT);
+        if (touch) lv_indev_enable(touch, false);
+        break;
+    }
+    s_screen = next;
+    ESP_LOGI(TAG, "screen -> %s",
+             next == SCREEN_AWAKE ? "awake" :
+             next == SCREEN_DIMMED ? "dimmed" : "asleep");
+}
+
+/* Wake and restart the ladder from the top.
+ *
+ * Safe from any task: it takes the display lock briefly for LVGL's activity
+ * reset and takes NO launcher mutex, so it cannot participate in a lock-order
+ * inversion (see the note at s_app_mutex). */
+void launcher_screen_wake(void)
+{
+    bsp_display_lock(0);
+    lv_display_trigger_activity(NULL);   /* reset LVGL's inactivity clock */
+    bsp_display_unlock();
+    screen_set(SCREEN_AWAKE);
+}
 
 /* Two-consecutive-sample debounce on the 20 ms poll tick. Returns true
  * exactly when the stable level changes, with the new level in *stable. */
@@ -1233,30 +1555,26 @@ static void button_poll_task(void *arg)
     bool level;
 
     for (;;) {
-        /* BOOT: active low. Three-way (see the shell navigation notes above).
+        /* BOOT: active low. Two jobs, in this order.
          *
-         * The stop request stays unconditional -- it must never gate on
-         * s_app_task being assigned, which is what stopped the very first
-         * version from ever returning. Reading s_app_task afterwards only
-         * decides whether this press ALSO toggles the shell surface: with an
-         * app up the stop request is the whole action, and lua_app_task's
-         * exit path lands on the face by itself. A press that races an app
-         * already exiting merely stops nothing and toggles, which is the
-         * behaviour you want anyway. */
+         * WAKE FIRST. A press on a dark screen lights it and does nothing
+         * else -- it must not silently stop an app the user cannot see. Only
+         * a press on an already-lit screen is navigation.
+         *
+         * Then the three-way toggle (see the shell navigation notes above).
+         * Within that branch the stop request stays UNCONDITIONAL: it must
+         * never gate on s_app_task being assigned, which is what stopped the
+         * very first version from ever returning. s_app_task is read only
+         * afterwards, to decide whether the press ALSO toggles the surface.
+         *
+         * The wake gate is a different condition and a deliberate one, but it
+         * has the same failure shape if it ever sticks: a screen state wedged
+         * at not-AWAKE would make BOOT stop nothing. It self-heals because
+         * launcher_screen_wake() sets AWAKE unconditionally, so the second
+         * press is always navigation -- worst case you press BOOT twice, and
+         * the escape hatch cannot be lost. */
         if (debounce_step(&boot_db, gpio_get_level(GPIO_NUM_0) == 0, &level) && level) {
-            launcher_lua_request_stop(true);
-
-            xSemaphoreTake(s_app_mutex, portMAX_DELAY);
-            bool app_running = (s_app_task != NULL);
-            xSemaphoreGive(s_app_mutex);
-
-            if (app_running) {
-                ESP_LOGI(TAG, "BOOT pressed -- stopping app, returning home");
-            } else {
-                ESP_LOGI(TAG, "BOOT pressed -- %s",
-                         s_shell_view == SHELL_VIEW_FACE ? "face -> apps" : "apps -> face");
-                shell_toggle_view();
-            }
+            launcher_boot_press();
         }
 
         /* PWR: active high, behind the expander. */
@@ -1267,6 +1585,35 @@ static void button_poll_task(void *arg)
                     app_button_record_edge(level);
                 }
             }
+        }
+
+        /* Screen timeout. Reuses this task rather than adding a fourth one: it
+         * already ticks at 20 ms and already owns BOOT, and this repo has
+         * already shipped an AB-BA deadlock by giving a new task the display. */
+        bsp_display_lock(0);
+        uint32_t idle = lv_display_get_inactive_time(NULL);
+        bsp_display_unlock();
+
+        /* keep_awake suppresses the BLANK but not the DIM. A watch face still
+         * drops to 50% after 30s, which is readable at a glance and roughly
+         * half the power; holding 100% indefinitely would recreate exactly the
+         * always-lit idle state this feature exists to remove -- reachable by
+         * launching the most obvious app on the device. */
+        /* `dim_only` (Settings -> Display & sound) suppresses the blank exactly
+         * the way an app's keep_awake does. Task #40 asked for the timeout to
+         * be "user-configurable to dim-only", and the argument for wanting it
+         * is the watch face itself: a watch you must press a button to read is
+         * a worse watch, even though blanking is the better default for
+         * battery. Read fresh each tick rather than cached, so the choice
+         * applies the moment it is made -- an NVS read is cheap next to the SD
+         * and I2C work this same task already does every 20 ms. */
+        if (idle >= SCREEN_SLEEP_MS && !lua_lvgl_keep_awake() &&
+            shell_nvs_get_i32("dim_only", 0) != 1) {
+            screen_set(SCREEN_ASLEEP);
+        } else if (idle >= SCREEN_DIM_MS) {
+            screen_set(SCREEN_DIMMED);
+        } else {
+            screen_set(SCREEN_AWAKE);
         }
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -1292,6 +1639,19 @@ static void apply_persisted_font_scale(lv_display_t *disp)
      * APP_CONTRACT lists it among the keys the shell must know about. -1 is
      * "never set", which app_audio_set_volume() ignores. */
     app_audio_set_volume((int)shell_nvs_get_i32("volume", -1));
+
+    /* The FPS overlay is compiled in but starts hidden, so a release boots
+     * clean; Settings turns it on and remembers the choice here. LVGL creates
+     * it during lv_init when LV_USE_PERF_MONITOR is set, hence the explicit
+     * hide rather than relying on a default. It lives on the display's system
+     * layer, so it is unaffected by every screen swap below. */
+#if LV_USE_SYSMON && LV_USE_PERF_MONITOR
+    if (shell_nvs_get_i32("fps", 0) == 1) {
+        lv_sysmon_show_performance(disp);
+    } else {
+        lv_sysmon_hide_performance(disp);
+    }
+#endif
 
     bsp_display_lock(0);
     lv_display_set_theme(disp,

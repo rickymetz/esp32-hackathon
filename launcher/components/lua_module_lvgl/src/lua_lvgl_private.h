@@ -237,6 +237,12 @@ typedef struct {
     lua_lvgl_obj_record_t *records;
     lua_lvgl_event_sub_t *event_queue_head;
     lua_lvgl_event_sub_t *event_queue_tail;
+    /* Given by the LVGL task whenever it enqueues an event, waited on by the
+     * script task's drain loop. Turns "poll every 20 ms" into "wake when there
+     * is something to do"; see lua_lvgl_drain_events_for(). Binary, so several
+     * events arriving before the script task wakes coalesce into one wake --
+     * that is correct, because the drain loop pops until the queue is empty. */
+    SemaphoreHandle_t event_signal;
     lua_lvgl_pending_unref_t *pending_unrefs;
     lua_lvgl_font_record_t *fonts;
     lv_font_t *default_font;

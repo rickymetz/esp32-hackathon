@@ -135,7 +135,47 @@ int64_t app_timer_run_due(lua_State *L)
                 continue;
             }
             if (s_timers[i].period_us > 0) {
-                s_timers[i].next_us = esp_timer_get_time() + s_timers[i].period_us;
+                /* Advance from the PREVIOUS deadline, not from now.
+                 *
+                 * This used to be `esp_timer_get_time() + period_us`, which
+                 * re-baselined the period on the moment the callback finished,
+                 * so every cycle silently absorbed the pump's dispatch latency
+                 * plus the callback's own runtime and the error accumulated in
+                 * one direction forever. That is the drift the app contract
+                 * warns about at length, measured at 5.0 ms/tick on a 1000 ms
+                 * timer -- and it is structural, so tightening the event
+                 * pump's sleep does not touch it (two such attempts measured
+                 * exactly zero change before the cause was found here).
+                 *
+                 * Adding the period instead puts ticks on an absolute grid:
+                 * a late tick no longer pushes the next one out. This is the
+                 * same correction the contract tells app authors to hand-roll
+                 * with chained timer.after() calls against an absolute target.
+                 */
+                s_timers[i].next_us += s_timers[i].period_us;
+
+                /* Catch-up guard. If the app was blocked long enough to miss
+                 * whole periods (a slow callback, a long C call), the grid is
+                 * already in the past and firing once per missed period to
+                 * "catch up" would spin the pump instead of running the app.
+                 * Skip the missed ticks rather than replaying them -- for a
+                 * clock or a metronome, showing the right time late beats
+                 * firing ten times in a row.
+                 *
+                 * Snap forward to the next slot ON the original grid, not to
+                 * now + period. The latter is simpler but re-bases the phase,
+                 * so a metronome that stalled once would keep beating on a
+                 * permanently shifted offset -- and it would not match what
+                 * docs/APP_CONTRACT.md tells app authors ("resynchronises to
+                 * the next whole period"). Preserving the phase keeps the grid
+                 * meaningful across a stall, which is the entire reason the
+                 * deadline advances by period in the first place. */
+                int64_t now_after = esp_timer_get_time();
+                if (s_timers[i].next_us <= now_after) {
+                    int64_t behind = now_after - s_timers[i].next_us;
+                    int64_t skip = behind / s_timers[i].period_us + 1;
+                    s_timers[i].next_us += skip * s_timers[i].period_us;
+                }
             } else {
                 luaL_unref(L, LUA_REGISTRYINDEX, s_timers[i].ref);
                 s_timers[i].ref = LUA_NOREF;
@@ -149,10 +189,19 @@ int64_t app_timer_run_due(lua_State *L)
     return soonest;
 }
 
-/* Monotonic milliseconds since boot. Exists because measuring elapsed
- * time by counting timer ticks drifts: periodic timers re-arm from
- * dispatch time, so every cycle stretches by pump latency (the flagship
- * stopwatch shipped with exactly that bug). */
+/* Monotonic milliseconds since boot, and the right way to measure elapsed
+ * time in an app.
+ *
+ * This used to say periodic timers "re-arm from dispatch time, so every cycle
+ * stretches by pump latency". That was true and is no longer: app_timer_run_due
+ * above now advances the deadline by the period instead of rebasing it on now,
+ * so timer.every keeps a grid (measured 5.0 -> 0.0 ms/tick on a 1000 ms timer).
+ *
+ * Counting ticks is therefore no longer systematically slow -- but it is still
+ * the wrong tool, because a callback that overruns its period makes the guard
+ * above SKIP ticks. A tick counter then undercounts, and no amount of
+ * scheduling accuracy fixes that. Two stamps and a subtraction are true
+ * regardless. */
 static int l_timer_now_ms(lua_State *L)
 {
     lua_pushinteger(L, (lua_Integer)(esp_timer_get_time() / 1000));

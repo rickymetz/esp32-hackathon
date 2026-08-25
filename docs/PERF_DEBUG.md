@@ -55,6 +55,16 @@ parse its three fields positionally, and widening it would have broken both.
 `CONFIG_LV_USE_SYSMON` + `CONFIG_LV_USE_PERF_MONITOR` paint LVGL's own
 frame-rate and CPU figure into the corner of the live screen.
 
+**It is a setting, not a rebuild: Settings → Display & sound → FPS overlay.**
+Off by default, remembered in NVS as `fps`, and applied at boot.
+
+It used to be compile-time-on, and `release.yml` builds release firmware from
+`sdkconfig.defaults` — so every board flashed from a release showed a debug
+overlay painted over the watch face. It is now compiled in but hidden at boot
+and toggled at runtime through `lv_sysmon_show_performance()` /
+`lv_sysmon_hide_performance()`, so you can turn it on for the board in front of
+you without reflashing, and a release still boots clean.
+
 **`SHOT` does not capture it, and cannot.** `handle_shot()` calls
 `lv_snapshot_take(lv_screen_active())`, but sysmon builds its label on the
 *system layer* — `lv_label_create(lv_display_get_layer_sys(disp))`, at
@@ -69,9 +79,13 @@ Two consequences worth knowing:
 - If you want frame rate the harness can *read*, the overlay is the wrong
   mechanism. `CONFIG_LV_USE_PERF_MONITOR_LOG_MODE=y` emits it to the log
   instead, in a parseable form (`sysmon: N FPS (refr_cnt ...) ... CPU N%%`)
-  — but it goes through `LV_LOG`, so it also needs `CONFIG_LV_USE_LOG=y`,
-  which is currently off. That is a two-symbol change plus a rebuild, and
-  it turns LVGL logging on globally.
+  — but it goes through **bare `LV_LOG()`**, which compiles to nothing unless
+  `CONFIG_LV_USE_LOG=y`, and that is currently off. Setting LOG_MODE **alone**
+  therefore removes the on-screen overlay and prints nothing at all — strictly
+  worse than either state. The full change is four symbols (LOG_MODE,
+  `LV_USE_LOG`, `LV_LOG_LEVEL_WARN` so bare `LV_LOG` is below `NONE`, and
+  `LV_LOG_PRINTF` to reach the console), it turns LVGL logging on globally, and
+  it is unmeasured — see the note in `launcher/sdkconfig.defaults`.
 
 The simulator has its own `lv_conf.h` with sysmon off, so CI is unaffected
 either way.

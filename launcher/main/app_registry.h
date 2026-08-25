@@ -9,6 +9,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -54,6 +55,22 @@ bool app_registry_get_copy(size_t index, app_entry_t *out);
 
 /** Whether the SD card is currently mounted. */
 bool app_registry_sd_mounted(void);
+
+/**
+ * @brief A cheap hash of the current app SET -- the count and every id, not
+ * file contents.
+ *
+ * For callers that only care whether the launcher list would look different.
+ * tools/push.py sends one PUSH per FILE, so installing a folder app
+ * (main.lua + icon.bin + assets) otherwise triggers a full home-screen
+ * rebuild per file, and re-pushing an existing app triggers one that changes
+ * nothing visible except the user's scroll position.
+ *
+ * Deliberately ignores file contents: a changed icon.bin on an
+ * already-listed app does not move the hash, so it will not force a rebuild.
+ * Refresh still covers that.
+ */
+uint32_t app_registry_signature(void);
 
 /**
  * @brief Forget the mounted SD card so the next scan remounts it.

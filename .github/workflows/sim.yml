@@ -85,6 +85,15 @@ jobs:
       - name: Timer accuracy regression
         run: ./sim/timing_test.py
 
+      - name: Timer catch-up guard (callback overruns its period)
+        run: ./sim/overrun_test.py
+
+      - name: Wi-Fi scan API contract
+        run: ./sim/wifi_api_test.py
+
+      - name: Wi-Fi sim/device API parity
+        run: ./sim/wifi_parity_test.py
+
       - name: Documented widget API still matches the bindings
         run: ./sim/widget_api_test.py
 
