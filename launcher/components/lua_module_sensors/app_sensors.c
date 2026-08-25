@@ -101,28 +101,75 @@ esp_err_t app_sensors_rtc_set_tm(int year, int mon, int mday,
     return rtc_write_time(year, mon, mday, hour, min, sec, wday);
 }
 
-static int l_rtc_now(lua_State *L)
+/* The one place the PCF85063's date registers are decoded. Both the Lua
+ * rtc.now() below and the shell's C face read go through here, so the two can
+ * never drift on how a lost-integrity clock or a BCD field is interpreted. */
+esp_err_t app_sensors_rtc_get_tm(int *year, int *mon, int *mday,
+                                 int *hour, int *min, int *sec, int *wday)
 {
     uint8_t r[7];
 
     if (reg_read(s_rtc_dev, PCF_SECONDS, r, sizeof(r)) != ESP_OK) {
-        return push_unavailable(L, "rtc not responding");
+        return ESP_ERR_NOT_FOUND;
     }
     if (r[0] & PCF_SEC_VL) {
         /* The oscillator stopped (fresh board, dead backup cell): the
-         * registers hold garbage. Say so instead of returning a
-         * plausible-looking wrong time. */
+         * registers hold garbage. Report that rather than a plausible time. */
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (sec)  *sec  = bcd2dec(r[0] & 0x7F);
+    if (min)  *min  = bcd2dec(r[1] & 0x7F);
+    if (hour) *hour = bcd2dec(r[2] & 0x3F);
+    if (mday) *mday = bcd2dec(r[3] & 0x3F);
+    if (wday) *wday = r[4] & 0x07;
+    if (mon)  *mon  = bcd2dec(r[5] & 0x1F);
+    if (year) *year = 2000 + bcd2dec(r[6]);
+    return ESP_OK;
+}
+
+esp_err_t app_sensors_battery_get(int *percent, bool *charging)
+{
+    uint8_t v;
+
+    if (reg_read(s_pmu_dev, AXP_BAT_PCT, &v, 1) != ESP_OK) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    if (v > 100) {
+        return ESP_ERR_INVALID_STATE;   /* gauge still settling (0xFF) */
+    }
+    if (percent) *percent = v;
+
+    if (charging) {
+        uint8_t st;
+        /* A failed status read is not fatal to the percentage: report not
+         * charging rather than discarding a good gauge reading. */
+        *charging = (reg_read(s_pmu_dev, AXP_COMM_STAT1, &st, 1) == ESP_OK) &&
+                    (((st >> 5) & 0x03) == 0x01);
+    }
+    return ESP_OK;
+}
+
+static int l_rtc_now(lua_State *L)
+{
+    int year, mon, mday, hour, min, sec, wday;
+
+    esp_err_t err = app_sensors_rtc_get_tm(&year, &mon, &mday, &hour, &min, &sec, &wday);
+    if (err == ESP_ERR_INVALID_STATE) {
         return push_unavailable(L, "rtc not set");
+    }
+    if (err != ESP_OK) {
+        return push_unavailable(L, "rtc not responding");
     }
 
     lua_newtable(L);
-    lua_pushinteger(L, bcd2dec(r[0] & 0x7F)); lua_setfield(L, -2, "sec");
-    lua_pushinteger(L, bcd2dec(r[1] & 0x7F)); lua_setfield(L, -2, "min");
-    lua_pushinteger(L, bcd2dec(r[2] & 0x3F)); lua_setfield(L, -2, "hour");
-    lua_pushinteger(L, bcd2dec(r[3] & 0x3F)); lua_setfield(L, -2, "day");
-    lua_pushinteger(L, r[4] & 0x07);          lua_setfield(L, -2, "wday");
-    lua_pushinteger(L, bcd2dec(r[5] & 0x1F)); lua_setfield(L, -2, "month");
-    lua_pushinteger(L, 2000 + bcd2dec(r[6])); lua_setfield(L, -2, "year");
+    lua_pushinteger(L, sec);   lua_setfield(L, -2, "sec");
+    lua_pushinteger(L, min);   lua_setfield(L, -2, "min");
+    lua_pushinteger(L, hour);  lua_setfield(L, -2, "hour");
+    lua_pushinteger(L, mday);  lua_setfield(L, -2, "day");
+    lua_pushinteger(L, wday);  lua_setfield(L, -2, "wday");
+    lua_pushinteger(L, mon);   lua_setfield(L, -2, "month");
+    lua_pushinteger(L, year);  lua_setfield(L, -2, "year");
     return 1;
 }
 
@@ -251,16 +298,16 @@ static int luaopen_imu(lua_State *L) { luaL_newlib(L, imu_funcs); return 1; }
 
 static int l_bat_percent(lua_State *L)
 {
-    uint8_t v;
+    int pct;
 
-    if (reg_read(s_pmu_dev, AXP_BAT_PCT, &v, 1) != ESP_OK) {
+    esp_err_t err = app_sensors_battery_get(&pct, NULL);
+    if (err == ESP_ERR_INVALID_STATE) {
+        return push_unavailable(L, "gauge not ready");   /* 0xFF until settled */
+    }
+    if (err != ESP_OK) {
         return push_unavailable(L, "pmu not responding");
     }
-    if (v > 100) {
-        /* The gauge reports 0xFF until it has settled. */
-        return push_unavailable(L, "gauge not ready");
-    }
-    lua_pushinteger(L, v);
+    lua_pushinteger(L, pct);
     return 1;
 }
 

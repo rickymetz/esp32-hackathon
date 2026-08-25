@@ -13,6 +13,7 @@ Usage: drive.py CMD [args] [: CMD [args]]...
 
 Example -- open the keyboard and look at it:
   drive.py run ui_test.lua : sleep 1 : tap 184 390 : sleep 0.6 : shot kb.png
+  (fixtures live in tests/fixtures/; push.py installs them by basename)
 """
 import sys, glob, time, subprocess, serial
 

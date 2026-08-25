@@ -9,6 +9,7 @@
 #include "esp_netif.h"
 #include "esp_netif_sntp.h"
 #include "esp_event.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -16,7 +17,18 @@
 
 static const char *TAG = "app_wifi";
 
-#define CREDS_PATH   "/sdcard/wifi.txt"
+/* Credentials live in NVS, in the same "shell" namespace the launcher and the
+ * `prefs` Lua module share -- apps/settings.lua already writes wifi_ssid /
+ * wifi_pass there through prefs. Until this change the C side still read and
+ * wrote the card, so the two disagreed: Settings saved a network to NVS, the
+ * boot auto-connect read a different (or absent) one off the card, and on a
+ * card-less board Settings appeared to save while nothing was ever stored. */
+#define WIFI_NVS_NS   "shell"
+#define WIFI_NVS_SSID "wifi_ssid"
+#define WIFI_NVS_PASS "wifi_pass"
+
+/* Read once, to import a network saved by an older build. Never written. */
+#define LEGACY_CREDS_PATH "/sdcard/wifi.txt"
 #define SSID_MAX     32
 #define PASS_MAX     64
 #define MAX_RETRIES  5
@@ -40,16 +52,60 @@ static bool s_stack_up;
 
 /* ---- credentials ---- */
 
-static bool creds_load(char *ssid, char *pass)
+static bool creds_save(const char *ssid, const char *pass)
 {
-    FILE *f = fopen(CREDS_PATH, "r");
+    nvs_handle_t h;
+    if (nvs_open(WIFI_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        ESP_LOGE(TAG, "nvs open failed -- credentials not saved");
+        return false;
+    }
+    esp_err_t e1 = nvs_set_str(h, WIFI_NVS_SSID, ssid);
+    /* An open network has no password. Store the empty string rather than
+     * erasing the key, so "saved, no password" and "never saved" stay
+     * distinguishable. */
+    esp_err_t e2 = nvs_set_str(h, WIFI_NVS_PASS, pass ? pass : "");
+    esp_err_t e3 = nvs_commit(h);
+    nvs_close(h);
+
+    if (e1 != ESP_OK || e2 != ESP_OK || e3 != ESP_OK) {
+        ESP_LOGE(TAG, "nvs write failed -- credentials not saved");
+        return false;
+    }
+    return true;
+}
+
+static bool creds_load_nvs(char *ssid, char *pass)
+{
+    nvs_handle_t h;
+    if (nvs_open(WIFI_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        /* Namespace absent -- nothing has ever been written. Not an error. */
+        return false;
+    }
+    size_t slen = SSID_MAX, plen = PASS_MAX;
+    ssid[0] = pass[0] = '\0';
+    esp_err_t err = nvs_get_str(h, WIFI_NVS_SSID, ssid, &slen);
+    if (err == ESP_OK) {
+        /* A password is optional (open network), the SSID is not. */
+        plen = PASS_MAX;
+        if (nvs_get_str(h, WIFI_NVS_PASS, pass, &plen) != ESP_OK) {
+            pass[0] = '\0';
+        }
+    }
+    nvs_close(h);
+    return err == ESP_OK && ssid[0] != '\0';
+}
+
+/* The pre-NVS format: SSID on the first line, password on the second. Read
+ * only to migrate a board that was set up by an older build. */
+static bool creds_load_legacy(char *ssid, char *pass)
+{
+    FILE *f = fopen(LEGACY_CREDS_PATH, "r");
     if (f == NULL) {
         return false;
     }
     ssid[0] = pass[0] = '\0';
     bool ok = (fgets(ssid, SSID_MAX, f) != NULL);
     if (ok) {
-        /* A password is optional (open network), the SSID is not. */
         if (fgets(pass, PASS_MAX, f) == NULL) {
             pass[0] = '\0';
         }
@@ -61,15 +117,38 @@ static bool creds_load(char *ssid, char *pass)
     return ok && ssid[0] != '\0';
 }
 
-static bool creds_save(const char *ssid, const char *pass)
+static void creds_forget(void)
 {
-    FILE *f = fopen(CREDS_PATH, "w");
-    if (f == NULL) {
-        return false;
+    nvs_handle_t h;
+    if (nvs_open(WIFI_NVS_NS, NVS_READWRITE, &h) == ESP_OK) {
+        /* ESP_ERR_NVS_NOT_FOUND here just means it was never saved. */
+        nvs_erase_key(h, WIFI_NVS_SSID);
+        nvs_erase_key(h, WIFI_NVS_PASS);
+        nvs_commit(h);
+        nvs_close(h);
     }
-    fprintf(f, "%s\n%s\n", ssid, pass ? pass : "");
-    fclose(f);
-    return true;
+    /* The legacy file too, or the next boot's migration would import the very
+     * network the user just asked to forget. This is the one place deleting it
+     * is right: "forget" is exactly that request. */
+    remove(LEGACY_CREDS_PATH);
+}
+
+static bool creds_load(char *ssid, char *pass)
+{
+    if (creds_load_nvs(ssid, pass)) {
+        return true;
+    }
+    /* Nothing in NVS: import the card's file once, so a board that already had
+     * a network keeps it across this change without anyone retyping a password
+     * on a touchscreen. The file is left in place rather than deleted -- it is
+     * the user's data, and NVS is checked first from here on, so a network
+     * changed in Settings wins regardless. */
+    if (creds_load_legacy(ssid, pass)) {
+        ESP_LOGI(TAG, "migrating credentials from %s to NVS", LEGACY_CREDS_PATH);
+        creds_save(ssid, pass);
+        return true;
+    }
+    return false;
 }
 
 /* ---- NTP ---- */
@@ -284,7 +363,7 @@ static int l_wifi_time_synced(lua_State *L)
 
 static int l_wifi_forget(lua_State *L)
 {
-    remove(CREDS_PATH);
+    creds_forget();
     lua_pushboolean(L, 1);
     return 1;
 }

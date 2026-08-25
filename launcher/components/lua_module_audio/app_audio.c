@@ -256,6 +256,15 @@ static int l_audio_stop(lua_State *L)
     return 1;
 }
 
+void app_audio_set_volume(int volume)
+{
+    if (volume < 0 || volume > 100) return;
+    s_volume = volume;
+    if (s_spk != NULL) {
+        esp_codec_dev_set_out_vol(s_spk, s_volume);
+    }
+}
+
 static int l_audio_volume(lua_State *L)
 {
     if (!lua_isnoneornil(L, 1)) {

@@ -34,10 +34,22 @@ scr:load()
 
 That is a complete, working app.
 
-`buffer_lines` sizes LVGL's render buffer, in screen rows. **Copy the 40 and move on** —
-it is a memory-versus-redraw-smoothness trade, 40 suits every app here, and the only reason
-to change it is a full-screen animation that visibly tears (raise it) on a screen that is
-368 px wide.
+**`buffer_lines` does nothing. Copy the 40 and move on.**
+
+It is accepted and ignored. The render buffer belongs to the BSP — `bsp_display_start()`
+allocates it once, in the launcher, before any app exists — and no app can influence it.
+`lvgl.init` collects `buffer_lines`, `tick_ms` and `task_period_ms`, packs them into a
+config struct, and the display service never reads that struct.
+
+This document used to tell you to raise `buffer_lines` if a full-screen animation visibly
+tore. **That advice was wrong** — the value was discarded, so anyone who followed it
+changed nothing and went looking for the fault somewhere else. If you see tearing, say so
+rather than tuning a number that is thrown away; making the buffer app-settable is
+launcher work, and on a board whose largest contiguous internal block is ~73 KB, letting
+one app resize a shared buffer at runtime is a way to destabilise the whole device — which
+is why it is not simply switched on.
+
+The three keys stay accepted so no existing app breaks.
 
 ### The rules that matter
 
@@ -60,8 +72,10 @@ to change it is a full-screen animation that visibly tears (raise it) on a scree
    board. This is different for an error *inside an event callback* (a `btn:on(...)`
    handler): that is caught, logged to serial under the tag `lua_lvgl_evt`, and your app
    keeps running — see Events, below.
-5. **BOOT (the top-right button) returns you to the launcher — almost always instantly.**
-   It is hardware: no app can consume or override it. (PWR, bottom right, belongs to your
+5. **BOOT (the top-right button) exits your app — almost always instantly.**
+   It is hardware: no app can consume or override it. It lands on the *watch face*,
+   which is home; the app list is one more BOOT press from there. (So BOOT is a
+   three-way toggle: app → face → app list → face.) (PWR, bottom right, belongs to your
    app — see the `button` module.) Under the hood, BOOT works by interrupting the Lua
    interpreter, which is fast but can't reach everywhere: a tight loop **inside a
    coroutine body, or inside a blocking C call**, is invisible to that interrupt. Those get
@@ -169,6 +183,7 @@ others, and you cannot `require` a `.lua` file of your own (see the trust model 
 | `button` | The PWR button |
 | `keyboard` | Text entry |
 | `store` | Per-app persistent key/value, saved on the card |
+| `prefs` | Device settings (NVS) — survive a missing card, shared with the shell |
 | `voice` | Offline speech — gate on `voice.available()` |
 | `audio` | Tones and beeps |
 | `rtc` | Wall-clock date and time |
@@ -385,7 +400,7 @@ end)
 ```
 
 Worked examples of all three: `apps/stopwatch.lua` and `apps/reaction.lua` (1),
-`apps/metronome.lua` and `apps/countdown.lua` (2), `apps/faces.lua` and `apps/clock.lua` (3).
+`apps/metronome.lua` and `apps/countdown.lua` (2), and `apps/level.lua` (3).
 
 **One limit on `timer.now_ms()`:** apps run with 32-bit Lua integers, so it wraps back to
 negative after **2³¹ ms — about 24.9 days** of uptime. *Differences* survive that
@@ -719,8 +734,11 @@ over NTP and writes it to the RTC, so `rtc.now()` is correct after a reboot
 with nobody typing a date. This is the intended way to set the clock;
 `rtc.set` is the manual fallback.
 
-Credentials are entered **on the device** with `apps/wifi_setup.lua` and stored
-on the card. Do not ask a user to type a password into a host terminal.
+Credentials are entered **on the device** in `apps/settings.lua` (Wi-Fi) and stored
+in NVS (`wifi_ssid` / `wifi_pass`), so a board with no card still remembers its
+network. A network saved by an older build from `/sdcard/wifi.txt` is imported
+once, automatically, on the first boot after the change. Do not ask a user to
+type a password into a host terminal.
 
 **Captive portals do not work.** Hotel, café and conference networks intercept
 traffic until you authenticate in a browser, and the device has no browser. The
@@ -786,6 +804,48 @@ end
 once at a natural moment (game over, item added). Values must be JSON-friendly —
 strings, numbers, booleans, and tables of those; a function or userdata will not
 round-trip. The file is human-readable JSON, so you can inspect it on the card.
+
+### Device settings: `require("prefs")`
+
+`store` is for **your app's** state and lives on the card. `prefs` is for
+**device** settings: small values in NVS that survive with no card in the slot,
+and that the launcher's own C shell reads.
+
+```lua
+local prefs = require("prefs")
+
+prefs.get("volume", 70)     -- the saved value, or the default
+prefs.set("volume", 80)     -- written immediately; no save() step
+prefs.clear("volume")       -- forget it
+```
+
+| Call | What |
+| --- | --- |
+| `prefs.get(key, default)` | The saved value, or `default` if never set |
+| `prefs.set(key, value)` | Integers and strings. Commits straight away |
+| `prefs.clear(key)` | Forget one key |
+
+Keys are **1-15 characters** (an NVS limit) and values are integers or strings
+— there is no table support, deliberately: this is for scalars, not documents.
+A float is rounded to an integer, so `get` returns what `set` stored.
+
+Most apps do not need this — it is how **`apps/settings.lua`** stores things the
+shell must know about with no card present: `face` (the watch face style),
+`tz_min` (minutes east of UTC), `tz_city` and `tz_dst` (which zone was picked
+and whether summer time is on), `font_pct`, `volume`, and the Wi-Fi
+credentials. Writing those keys from your own app changes the device's
+settings, so treat them as the Settings app's.
+
+The three timezone keys are one value in three parts, and the watch face reads
+only `tz_min`:
+
+```
+tz_min == ui.ZONES[tz_city][2] + (tz_dst and 60 or 0)
+```
+
+So `tz_min` is the **effective** offset, already including summer time. Writing
+it on its own leaves `tz_city`/`tz_dst` describing a different zone than the
+face is showing — which is why this is Settings' job, not an app's.
 
 ### More on widgets
 

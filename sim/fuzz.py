@@ -62,7 +62,7 @@ def sequence(rng, n):
 
 def run_one(app, seed, steps):
     rng = random.Random(seed)
-    cmds = [SIM, "--sdroot", REPO, "run", f"apps/{app}"] + sequence(rng, steps)
+    cmds = [SIM, "--sdroot", REPO, "run", app] + sequence(rng, steps)
     try:
         p = subprocess.run(cmds, cwd=REPO, capture_output=True,
                            text=True, timeout=90)
@@ -87,8 +87,13 @@ def main():
     if not os.path.exists(SIM):
         sys.exit("sim not built -- run sim/build.sh")
 
-    apps = sorted(os.path.basename(p) for p in glob.glob(os.path.join(REPO, "apps", "*.lua")))
-    apps = [x for x in apps if x not in EXCLUDE]
+    # Real apps and test fixtures live in different directories now, so carry
+    # each one's path rather than its basename -- EXCLUDE still matches on the
+    # filename, which is how it has always read.
+    found = (glob.glob(os.path.join(REPO, "apps", "*.lua")) +
+             glob.glob(os.path.join(REPO, "tests", "fixtures", "*.lua")))
+    apps = sorted(os.path.relpath(p, REPO) for p in found)
+    apps = [x for x in apps if os.path.basename(x) not in EXCLUDE]
 
     jobs = [(app, 1000 + i) for app in apps for i in range(a.rounds)]
     print(f"fuzzing {len(apps)} apps x {a.rounds} seeds x {a.steps} steps "

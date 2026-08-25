@@ -34,6 +34,18 @@ void app_audio_reset(lua_State *L);
 /** Register the module. One-time, from app_main(). */
 esp_err_t app_audio_register(void);
 
+/**
+ * @brief Set the output volume, 0-100, from C.
+ *
+ * The shell restores the user's saved level at boot. Without this the Settings
+ * volume was write-only: it went to NVS and nothing ever read it back, so every
+ * reboot silently returned to the built-in default.
+ *
+ * Out-of-range values are ignored rather than clamped, so a missing or corrupt
+ * setting leaves the default in place instead of forcing it to an edge.
+ */
+void app_audio_set_volume(int volume);
+
 #ifdef __cplusplus
 }
 #endif

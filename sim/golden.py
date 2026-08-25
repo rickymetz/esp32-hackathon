@@ -50,13 +50,10 @@ FRAC_TOL = 0.012
 # re-capture those two or mask the seconds region.
 FRAMES = [
     ("counter",      ["run", "apps/counter.lua", ":", "sleep", "0.4"]),
-    ("clock",        ["run", "apps/clock.lua", ":", "sleep", "0.4"]),
-    ("faces",        ["run", "apps/faces.lua", ":", "sleep", "0.4"]),
-    ("wifi_setup",   ["run", "apps/wifi_setup.lua", ":", "sleep", "0.4"]),
     ("color",        ["run", "apps/color.lua", ":", "sleep", "0.4"]),
     ("flashlight",   ["run", "apps/flashlight.lua", ":", "sleep", "0.4"]),
     ("hello_world",  ["run", "apps/hello_world.lua", ":", "sleep", "0.4"]),
-    ("sensors_test", ["run", "apps/sensors_test.lua", ":", "sleep", "0.4"]),
+    ("sensors_test", ["run", "tests/fixtures/sensors_test.lua", ":", "sleep", "0.4"]),
     ("settings",     ["run", "apps/settings.lua", ":", "sleep", "0.4"]),
     ("tally",        ["run", "apps/tally.lua", ":", "sleep", "0.4"]),
     ("sign",         ["run", "apps/sign.lua", ":", "sleep", "0.4"]),
@@ -74,12 +71,8 @@ FRAMES = [
     ("counter_tapped", ["run", "apps/counter.lua",
                         ":", "tap", "184", "224", ":", "tap", "184", "224",
                         ":", "tap", "184", "224", ":", "sleep", "0.2"]),
-    ("error_screen", ["run", "apps/broken.lua", ":", "sleep", "0.3"]),
+    ("error_screen", ["run", "tests/fixtures/broken.lua", ":", "sleep", "0.3"]),
     ("keyboard",     ["run", "apps/sign.lua", ":", "tap", "184", "380", ":", "sleep", "0.3"]),
-    ("faces_rings",  ["run", "apps/faces.lua",
-                        ":", "swipe", "300", "224", "60", "224", "300", ":", "sleep", "0.4"]),
-    ("clock_unset",  ["rtc", "unset", ":", "run", "apps/clock.lua", ":", "sleep", "0.4"]),
-    ("clock_lowbat", ["battery", "8", "0", "0", ":", "run", "apps/clock.lua", ":", "sleep", "0.4"]),
     ("level_tilted", ["run", "apps/level.lua",
                         ":", "accel", "0.5", "0", "0.866", ":", "sleep", "0.3"]),
     # Calculator keypad + logic, three discriminating results so an operator
@@ -128,6 +121,48 @@ FRAMES = [
     # (the fixture the removed home-preview probe used to reach).
     ("sheet",        ["sheet", "Metronome"]),
     ("sheet_card",   ["sheet", "Quicktap", "D:/apps/quicktap/icon.bin"]),
+
+    # The built-in watch face -- the shell's home screen, so the most-seen
+    # surface on the device. Three cases because its degraded states are where
+    # the bugs are: "unset" is the fresh-board/dead-cell path (and the reason
+    # the placeholder is not drawn in the 120px face, whose charset is digits
+    # and ".:" only -- a "--:--" there renders as empty boxes), and the low
+    # battery case covers the warning colour and the stepped battery glyph.
+    # Settings: the menu plus the two pages most likely to regress -- the
+    # timezone page (which writes the NVS offset the C face reads) and Wi-Fi
+    # (the absorbed wifi_setup).
+    ("settings_time", ["run", "apps/settings.lua", ":", "sleep", "0.3",
+                       ":", "tap", "184", "384", ":", "sleep", "0.4"]),
+    ("settings_wifi", ["run", "apps/settings.lua", ":", "sleep", "0.3",
+                       ":", "tap", "184", "268", ":", "sleep", "0.4"]),
+
+    # The same two pages at the 1.3 font scale -- the accessibility ceiling, and
+    # the state the simulator could not reach until --scale existed. Everything
+    # here rendered correctly at 1.0 while being broken at 1.3: the header title
+    # wrapped and was clipped by the list, row labels left their 104px cards,
+    # the stepper readouts were eaten by their own +/- slabs, and the footer
+    # note ran off the bottom of the screen. Cheap to keep, and the only thing
+    # standing between that class of bug and a release.
+    ("settings_time_13", ["--scale", "1.3",
+                          "run", "apps/settings.lua", ":", "sleep", "0.3",
+                          ":", "tap", "184", "384", ":", "sleep", "0.4"]),
+    ("settings_disp_13", ["--scale", "1.3",
+                          "run", "apps/settings.lua", ":", "sleep", "0.3",
+                          ":", "swipe", "184", "380", "184", "120", "400",
+                          ":", "sleep", "0.4",
+                          ":", "tap", "184", "265", ":", "sleep", "0.4"]),
+
+    ("face",         ["face", "digital", "10:09:30", "72"]),
+    ("face_analog",  ["face", "analog",  "10:09:30", "72"]),
+    ("face_rings",   ["face", "rings",   "10:09:30", "72"]),
+    ("face_words",   ["face", "words",   "10:09:30", "72"]),
+    ("face_minimal", ["face", "minimal", "10:09:30", "72"]),
+    ("face_unset",   ["face", "unset"]),
+    # The unset state on a face that has hands and a pinion, not just a label.
+    # The digital case alone accepted a screen full of missing-glyph boxes for
+    # as long as it existed, because nobody looked at the golden it wrote.
+    ("face_unset_analog", ["face", "analog", "unset"]),
+    ("face_low",     ["face", "07:45", "12"]),
 ]
 
 

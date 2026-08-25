@@ -49,16 +49,22 @@ Two gotchas these examples were written to avoid — both bite silently:
 - **`ui.stepper`'s `label` is a format string** (`"%d bpm"`), and a wide value
   can collide with its own +/- buttons — `metronome.lua` keeps it to `"%d"`.
 
-## Test fixtures (not shippable apps)
+## Test fixtures live in `tests/fixtures/`
 
-These exist to exercise the launcher's own edges and are skipped by
-`sim/test.sh`:
+They used to sit here, which made `apps/` half product and half test rig —
+nearly half of what this folder listed was never installable on anyone's watch.
+They moved to **`tests/fixtures/`**; `sim/test.sh` sweeps both directories, so
+they are still run on every change:
 
 - `broken.lua`, `cb_error.lua`, `deep_error.lua` — error paths / the error screen
 - `hook_bypass.lua`, `trim_check.lua` — the sandbox (stripped stdlib, hook)
 - `runaway_bare.lua`, `runaway_coro.lua`, `runaway_pcall.lua` — the watchdog
 - `headless.lua` — an app with timers but no UI
-- `input_test.lua`, `tick_test.lua`, `timer_reuse.lua`, `timer_slot.lua`,
-  `voice_test.lua`, `spell_test.lua`, `ui_test.lua` — module regression checks.
-  These DO run in `sim/test.sh` (they render headlessly); only the
-  error-path/watchdog fixtures above are in its SKIP list.
+- `audio_test.lua`, `input_test.lua`, `sensors_test.lua`, `spell_test.lua`,
+  `tick_test.lua`, `timer_reuse.lua`, `timer_slot.lua`, `ui_test.lua`,
+  `voice_test.lua` — module regression checks. These DO run in `sim/test.sh`
+  (they render headlessly); only the error-path/watchdog fixtures above are in
+  its SKIP list.
+
+`tools/push.py` installs by basename, so `push.py tests/fixtures/ui_test.lua`
+still lands as `ui_test.lua` on the card and `RUN ui_test.lua` is unchanged.

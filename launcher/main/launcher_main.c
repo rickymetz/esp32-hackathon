@@ -31,6 +31,8 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_random.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 #include "esp_io_expander.h"
 #include "bsp/esp-bsp.h"
 #include "lvgl.h"
@@ -44,12 +46,14 @@
 #include "lua_module_lvgl.h"
 #include "app_registry.h"
 #include "launcher_home.h"
+#include "launcher_face.h"
 #include "app_sandbox.h"
 #include "app_timer.h"
 #include "app_button.h"
 #include "lv_font_lexend.h"
 #include "lua_module_ui.h"
 #include "lua_module_store.h"
+#include "lua_module_prefs.h"
 #include <sys/stat.h>
 #include "app_voice.h"
 #include "app_sensors.h"
@@ -90,6 +94,35 @@ static const char *TAG = "launcher";
 #define MAX_VISIBLE_ROWS 64
 
 static lv_obj_t *s_launcher_screen;
+
+/* ---- Shell navigation ---------------------------------------------------
+ * Home is the watch face, not the app list: a watch shows you the time and
+ * makes apps somewhere you navigate to. BOOT is the only navigation control
+ * and it is a three-way toggle:
+ *
+ *     running an app  ->  home      (the app is stopped first)
+ *     home (face)     ->  app list
+ *     app list        ->  home
+ *
+ * That keeps the escape guarantee BOOT has always carried -- it is hardware,
+ * no app can consume it, so a misbehaving app is always escapable -- while
+ * making the face, not the launcher, the place you land.
+ *
+ * s_shell_view tracks which of the two shell surfaces is up. It is only
+ * meaningful when no app is running; the app-exit path always returns to the
+ * face, so it is set there rather than inferred. */
+typedef enum {
+    SHELL_VIEW_FACE = 0,
+    SHELL_VIEW_APPS = 1,
+} shell_view_t;
+
+static shell_view_t s_shell_view = SHELL_VIEW_FACE;
+/* Defined with the other shell surfaces below; declared here because
+ * lua_app_task's exit path (above them) returns to the face. */
+static void show_face_screen(void);
+static void show_apps_screen(void);
+static lv_obj_t    *s_face_screen;
+static lv_timer_t  *s_face_tick;
 static lv_display_t *s_disp;   /* for re-applying the theme after app exit */
 static launcher_view_t s_view_mode = LAUNCHER_VIEW_LIST;   /* list <-> grid */
 static void apply_persisted_font_scale(lv_display_t *disp);
@@ -274,16 +307,6 @@ static bool pump_events(lua_State *L, int timeout_ms)
     return true;
 }
 
-static void show_launcher_screen(void)
-{
-    if (s_launcher_screen == NULL) {
-        return;
-    }
-    bsp_display_lock(0);
-    lv_screen_load(s_launcher_screen);
-    bsp_display_unlock();
-}
-
 /* Message handler for lua_pcall: converts the error into a traceback. Without
  * this you get a bare one-line message with no call stack -- exactly what
  * happened before this was added: one untraceable line on serial and a
@@ -295,13 +318,9 @@ static int traceback_handler(lua_State *L)
     return 1;
 }
 
-/* Body label sits between the title (Montserrat 40, line_height 44, top ~8px)
- * and the "press the top button" hint (default font is Montserrat 32, line_height
- * 35, bottom ~8px) on the 368x448 panel. Capped and scrollable so a deep
- * traceback stays reachable instead of overlapping the hint or being
- * silently clipped. */
-#define ERROR_BODY_TOP     60
-#define ERROR_BODY_HEIGHT  300
+/* The body sits between the title and the hint, and its box is now measured
+ * from those two at build time rather than assumed -- see show_error_screen().
+ * It stays scrollable so a deep traceback is reachable rather than clipped. */
 
 /* Show a failure on the panel. Five people debugging through one USB cable is
  * miserable; the error belongs where they are already looking. Returns the
@@ -319,8 +338,15 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_pad_all(scr, 12, LV_PART_MAIN);
 
+    /* Width-limited and wrapping, like the body below. A centred label with no
+     * width shrinks to its content and then loses characters off BOTH ends, so
+     * a long app name turned "weather_clock.lua failed" into "ther_clock.lua
+     * fail" -- least readable exactly when something has gone wrong. */
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text_fmt(title, "%s failed", app_name);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(title, LV_PCT(96));
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
     lv_obj_set_style_text_font(title, lua_module_lvgl_scaled_builtin_font(40), LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
@@ -328,18 +354,36 @@ static lv_obj_t *show_error_screen(const char *app_name, const char *msg)
     lv_obj_t *body = lv_label_create(scr);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(body, LV_PCT(96));
-    lv_obj_set_height(body, ERROR_BODY_HEIGHT);
     lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
     lv_label_set_text(body, msg ? msg : "(no message)");
     lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
     lv_obj_set_style_text_font(body, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
-    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, ERROR_BODY_TOP);
 
+    /* Same treatment, and it mattered more here: on the theme font this string
+     * is about 500px wide on a 368px panel, so the one line telling you how to
+     * get out of the error screen was clipped at BOTH ends at every font scale.
+     * Dropped to 26 as well, so it wraps to two lines rather than three. */
     lv_obj_t *hint = lv_label_create(scr);
     lv_label_set_text(hint, "press the top button to go back");
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, LV_PCT(96));
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x9A9AA5), LV_PART_MAIN);
+    lv_obj_set_style_text_font(hint, lua_module_lvgl_scaled_builtin_font(26), LV_PART_MAIN);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    /* The body is placed between the title and the hint by MEASURING them
+     * rather than assuming each is one line. Both wrap now, and a long app
+     * name or a large font scale makes the title two lines -- with a fixed
+     * top the traceback was drawn straight over it. lv_obj_update_layout()
+     * forces the sizes to be computed before they are read. */
+    lv_obj_update_layout(scr);
+    int32_t top = 8 + lv_obj_get_height(title) + 8;
+    int32_t avail = 448 - top - lv_obj_get_height(hint) - 24;
+    if (avail < 80) avail = 80;
+    lv_obj_set_height(body, avail);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, top);
 
     lv_screen_load(scr);
     bsp_display_unlock();
@@ -362,12 +406,17 @@ static void show_error_and_wait_for_stop(lua_State *L, const char *app_name, con
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 
-    /* Load the launcher screen before deleting the error screen so the
-     * currently-active screen is never the one being freed. Nothing else can
-     * see err_scr to clean it up -- lv_screen_load() does not free the
-     * screen it replaces, so without this every crash leaked a screen plus
-     * its labels. */
-    show_launcher_screen();
+    /* Load the face before deleting the error screen so the currently-active
+     * screen is never the one being freed. Nothing else can see err_scr to
+     * clean it up -- lv_screen_load() does not free the screen it replaces,
+     * so without this every crash leaked a screen plus its labels.
+     *
+     * The face, not the app list: since the shell boots to the face, the app
+     * list may never have been built, and the old show_launcher_screen() bailed
+     * out on a NULL screen -- which would leave err_scr active and then delete
+     * it, exactly the crash this ordering exists to avoid. build_face_ui()
+     * always produces a screen. */
+    show_face_screen();
     bsp_display_lock(0);
     lv_obj_delete(err_scr);
     bsp_display_unlock();
@@ -589,7 +638,9 @@ close:
     }
 
 out:
-    show_launcher_screen();
+    /* Home is the face: leaving an app lands you on the watch, the way a
+     * watch behaves, not back in the app list you launched from. */
+    show_face_screen();
     xSemaphoreTake(s_app_mutex, portMAX_DELAY);
     s_app_task = NULL;
     xSemaphoreGive(s_app_mutex);
@@ -702,27 +753,9 @@ static void refresh_clicked(lv_event_t *e)
         return;   /* never rescan or rebuild under a running app */
     }
 
-    lv_obj_t *old = s_launcher_screen;
-
     app_registry_invalidate();
     app_registry_scan();
-    build_launcher_ui();
-
-    /* build_launcher_ui() already loaded the new screen; delete the old one
-     * now that it is no longer the active screen. Never delete the screen
-     * that is currently on-screen -- that path is only reached here because
-     * the new screen has already replaced it.
-     *
-     * Explicitly locked even though refresh_clicked() only ever runs inside
-     * the LVGL task's own (recursive) lock today: that is an implicit
-     * invariant, not something lv_obj_delete() enforces, and it would break
-     * silently if Refresh is ever triggered from elsewhere -- e.g. a future
-     * serial REFRESH command, alongside the existing RUN/STOP. */
-    if (old != NULL && old != s_launcher_screen) {
-        bsp_display_lock(0);
-        lv_obj_delete(old);
-        bsp_display_unlock();
-    }
+    build_launcher_ui();   /* frees the screen it replaces */
 
     xSemaphoreGive(s_app_mutex);
 }
@@ -744,13 +777,7 @@ static void view_toggle_clicked(lv_event_t *e)
     s_view_mode = (s_view_mode == LAUNCHER_VIEW_LIST) ? LAUNCHER_VIEW_GRID
                                                       : LAUNCHER_VIEW_LIST;
 
-    lv_obj_t *old = s_launcher_screen;
-    build_launcher_ui();
-    if (old != NULL && old != s_launcher_screen) {
-        bsp_display_lock(0);
-        lv_obj_delete(old);
-        bsp_display_unlock();
-    }
+    build_launcher_ui();   /* frees the screen it replaces */
 
     xSemaphoreGive(s_app_mutex);
 }
@@ -810,13 +837,11 @@ static void sheet_delete_cb(lv_event_t *e)
     (void)e;
     app_registry_delete_app(s_sheet_id);     /* unlink + rescan under the lock */
 
-    lv_obj_t *old_home = s_launcher_screen;
     lv_obj_t *sheet = s_sheet_screen;
     s_sheet_screen = NULL;
-    build_launcher_ui();                      /* creates + loads a new home screen */
+    build_launcher_ui();   /* creates + loads a new home screen, frees the old */
 
     bsp_display_lock(0);
-    if (old_home && old_home != s_launcher_screen) lv_obj_delete(old_home);
     if (sheet) lv_obj_delete(sheet);
     bsp_display_unlock();
 }
@@ -860,11 +885,277 @@ static void app_row_long_pressed(lv_event_t *e)
     bsp_display_unlock();
 }
 
+/* ---- The face surface ---------------------------------------------------
+ * Built once and then mutated on each tick -- never rebuilt. The analog dial
+ * alone is 60+ tick lines plus three hands; recreating that four times a
+ * second to move a second hand would be absurd. The screen is only rebuilt
+ * when the STYLE changes (a swipe), which is a user action, not a tick.
+ *
+ * Style and timezone both live in NVS rather than on the card: home has to
+ * work with no card in it, and NVS is already initialised (the Wi-Fi stack
+ * does it) and cheaper than mounting a filesystem. */
+#define SHELL_NVS_NS      "shell"
+#define SHELL_NVS_FACE    "face"      /* launcher_face_style_t */
+#define SHELL_NVS_TZ_MIN  "tz_min"    /* minutes east of UTC */
+
+static launcher_face_t *s_face;
+static launcher_face_style_t s_face_style = LAUNCHER_FACE_DIGITAL;
+
+static int32_t shell_nvs_get_i32(const char *key, int32_t fallback)
+{
+    nvs_handle_t h;
+    if (nvs_open(SHELL_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
+        return fallback;
+    }
+    int32_t v = fallback;
+    if (nvs_get_i32(h, key, &v) != ESP_OK) {
+        v = fallback;
+    }
+    nvs_close(h);
+    return v;
+}
+
+static void shell_nvs_set_i32(const char *key, int32_t value)
+{
+    nvs_handle_t h;
+    if (nvs_open(SHELL_NVS_NS, NVS_READWRITE, &h) != ESP_OK) {
+        return;
+    }
+    if (nvs_set_i32(h, key, value) == ESP_OK) {
+        nvs_commit(h);
+    }
+    nvs_close(h);
+}
+
+/* Days in `mon` (1-12) of `year`, for the timezone shift's date rollover. */
+static int days_in_month(int year, int mon)
+{
+    static const int len[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (mon < 1 || mon > 12) return 31;
+    if (mon == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)) return 29;
+    return len[mon - 1];
+}
+
+/* Shift a UTC reading by `minutes`, rolling the date properly.
+ *
+ * This matters and is easy to get wrong: NTP sets the RTC in UTC, so a naive
+ * face shows the right time nowhere except Greenwich -- and a shift that moves
+ * the clock but not the date shows tomorrow's time beside today's date across
+ * midnight. The former apps/faces.lua carried the same warning after exactly
+ * that bug; this is now the only copy on the device. */
+static void shift_local(launcher_face_data_t *d, int minutes)
+{
+    if (!d->time_valid || minutes == 0) return;
+
+    int total = d->hour * 60 + d->min + minutes;
+    int day_delta = 0;
+    while (total < 0)     { total += 24 * 60; day_delta--; }
+    while (total >= 1440) { total -= 24 * 60; day_delta++; }
+    d->hour = total / 60;
+    d->min  = total % 60;
+
+    if (day_delta == 0) return;
+
+    d->wday = ((d->wday + day_delta) % 7 + 7) % 7;
+    d->day += day_delta;
+    if (d->day < 1) {
+        d->month = (d->month == 1) ? 12 : d->month - 1;
+        if (d->month == 12) d->year--;
+        d->day = days_in_month(d->year, d->month);
+    } else if (d->day > days_in_month(d->year, d->month)) {
+        d->day = 1;
+        d->month = (d->month == 12) ? 1 : d->month + 1;
+        if (d->month == 1) d->year++;
+    }
+}
+
+/* Sample the clock and gauge, in local time. Never fails: an unreachable
+ * sensor lands as invalid and the face draws its honest degraded state
+ * rather than a fabricated reading. */
+static void read_face_data(launcher_face_data_t *d)
+{
+    memset(d, 0, sizeof(*d));
+
+    int year, mon, mday, hour, min, sec, wday;
+    if (app_sensors_rtc_get_tm(&year, &mon, &mday, &hour, &min, &sec, &wday) == ESP_OK) {
+        d->time_valid = true;
+        d->hour = hour; d->min = min; d->sec = sec;
+        d->year = year; d->month = mon; d->day = mday; d->wday = wday;
+        shift_local(d, (int)shell_nvs_get_i32(SHELL_NVS_TZ_MIN, 0));
+    }
+
+    int pct; bool charging;
+    if (app_sensors_battery_get(&pct, &charging) == ESP_OK) {
+        d->batt_valid = true;
+        d->batt_percent = pct;
+        d->charging = charging;
+    }
+}
+
+static void face_gesture_cb(lv_event_t *e);
+
+/* Build (or rebuild) the face screen and leave it loaded. Only called on boot
+ * and on a style change. Caller must NOT hold the display lock. */
+static void build_face_ui(void)
+{
+    launcher_face_data_t d;
+    read_face_data(&d);
+
+    bsp_display_lock(0);
+
+    lv_obj_t *old = s_face_screen;
+    launcher_face_t *old_face = s_face;
+
+    s_face_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_face_screen, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_face_screen, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_face_screen, 0, LV_PART_MAIN);
+
+    s_face = launcher_face_create(s_face_screen, s_face_style);
+    launcher_face_update(s_face, &d);
+
+    /* Swipe to change face, the way the old faces app paged between them.
+     * Gestures are delivered to the screen, not to widgets. */
+    lv_obj_add_event_cb(s_face_screen, face_gesture_cb, LV_EVENT_GESTURE, NULL);
+
+    lv_screen_load(s_face_screen);
+
+    /* Only now that the new screen is active is the old one safe to free --
+     * lv_screen_load() does not free what it replaces, and deleting the
+     * screen that is still on-screen is exactly the crash refresh_clicked()
+     * documents avoiding. */
+    if (old != NULL && old != s_face_screen) {
+        lv_obj_delete(old);
+    }
+    launcher_face_destroy(old_face);
+
+    bsp_display_unlock();
+}
+
+/* Repaint the face in place while it is the visible surface.
+ *
+ * Sampling faster than the thing being sampled is deliberate: a periodic timer
+ * re-arms AFTER its callback, so a 1000 ms tick against the RTC's own 1 Hz
+ * edge is always a little over a second and some seconds are never observed --
+ * the second hand visibly jumps two ticks. 250 ms cannot skip one. Faces
+ * without a second hand only need to catch the minute, so they tick at 1 s and
+ * the update is gated on the value actually changing. */
+static void face_tick_cb(lv_timer_t *t)
+{
+    (void)t;
+    if (s_shell_view != SHELL_VIEW_FACE || s_app_task != NULL || s_face == NULL) {
+        return;
+    }
+    launcher_face_data_t d;
+    read_face_data(&d);
+    launcher_face_update(s_face, &d);
+}
+
+/* Re-read the saved style from NVS. apps/settings.lua writes "face" through
+ * the prefs module while the shell is suspended behind it, so s_face_style is
+ * stale by the time we land back here -- reading it only at boot made the
+ * Settings picker look like it did nothing until the next reboot. (tz_min
+ * never had this bug: read_face_data() reads it fresh on every tick.) */
+static void reload_face_style(void)
+{
+    int32_t saved = shell_nvs_get_i32(SHELL_NVS_FACE, LAUNCHER_FACE_DIGITAL);
+    if (saved < 0 || saved >= LAUNCHER_FACE_COUNT) {
+        saved = LAUNCHER_FACE_DIGITAL;
+    }
+    s_face_style = (launcher_face_style_t)saved;
+}
+
+static void show_face_screen(void)
+{
+    s_shell_view = SHELL_VIEW_FACE;
+    reload_face_style();
+    build_face_ui();
+
+    bsp_display_lock(0);
+    uint32_t period = launcher_face_wants_seconds(s_face_style) ? 250 : 1000;
+    if (s_face_tick == NULL) {
+        s_face_tick = lv_timer_create(face_tick_cb, period, NULL);
+    } else {
+        lv_timer_set_period(s_face_tick, period);
+    }
+    lv_timer_resume(s_face_tick);
+    bsp_display_unlock();
+}
+
+/* Swipe left/right cycles the face and remembers the choice, the way a watch
+ * does. Runs on the LVGL task, so it must not take the display lock that
+ * build_face_ui() takes -- LVGL's lock is recursive on this BSP, but the
+ * screen swap is done here rather than inline to keep one code path. */
+static void face_gesture_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+    if (dir != LV_DIR_LEFT && dir != LV_DIR_RIGHT) {
+        return;
+    }
+
+    int next = (int)s_face_style + (dir == LV_DIR_LEFT ? 1 : -1);
+    if (next < 0) next = LAUNCHER_FACE_COUNT - 1;
+    if (next >= LAUNCHER_FACE_COUNT) next = 0;
+    s_face_style = (launcher_face_style_t)next;
+
+    shell_nvs_set_i32(SHELL_NVS_FACE, next);
+    ESP_LOGI(TAG, "face -> %s", launcher_face_style_name(s_face_style));
+    show_face_screen();
+}
+
+static void show_apps_screen(void)
+{
+    s_shell_view = SHELL_VIEW_APPS;
+    /* Stop repainting the face while it is not visible -- the tick would
+     * otherwise redraw a screen nobody is looking at, and on the analog face
+     * that is an I2C read four times a second. */
+    bsp_display_lock(0);
+    if (s_face_tick != NULL) {
+        lv_timer_pause(s_face_tick);
+    }
+    bsp_display_unlock();
+    build_launcher_ui();
+}
+
+/* BOOT's three-way toggle, run off the button task. Called only when no app
+ * is running -- the app case is handled by the stop request, whose exit path
+ * lands on the face. */
+static void shell_toggle_view(void)
+{
+    if (s_shell_view == SHELL_VIEW_FACE) {
+        show_apps_screen();
+        return;
+    }
+
+    /* Leaving the app list. A long-press info sheet may be open over it, and
+     * it is a screen of its own -- neither show_face_screen() nor anything it
+     * calls knows about it. Left behind it leaked, AND app_row_long_pressed()
+     * bails on `s_sheet_screen != NULL`, so long-press-to-delete stayed dead
+     * for the rest of the boot. Dispose of it before the face loads. */
+    if (s_sheet_screen != NULL) {
+        lv_obj_t *sheet = s_sheet_screen;
+        s_sheet_screen = NULL;
+        bsp_display_lock(0);
+        lv_obj_delete(sheet);
+        bsp_display_unlock();
+    }
+    show_face_screen();
+}
+
+/* Builds the app list and leaves it loaded, freeing whatever screen it
+ * replaced -- the same contract build_face_ui() has. It used to be the
+ * CALLER's job, which three of the four callers did and show_apps_screen()
+ * did not, so every BOOT toggle from the face to the app list leaked a whole
+ * screen tree: rows, their strdup'd basenames and their decoded card icons.
+ * Owning it here means a new caller cannot get it wrong. */
 static void build_launcher_ui(void)
 {
     size_t count = app_registry_count();
 
     bsp_display_lock(0);
+
+    lv_obj_t *old = s_launcher_screen;
 
     s_launcher_screen = lv_obj_create(NULL);
     /* True black, not near-black: watchOS/Wear OS are dark-theme only, and on
@@ -882,6 +1173,13 @@ static void build_launcher_ui(void)
                         refresh_clicked, view_toggle_clicked);
 
     lv_screen_load(s_launcher_screen);
+
+    /* Only now that the new screen is active is the old one safe to free:
+     * lv_screen_load() does not free what it replaces, and deleting the screen
+     * that is still on-screen is the crash this ordering exists to prevent. */
+    if (old != NULL && old != s_launcher_screen) {
+        lv_obj_delete(old);
+    }
     bsp_display_unlock();
 }
 
@@ -935,10 +1233,30 @@ static void button_poll_task(void *arg)
     bool level;
 
     for (;;) {
-        /* BOOT: active low. */
+        /* BOOT: active low. Three-way (see the shell navigation notes above).
+         *
+         * The stop request stays unconditional -- it must never gate on
+         * s_app_task being assigned, which is what stopped the very first
+         * version from ever returning. Reading s_app_task afterwards only
+         * decides whether this press ALSO toggles the shell surface: with an
+         * app up the stop request is the whole action, and lua_app_task's
+         * exit path lands on the face by itself. A press that races an app
+         * already exiting merely stops nothing and toggles, which is the
+         * behaviour you want anyway. */
         if (debounce_step(&boot_db, gpio_get_level(GPIO_NUM_0) == 0, &level) && level) {
-            ESP_LOGI(TAG, "BOOT pressed -- returning to launcher");
             launcher_lua_request_stop(true);
+
+            xSemaphoreTake(s_app_mutex, portMAX_DELAY);
+            bool app_running = (s_app_task != NULL);
+            xSemaphoreGive(s_app_mutex);
+
+            if (app_running) {
+                ESP_LOGI(TAG, "BOOT pressed -- stopping app, returning home");
+            } else {
+                ESP_LOGI(TAG, "BOOT pressed -- %s",
+                         s_shell_view == SHELL_VIEW_FACE ? "face -> apps" : "apps -> face");
+                shell_toggle_view();
+            }
         }
 
         /* PWR: active high, behind the expander. */
@@ -955,19 +1273,26 @@ static void button_poll_task(void *arg)
 }
 
 /* Restore the user's saved UI font scale (apps/settings.lua writes it) and
- * re-apply the theme so plain-label text picks it up. Called after the SD is
- * mounted (app_registry_scan) and before the launcher UI is built. Missing or
- * unreadable config leaves the default 0.8 in place. */
+ * re-apply the theme so plain-label text picks it up. Called before the
+ * launcher UI is built. Reads NVS, so it no longer depends on the SD being
+ * mounted; an absent or out-of-range value leaves the default in place. */
 static void apply_persisted_font_scale(lv_display_t *disp)
 {
-    FILE *f = fopen(BSP_SD_MOUNT_POINT "/font_scale.txt", "r");
-    if (f) {
-        float scale = 0.0f;
-        if (fscanf(f, "%f", &scale) == 1 && scale > 0.0f) {
-            lua_module_lvgl_set_font_scale(scale);
-        }
-        fclose(f);
+    /* NVS, not the card: the UI scale is a device setting and must apply with
+     * no card in the slot -- the same reason the face style and timezone live
+     * there. Settings writes "font_pct" through the `prefs` Lua module, which
+     * shares this NVS namespace. Absent or out-of-range leaves the default. */
+    int32_t pct = shell_nvs_get_i32("font_pct", 0);
+    if (pct >= 70 && pct <= 130) {
+        lua_module_lvgl_set_font_scale((float)pct / 100.0f);
     }
+
+    /* Same story for the speaker level: Settings wrote "volume" to NVS and
+     * nothing read it back, so the choice never survived a reboot even though
+     * APP_CONTRACT lists it among the keys the shell must know about. -1 is
+     * "never set", which app_audio_set_volume() ignores. */
+    app_audio_set_volume((int)shell_nvs_get_i32("volume", -1));
+
     bsp_display_lock(0);
     lv_display_set_theme(disp,
         lv_theme_default_init(disp,
@@ -991,6 +1316,31 @@ void app_main(void)
     if (s_app_mutex == NULL) {
         ESP_LOGE(TAG, "failed to create app mutex");
         return;
+    }
+
+    /* NVS holds every device setting the shell reads without a card -- the
+     * face style, the timezone, the font scale -- so it must be up before the
+     * first of those reads, which is the face build a few lines below.
+     *
+     * It used to be initialised only as a side effect of Wi-Fi coming up
+     * (app_wifi.c's stack_start), which made the boot face read a race the
+     * shell usually lost: NVS was still closed, shell_nvs_get_i32 returned its
+     * fallback, and the device booted to Digital no matter what the user had
+     * chosen. tz_min escaped it only because read_face_data() re-reads it on
+     * every tick, long after Wi-Fi has run. On a board with no network
+     * configured, stack_start never runs at all and NVS never opened.
+     *
+     * stack_start still calls this; a second nvs_flash_init() is a no-op. */
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        nvs_err = nvs_flash_init();
+    }
+    if (nvs_err != ESP_OK) {
+        /* Not fatal: settings fall back to their defaults and the device
+         * still boots, which is the same rule networking follows. */
+        ESP_LOGE(TAG, "nvs init failed: %s -- settings will use defaults",
+                 esp_err_to_name(nvs_err));
     }
 
     ESP_ERROR_CHECK(release_panel_reset());
@@ -1047,7 +1397,8 @@ void app_main(void)
     ESP_ERROR_CHECK(app_voice_register());
     ESP_ERROR_CHECK(app_sensors_register());
     ESP_ERROR_CHECK(app_wifi_register());
-    ESP_ERROR_CHECK(lua_module_store_register());   /* no deps; order is free */
+    ESP_ERROR_CHECK(lua_module_store_register());
+    ESP_ERROR_CHECK(lua_module_prefs_register());   /* no deps; order is free */
     ESP_ERROR_CHECK(lua_module_ui_register());
 
     /* BOOT (GPIO0) is the Home button. Input + pull-up matches its idle
@@ -1064,7 +1415,12 @@ void app_main(void)
 
     app_registry_scan();
     apply_persisted_font_scale(disp);   /* after SD mount, before UI build */
-    build_launcher_ui();
+    /* Boot to the watch face, not the app list: home is the watch. The app
+     * list is one BOOT press away (see the shell navigation notes above).
+     * The style is whatever was last swiped to; an out-of-range or absent
+     * value falls back to the digital face, which is also the fallback for a
+     * failed home app. */
+    show_face_screen();   /* reloads the saved style itself */
     xTaskCreate(button_poll_task, "buttons", 3072, NULL, 6, NULL);
     serial_push_start();
 

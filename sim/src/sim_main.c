@@ -5,7 +5,8 @@
  *
  *   sim run apps/counter.lua : sleep 1 : tap 184 224 : shot out.png
  *
- * Global options (before the first command): --sdroot DIR  (SD-card root that
+ * Global options (before the first command): --scale N  (font scale, 0.6-1.3,
+ * matching the device's user setting; default 1.0), --sdroot DIR  (SD-card root that
  * font_load / file paths resolve against; default: current directory).
  */
 #include "lua.h"
@@ -23,7 +24,9 @@
 #include "app_sandbox.h"
 #include "lua_module_ui.h"
 #include "lua_module_store.h"
+#include "lua_module_prefs.h"
 #include "launcher_home.h"
+#include "launcher_face.h"
 
 /* Sim-only reset hooks (the device wifi/sensors modules are event/register
  * driven and have no such entry point; the stubs add one for determinism). */
@@ -212,7 +215,11 @@ static int s_exit_code = 0;     /* nonzero if any command failed (for CI) */
 #define BLANK_COLOR_THRESHOLD 4 /* < this many distinct colors == "didn't draw" */
 
 /* Render the launcher's error screen so a SHOT after a failed RUN shows the
- * failure, not a stale frame. Mirrors show_error_screen() in launcher_main.c:
+ * failure, not a stale frame. A hand-kept MIRROR of show_error_screen() in
+ * launcher_main.c -- the sim does not compile that file, so this copy is what
+ * the error_screen golden actually tests. Any change to one must be made to
+ * the other, or the golden vouches for a screen the device never shows.
+ * Mirrors it as:
  * black field, red title, scrollable wrapped traceback. Built in C on the sim's
  * display, independent of any Lua state (the app VM is already gone). */
 static void render_error_screen(const char *app_name, const char *msg)
@@ -223,6 +230,9 @@ static void render_error_screen(const char *app_name, const char *msg)
 
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text_fmt(title, "%s failed", app_name);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(title, LV_PCT(96));
+    lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(0xFF6B6B), LV_PART_MAIN);
     lv_obj_set_style_text_font(title, &lv_font_lexend_40, LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
@@ -230,16 +240,30 @@ static void render_error_screen(const char *app_name, const char *msg)
     lv_obj_t *body = lv_label_create(scr);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(body, LV_PCT(96));
-    lv_obj_set_height(body, 320);
     lv_label_set_text(body, msg ? msg : "(no message)");
     lv_obj_set_style_text_color(body, lv_color_hex(0xE0E0E0), LV_PART_MAIN);
     lv_obj_set_style_text_font(body, &lv_font_lexend_26, LV_PART_MAIN);
-    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, 64);
 
     lv_obj_t *hint = lv_label_create(scr);
     lv_label_set_text(hint, "press the top button to go back");
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, LV_PCT(96));
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(hint, lv_color_hex(0x9A9AA5), LV_PART_MAIN);
+    lv_obj_set_style_text_font(hint, &lv_font_lexend_26, LV_PART_MAIN);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+    /* The body is placed between the title and the hint by MEASURING them
+     * rather than assuming each is one line. Both wrap now, and a long app
+     * name or a large font scale makes the title two lines -- with a fixed
+     * top the traceback was drawn straight over it. lv_obj_update_layout()
+     * forces the sizes to be computed before they are read. */
+    lv_obj_update_layout(scr);
+    int32_t top = 8 + lv_obj_get_height(title) + 8;
+    int32_t avail = 448 - top - lv_obj_get_height(hint) - 24;
+    if (avail < 80) avail = 80;
+    lv_obj_set_height(body, avail);
+    lv_obj_align(body, LV_ALIGN_TOP_LEFT, 0, top);
 
     lv_screen_load(scr);
 }
@@ -632,6 +656,46 @@ static void exec_cmd(int argc, char **argv)
         int n = argc > argi ? atoi(argv[argi]) : -1;   /* -1 => full fake list */
         render_home(view, n, /*sd_mounted=*/true);
         printf("HOME_OK\n");
+    } else if (!strcmp(cmd, "face")) {
+        /* Render a watch face (the shared launcher_face_create/update) with
+         * injected values, so the shell's home screen is golden-testable with
+         * no board and no RTC.
+         *   face [digital|analog|rings|words|minimal] [HH:MM[:SS]] [pct]
+         *        [charging|unset]
+         * Defaults to a fixed, deterministic digital face. */
+        if (s_app) app_stop();
+        launcher_face_style_t style = LAUNCHER_FACE_DIGITAL;
+        launcher_face_data_t d = {
+            .time_valid = true, .hour = 10, .min = 9, .sec = 30,
+            .year = 2026, .month = 8, .day = 24, .wday = 1,
+            .batt_valid = true, .batt_percent = 72, .charging = false,
+        };
+        for (int i = 1; i < argc; i++) {
+            int hh, mm, ss;
+            if      (!strcmp(argv[i], "digital")) style = LAUNCHER_FACE_DIGITAL;
+            else if (!strcmp(argv[i], "analog"))  style = LAUNCHER_FACE_ANALOG;
+            else if (!strcmp(argv[i], "rings"))   style = LAUNCHER_FACE_RINGS;
+            else if (!strcmp(argv[i], "words"))   style = LAUNCHER_FACE_WORDS;
+            else if (!strcmp(argv[i], "minimal")) style = LAUNCHER_FACE_MINIMAL;
+            else if (!strcmp(argv[i], "charging")) d.charging = true;
+            else if (!strcmp(argv[i], "unset"))    d.time_valid = false;
+            else if (sscanf(argv[i], "%d:%d:%d", &hh, &mm, &ss) == 3) {
+                d.hour = hh; d.min = mm; d.sec = ss;
+            } else if (sscanf(argv[i], "%d:%d", &hh, &mm) == 2) {
+                d.hour = hh; d.min = mm;
+            } else {
+                d.batt_percent = atoi(argv[i]);
+                d.batt_valid = d.batt_percent > 0;
+            }
+        }
+        lv_obj_t *scr = lv_obj_create(NULL);
+        lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), LV_PART_MAIN);
+        lv_obj_set_style_pad_all(scr, 0, LV_PART_MAIN);
+        lv_obj_set_style_border_width(scr, 0, LV_PART_MAIN);
+        launcher_face_t *fc = launcher_face_create(scr, style);
+        launcher_face_update(fc, &d);
+        lv_screen_load(scr);
+        printf("FACE_OK %s\n", launcher_face_style_name(style));
     } else if (!strcmp(cmd, "sheet")) {
         /* Render the app-info sheet (long-press-to-delete) for a name.
          *   sheet [Name] [D:/card/icon.bin]
@@ -650,10 +714,19 @@ int main(int argc, char **argv)
     const char *sdroot = ".";
 
     /* Leading global options. */
+    /* The device carries a user-set font scale (0.6-1.3, NVS "font_pct") that
+     * the simulator had no way to reproduce -- it always ran at 1.0. That gap
+     * is why a whole class of overflow bugs shipped: at 1.3 header titles wrap
+     * and are clipped, row labels leave their fixed-height cards, and stepper
+     * readouts are eaten by their own +/- slabs. None of it is visible at 1.0,
+     * so no golden could catch it. --scale makes those states renderable and
+     * therefore golden-testable. */
+    float font_scale = 1.0f;
     int i = 1;
     while (i < argc && !strncmp(argv[i], "--", 2)) {
         if (!strcmp(argv[i], "--sdroot") && i + 1 < argc) { sdroot = argv[i + 1]; i += 2; }
         else if (!strcmp(argv[i], "--timeout") && i + 1 < argc) { s_watchdog_s = atoi(argv[i + 1]); i += 2; }
+        else if (!strcmp(argv[i], "--scale") && i + 1 < argc) { font_scale = (float)atof(argv[i + 1]); i += 2; }
         else { fprintf(stderr, "unknown option %s\n", argv[i]); i++; }
     }
 
@@ -674,10 +747,16 @@ int main(int argc, char **argv)
         app_wifi_register() != ESP_OK ||
         app_sensors_register() != ESP_OK ||
         lua_module_store_register() != ESP_OK ||
+        lua_module_prefs_register() != ESP_OK ||
         lua_module_ui_register() != ESP_OK) {
         fprintf(stderr, "module registration failed\n");
         return 1;
     }
+
+    /* After registration: the module owns the scale, and setting it before it
+     * exists is a no-op. Matches app_main(), which applies the persisted scale
+     * once the modules are up. */
+    lua_module_lvgl_set_font_scale(font_scale);
 
     /* Walk the ':'-separated command pipeline. */
     int start = i;

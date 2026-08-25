@@ -68,6 +68,7 @@ serial next to RUN/STOP; `tools/drive.py` chains them and `tools/screenshot.py`
 decodes SHOT to a PNG (~1.6 s per frame):
 
 ```bash
+./.venv/bin/python tools/push.py tests/fixtures/ui_test.lua      # fixtures live here
 ./.venv/bin/python tools/drive.py run ui_test.lua : sleep 1 : tap 184 224 : shot out.png
 ```
 
@@ -159,7 +160,8 @@ These cost an hour each if you don't know them. Most were hit for real in this r
 ## Architecture
 
 - `launcher/` — ESP-IDF app: BSP + LVGL 9.5 + Lua, scans and runs apps
-- `apps/` — Lua apps, installed to `/sdcard/apps/`. Each is either a flat
+- `apps/` — Lua apps, installed to `/sdcard/apps/`. (Watch faces are **not** here —
+  they are part of the shell, in `launcher/main/launcher_face.c`.) Each is either a flat
   `apps/<name>.lua` or a folder `apps/<name>/main.lua` that ships its own
   `icon.bin` (see `docs/SD_CARD_APPS.md`)
 - Runtime: `espressif/lua` (official component) + LVGL bindings from `espressif/esp-claw`
@@ -179,12 +181,42 @@ That pump needs **a positive timeout and a yield**. `process_events(0)` returns
 immediately when the queue is empty; looping on it starves the idle task and trips the
 task watchdog.
 
-**Back to the launcher is the BOOT button** (GPIO0, top right, active low — a direct
-GPIO read, so unlike the old PWR path it has no I²C dependency and survives a wedged bus).
-Deliberately hardware: no app can consume it or paint over it, so a misbehaving app is
-always escapable. Polled every 20 ms in `button_poll_task` with a two-sample debounce; it
-requests stop unconditionally rather than gating on "is an app running", which is what
-broke the first version.
+**Home is the watch face, not the app list.** The device boots to a face from
+`launcher_face.c` — pure LVGL, no card, no Lua VM, so it is always available and is the
+fallback if a user-configured home app ever fails. The app list is a surface you
+navigate to.
+
+**Five faces live in C**: Digital, Analog, Rings, Words, Minimal — ported from the former
+`apps/faces.lua` and `apps/clock.lua`, which between them were three competing copies of
+"the watch face". **Swipe left/right on home cycles them**; the choice is saved to NVS.
+Faces are built once and then *mutated* per tick — the analog dial alone is 60+ tick
+lines plus three hands, so rebuilding it to move a second hand is out of the question.
+The tick runs at 250 ms for faces with a second hand and 1 s otherwise.
+
+**Timezone lives in exactly one place.** NTP sets the RTC in **UTC**, so the shell
+applies an offset (minutes east, in NVS) when it reads the clock, rolling the date
+properly. `faces.lua` carried a warning about two copies of that logic disagreeing and
+showing the UTC date beside a local time; there is now one copy, in `shift_local()`.
+
+**BOOT (GPIO0, top right, active low) is the only navigation control**, and it is a
+three-way toggle:
+
+| From | BOOT goes to |
+| --- | --- |
+| a running app | home (the app is stopped first) |
+| home (face) | the app list |
+| the app list | home |
+
+A direct GPIO read, so unlike the old PWR path it has no I²C dependency and survives a
+wedged bus. Deliberately hardware: no app can consume it or paint over it, so a
+misbehaving app is always escapable. Polled every 20 ms in `button_poll_task` with a
+two-sample debounce; it requests stop **unconditionally** rather than gating on "is an
+app running", which is what broke the first version — the `s_app_task` read afterwards
+only decides whether the press *also* toggles the shell surface.
+
+The face repaints on a 5 s LVGL timer that is paused while the app list is up. Sampling
+faster than the minute it displays is deliberate: a 60 s timer against a 1 Hz clock
+drifts and skips whole minutes — the same trap `docs/APP_CONTRACT.md` warns apps about.
 
 **PWR (EXIO4 on the expander, active high) belongs to apps** via `require("button")` —
 pressed/released/long_pressed(2 s). Holding PWR ≥6 s still powers off — that is the

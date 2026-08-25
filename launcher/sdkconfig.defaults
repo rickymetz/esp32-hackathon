@@ -35,6 +35,26 @@ CONFIG_LV_TINY_TTF_FILE_SUPPORT=y
 # Costs ~28.8 KB PSRAM per visible card icon while it's on screen.
 CONFIG_LV_BIN_DECODER_RAM_LOAD=y
 
+# Image cache. RAM_LOAD above makes every icon decode allocate a full-image
+# buffer (128x128 RGB565 = 32,768 bytes) and read the whole file off the SD
+# card. With the cache at LVGL's default of 0 that work is never reused:
+# lv_bin_decoder returns before caching when the cache is disabled, so every
+# redraw of a screen carrying card icons repeats the SD read AND the 32 KB
+# alloc/free. Not a leak -- the close path frees correctly -- but churn, and it
+# is worst exactly where card icons live, on the launcher home screen while
+# scrolling. The two settings have to be enabled together; RAM_LOAD alone
+# traded a scaling artifact for per-draw I/O.
+#
+# 256 KB is roughly eight icons' working set. It lands in PSRAM, not internal
+# DRAM (CONFIG_SPIRAM_USE_MALLOC=y with SPIRAM_MALLOC_ALWAYSINTERNAL=0), which
+# is the only reason a figure this size is affordable -- internal DRAM's
+# largest contiguous block measures ~73 KB.
+#
+# Symbol verified against launcher/managed_components/lvgl__lvgl/Kconfig:759,
+# not guessed -- the same check CONFIG_LV_USE_PERF_MONITOR needed.
+# From docs/RAM_AUDIT.md finding 1 (PR #6).
+CONFIG_LV_CACHE_DEF_SIZE=262144
+
 # I4: raising the fixed pool (I3, 64->128 KB) stopped LVGL's rebuild-before-
 # delete refresh from exhausting it, but that pool comes out of internal
 # DRAM -- the scarcest resource on this board -- and the extra 64 KB broke
