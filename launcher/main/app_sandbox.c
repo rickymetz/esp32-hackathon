@@ -130,6 +130,11 @@ static int sandboxed_print(lua_State *L)
     }
     log_ring_puts("\n", 1);
     fputc('\n', stdout);
+    /* Lua's print ends with lua_writeline(), which is a newline AND an
+     * fflush (luaconf.h). Without this the claim of identical semantics above
+     * was false, and a buffered stdout would delay an author's print() off the
+     * console -- the very latency this is meant to avoid. */
+    fflush(stdout);
     return 0;
 }
 

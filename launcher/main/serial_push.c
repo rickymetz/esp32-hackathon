@@ -148,6 +148,25 @@ static bool read_line_until(char *out, size_t cap, int timeout_ms)
         out[n++] = (char)c;
     }
     out[cap - 1] = '\0';
+
+    /* Same resync read_line() does, and for the same reason -- omitting it
+     * here was a real bug. Returning now would leave the REST of this physical
+     * line queued, so the command loop would parse from mid-line and then
+     * answer every remaining body line with "ERR unknown_command <base64>":
+     * exactly the console-spew storm the drain exists to prevent. */
+    for (;;) {
+        int c = fgetc(stdin);
+        if (c == EOF) {
+            if (esp_timer_get_time() >= deadline) {
+                return false;   /* the sender went quiet mid-line */
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+        if (c == '\n') {
+            break;
+        }
+    }
     return false;
 }
 

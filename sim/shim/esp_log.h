@@ -15,6 +15,10 @@
  * intercept -- this exists so log_ring.c compiles and its ring still captures
  * what the sandbox pushes in explicitly (an app's print()). Returns NULL: no
  * previous handler to chain to. */
+/* <stdarg.h> explicitly: va_list below comes from macOS's <stdio.h> only by
+ * accident, and glibc's defines just __gnuc_va_list -- so any sim TU that
+ * included this header first would fail to build on Linux. */
+#include <stdarg.h>
 typedef int (*vprintf_like_t)(const char *, va_list);
 static inline vprintf_like_t esp_log_set_vprintf(vprintf_like_t f)
 {

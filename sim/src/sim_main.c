@@ -658,14 +658,23 @@ static void exec_cmd(int argc, char **argv)
          *   home                list view, full fake list
          *   home grid | list    that view, full list
          *   home [grid|list] N  N apps (0 = the empty/no-apps state)
-         * Stops any running app first; the toggle is live (tap it to switch). */
+         *   home nocard [N]     the CARD-LESS state: built-ins only, the
+         *                       "No SD card" note, no view toggle
+         * Stops any running app first; the toggle is live (tap it to switch).
+         *
+         * `nocard` exists because sd_mounted was hardcoded true here, so the
+         * one state built-in apps are FOR could not be rendered -- and the
+         * first version of that screen shipped with the note painted over by
+         * the first row, which no golden could have caught. */
         if (s_app) app_stop();
         launcher_view_t view = LAUNCHER_VIEW_LIST;
         int argi = 1;
         if (argc >= 2 && !strcmp(argv[1], "grid")) { view = LAUNCHER_VIEW_GRID; argi = 2; }
         else if (argc >= 2 && !strcmp(argv[1], "list")) { view = LAUNCHER_VIEW_LIST; argi = 2; }
-        int n = argc > argi ? atoi(argv[argi]) : -1;   /* -1 => full fake list */
-        render_home(view, n, /*sd_mounted=*/true);
+        bool sd = true;
+        if (argc > argi && !strcmp(argv[argi], "nocard")) { sd = false; argi++; }
+        int n = argc > argi ? atoi(argv[argi]) : (sd ? -1 : 5);
+        render_home(view, n, sd);
         printf("HOME_OK\n");
     } else if (!strcmp(cmd, "face")) {
         /* Render a watch face (the shared launcher_face_create/update) with
