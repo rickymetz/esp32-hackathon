@@ -62,6 +62,14 @@ static int log_hook(const char *fmt, va_list ap)
     return s_prev ? s_prev(fmt, ap) : 0;
 }
 
+void log_ring_puts(const char *data, size_t len)
+{
+    if (s_buf == NULL || s_dumping || data == NULL || len == 0) {
+        return;
+    }
+    ring_append(data, len);
+}
+
 void log_ring_init(void)
 {
     if (s_buf != NULL) {

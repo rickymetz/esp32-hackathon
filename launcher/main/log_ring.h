@@ -49,6 +49,15 @@ void log_ring_init(void);
  */
 void log_ring_dump(void);
 
+/**
+ * @brief Append raw bytes to the ring, for output that is not an ESP_LOG.
+ *
+ * An app's print() goes to stdout via fwrite and never reaches the vprintf
+ * hook, so the sandbox routes it here instead -- print() is what an author
+ * actually wants to read back.
+ */
+void log_ring_puts(const char *data, size_t len);
+
 /** @brief Bytes currently buffered. */
 size_t log_ring_used(void);
 

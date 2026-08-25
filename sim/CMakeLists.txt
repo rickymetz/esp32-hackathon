@@ -58,6 +58,10 @@ add_library(bindings STATIC
     # Reused launcher modules -- all portable against the shims.
     ${LAUNCHER}/main/app_timer.c
     ${LAUNCHER}/main/app_sandbox.c
+    # The sandbox routes an app's print() here so `LOG` can hand it back, so
+    # the sim needs it too -- and building the real file rather than stubbing
+    # it means the sim exercises the same ring the device does.
+    ${LAUNCHER}/main/log_ring.c
     ${LAUNCHER}/main/launcher_home.c
     ${LAUNCHER}/main/launcher_face.c
     ${LAUNCHER}/main/launcher_icons.c

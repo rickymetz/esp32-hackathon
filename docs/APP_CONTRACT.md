@@ -1276,9 +1276,11 @@ shipped example — the built-in sizes cover every app so far.)
 resetting the board**, which destroys the state you were trying to inspect --
 so the launcher keeps the last 32 KB of its own log in memory and `LOG` (or
 `tools/drive.py log`) hands it back over the port the harness already owns.
-Trigger the fault, then ask what happened. It captures `ESP_LOGx` -- including
-the launcher's `app '<name>' failed:` and its traceback -- but **not** your
-app's own `print()`, which Lua writes straight to stdout. A crashing app also shows its error on-screen (rule
+Trigger the fault, then ask what happened. It captures your `print()` **and** `ESP_LOGx` --
+including the launcher's `app '<name>' failed:` and its traceback. `print()`
+reaches it because the launcher replaces the VM's `print` with one that tees;
+it behaves exactly as Lua's does (`tostring` on each argument, tabs between,
+newline at the end), so nothing changes for you. A crashing app also shows its error on-screen (rule
 4), with the full traceback on serial too, prefixed `app '<name>' failed:`. Errors inside
 an event callback are logged separately under the tag `lua_lvgl_evt` and don't stop the
 app or show the error screen.
