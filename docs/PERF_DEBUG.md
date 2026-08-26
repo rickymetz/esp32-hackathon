@@ -153,3 +153,39 @@ A/B on one source tree means anything.
 If you ever need that 12 KB back, dropping the three `CONFIG_FREERTOS_*`
 symbols recovers it; `STATS` keeps working and reports
 `cpu unavailable` instead of failing.
+
+---
+
+## Measured baselines — churn soak, 2026-08-25
+
+`tools/churn.py`, 353 cycles across two runs on the merged `main` (`ee85dfb`).
+Each cycle: launch an app, confirm it is resident, BOOT out, toggle the shell
+both ways; every fifth cycle also opens Settings → Wi-Fi. Roughly **1,000 BOOT
+toggles** in total.
+
+| Phase | n | drift | spread |
+| --- | --- | --- | --- |
+| idle (no app) | 353 | **+48 B** / **−212 B** per run | ~1.2 KB |
+| app resident | 353 | no trend | ~8 KB (varies by app) |
+| Wi-Fi page | 34 | **−16 B/visit** (slope) | ~20 KB |
+
+**No leak anywhere**, including the launch/exit/BOOT-toggle cycle that PR #7's
+screen-leak fix targeted — measured here over two orders of magnitude more
+cycles than the 38 checked by hand at the time.
+
+Two traps this run exposed, both in the *measurement* rather than the firmware:
+
+- **An `ERR` reply is an answer.** The first run reported 140 consecutive "RUN
+  did not answer", which read as a wedged board. The board was replying
+  `RUN_ERR already_running` the whole time. Match the error prefix, not just
+  the success one.
+- **A serial-driven run has no touch activity**, so the panel sleeps after
+  `SCREEN_SLEEP_MS` and the next BOOT is consumed waking it — by design. A soak
+  that BOOTs without tapping first spends its presses on wake-ups and never
+  navigates. `churn.py` taps a corner each cycle to reset LVGL's inactivity
+  clock.
+
+And one about reading the numbers: the Wi-Fi phase looked like an 11 KB leak
+from its first and last samples alone. A linear fit over all 34 put the slope
+at −16 B/visit against a 20 KB natural spread. Fit the series; do not subtract
+two points.
