@@ -59,6 +59,9 @@
 #include "app_sensors.h"
 #include "app_audio.h"
 #include "log_ring.h"
+#include "esp_lvgl_port.h"
+#include "bsp/display.h"
+#include "bsp/touch.h"
 #include "app_wifi.h"
 #include "driver/gpio.h"
 #include "launcher_main.h"
@@ -1500,6 +1503,111 @@ void launcher_boot_press(void)
     }
 }
 
+/* ---- Display bring-up ------------------------------------------------
+ *
+ * We do this ourselves instead of calling bsp_display_start(), for exactly one
+ * reason: the draw buffer.
+ *
+ * The BSP renders through a SINGLE 100-row buffer (368x448 panel, so five
+ * bands per full-screen redraw). With one buffer, LVGL must wait for each
+ * band's DMA to finish before rendering the next into the same memory. Any
+ * slack in that handshake and the next band is drawn over pixels still being
+ * shipped -- which puts band N+1's content into band N's region. The symptom
+ * is 4-5 horizontal stripes alternating between the old screen and the new,
+ * persisting until something repaints them, and it shows on app launch because
+ * that is the one moment all five bands are dirty at once and pushed
+ * back-to-back. Reported from the board; it is invisible to the SHOT harness,
+ * which re-renders the widget tree rather than reading the panel.
+ *
+ * Two buffers remove the window entirely: LVGL renders band N+1 into the other
+ * buffer while band N is still transferring. Halving the band height keeps the
+ * total identical to today's single buffer -- 2 x 368 x 50 x 2 = 73,600 bytes,
+ * the same figure, in internal DRAM, so nothing else has to move.
+ *
+ * bsp_display_start_with_config() looks like it would do this and does not:
+ * bsp_display_lcd_init() takes no arguments and hardcodes its own buffer_size
+ * and double_buffer, so the cfg's buffering fields are dead. Only
+ * lvgl_port_cfg is honoured. Hence the open-coded bring-up.
+ *
+ * Set LAUNCHER_OWN_DISPLAY_INIT to 0 to fall straight back to the BSP. */
+#define LAUNCHER_OWN_DISPLAY_INIT 1
+
+/* Our own touch handle: bsp_display_get_input_dev() returns a BSP static that
+ * only bsp_display_start() ever fills in, so screen_set() has to ask us. */
+static lv_indev_t *s_touch_indev;
+
+static lv_indev_t *launcher_touch_indev(void)
+{
+    return s_touch_indev ? s_touch_indev : bsp_display_get_input_dev();
+}
+
+#if LAUNCHER_OWN_DISPLAY_INIT
+/* Band height in rows. 50 not 100, so two buffers cost what one used to. */
+#define LAUNCHER_LCD_BAND_ROWS 50
+
+static lv_display_t *launcher_display_start(void)
+{
+    const lvgl_port_cfg_t port_cfg = ESP_LVGL_PORT_INIT_CONFIG();
+    if (lvgl_port_init(&port_cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "lvgl_port_init failed");
+        return NULL;
+    }
+
+    esp_lcd_panel_handle_t panel = NULL;
+    esp_lcd_panel_io_handle_t io = NULL;
+    /* Zeroed struct, not NULL: the BSP's own caller passes {0} and the
+     * function's NULL-tolerance is not documented. Match it exactly. */
+    bsp_display_config_t panel_cfg = {0};
+    if (bsp_display_new(&panel_cfg, &panel, &io) != ESP_OK) {
+        ESP_LOGE(TAG, "bsp_display_new failed");
+        return NULL;
+    }
+
+    const lvgl_port_display_cfg_t disp_cfg = {
+        .io_handle = io,
+        .panel_handle = panel,
+        .buffer_size = BSP_LCD_H_RES * LAUNCHER_LCD_BAND_ROWS,
+        .double_buffer = true,          /* the whole point of this function */
+        .hres = BSP_LCD_H_RES,
+        .vres = BSP_LCD_V_RES,
+        .monochrome = false,
+        .color_format = LV_COLOR_FORMAT_RGB565,
+        .rotation = { .swap_xy = false, .mirror_x = false, .mirror_y = false },
+        .flags = {
+            /* Both copied from the BSP's own values, deliberately: this
+             * function exists to change the BUFFERING and nothing else. */
+            .buff_dma = false,
+            .sw_rotate = true,
+            .swap_bytes = true,
+        },
+    };
+
+    lv_display_t *disp = lvgl_port_add_disp(&disp_cfg);
+    if (disp == NULL) {
+        ESP_LOGE(TAG, "lvgl_port_add_disp failed");
+        return NULL;
+    }
+
+    /* Touch, the same way bsp_display_indev_init() does it. */
+    esp_lcd_touch_handle_t tp = NULL;
+    if (bsp_touch_new(NULL, &tp) == ESP_OK && tp != NULL) {
+        const lvgl_port_touch_cfg_t touch_cfg = { .disp = disp, .handle = tp };
+        s_touch_indev = lvgl_port_add_touch(&touch_cfg);
+    }
+    if (s_touch_indev == NULL) {
+        /* Not fatal: BOOT is a GPIO read and still escapes anything. */
+        ESP_LOGE(TAG, "touch init failed -- panel will be look-only");
+    }
+
+    ESP_LOGI(TAG, "display: 2 x %d-row buffers (%d bytes total)",
+             LAUNCHER_LCD_BAND_ROWS,
+             (int)(2 * BSP_LCD_H_RES * LAUNCHER_LCD_BAND_ROWS * 2));
+    return disp;
+}
+#else
+static lv_display_t *launcher_display_start(void) { return bsp_display_start(); }
+#endif
+
 /* BOOT (GPIO0, top right) is Home: the universal way back to the launcher.
  * It is deliberately hardware: no app can consume it or paint over it, so a
  * misbehaving app can always be escaped. PWR (EXIO4, bottom right) belongs
@@ -1520,7 +1628,7 @@ static void screen_set(screen_state_t next)
     if (next == s_screen) {
         return;               /* idempotent: this runs every 20 ms */
     }
-    lv_indev_t *touch = bsp_display_get_input_dev();
+    lv_indev_t *touch = launcher_touch_indev();
 
     switch (next) {
     case SCREEN_AWAKE:
@@ -1766,10 +1874,10 @@ void app_main(void)
 
     ESP_ERROR_CHECK(release_panel_reset());
 
-    lv_display_t *disp = bsp_display_start();
+    lv_display_t *disp = launcher_display_start();
     s_disp = disp;
     if (disp == NULL) {
-        ESP_LOGE(TAG, "bsp_display_start() failed");
+        ESP_LOGE(TAG, "display bring-up failed");
         return;
     }
     bsp_display_backlight_on();
