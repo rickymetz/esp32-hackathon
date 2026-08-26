@@ -51,17 +51,29 @@ def reconnect(timeout=90):
 
 
 def cmd(s, line, expect, wait=6.0):
-    """Send one command, return the matching reply line (or None)."""
+    """Send one command and return its reply.
+
+    Returns the reply line whether or not it matched `expect` -- an ERR reply
+    is an ANSWER, and the first version of this treated "RUN_ERR
+    already_running" as "the board did not respond". That mislabelled a real
+    bug (an app stuck running, every later RUN refused) as a dead link for 140
+    cycles, and buried it in the noise. Distinguish: None means genuinely no
+    reply; a string starting with something other than `expect` is a refusal.
+    """
     s.reset_input_buffer()
     s.write((line + "\n").encode())
     s.flush()
     deadline = time.time() + wait
+    verb = line.split()[0]
     while time.time() < deadline:
         try:
             got = s.readline().decode("utf-8", "replace").strip()
         except (OSError, serial.SerialException):
             return None
         if got.startswith(expect):
+            return got
+        # The matching error reply for this verb, e.g. RUN_ERR for RUN.
+        if got.startswith(verb + "_ERR"):
             return got
     return None
 
@@ -121,9 +133,26 @@ while time.time() < end:
 
     try:
         # 1. Launch, and confirm it is actually resident.
-        if cmd(s, f"RUN {app}", "RUN_OK") is None:
-            log.write(f"{ts},{cycle},run,,RUN did not answer for {app}\n")
+        r = cmd(s, f"RUN {app}", "RUN_OK")
+        if r is None:
+            log.write(f"{ts},{cycle},run,,no reply to RUN {app} -- link?\n")
             s = reconnect() or s
+            continue
+        if not r.startswith("RUN_OK"):
+            # A refusal, not silence. "already_running" means a previous app
+            # never exited -- the interesting failure, and worth the log dump
+            # right now while the cause is still in the ring.
+            anomalies += 1
+            print(f"cycle {cycle}: RUN refused -- {r}")
+            log.write(f"{ts},{cycle},run,,ANOMALY {r}\n")
+            for ln in dump_log(s):
+                log.write(f"# LOG {ln}\n")
+            # Clear it so the run can continue: BOOT twice, because the first
+            # press is eaten as a wake if the screen has slept (see below).
+            cmd(s, "BOOT", "BOOT_OK")
+            time.sleep(1.0)
+            cmd(s, "BOOT", "BOOT_OK")
+            time.sleep(1.0)
             continue
         time.sleep(2.5)
         p = psram(s)
@@ -137,12 +166,18 @@ while time.time() < end:
             log.write(f"{ts},{cycle},resident,{p if p else ''},{app}\n")
 
         # 2. BOOT out of it, then toggle the shell both ways.
-        cmd(s, "BOOT", "BOOT_OK")
-        time.sleep(1.2)
-        cmd(s, "BOOT", "BOOT_OK")     # face -> app list
-        time.sleep(1.0)
-        cmd(s, "BOOT", "BOOT_OK")     # app list -> face
-        time.sleep(1.0)
+        #
+        # A serial-driven run has no touch activity, so after SCREEN_SLEEP_MS
+        # the panel sleeps and the FIRST BOOT is consumed waking it -- by
+        # design, so a press on a dark screen cannot stop an app you cannot
+        # see. TAP first to reset LVGL's inactivity clock, which keeps the
+        # screen awake and makes each BOOT below mean what it says.
+        cmd(s, "TAP 4 4", "TAP_OK")   # a corner: wakes without hitting a control
+        time.sleep(0.4)
+        for label in ("exit app", "face -> apps", "apps -> face"):
+            if cmd(s, "BOOT", "BOOT_OK") is None:
+                log.write(f"{ts},{cycle},boot,,no reply to BOOT ({label})\n")
+            time.sleep(1.1)
 
         p = psram(s)
         log.write(f"{ts},{cycle},idle,{p if p else ''},after toggles\n")
