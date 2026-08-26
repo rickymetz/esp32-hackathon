@@ -65,6 +65,12 @@ idf.py -p $PORT flash monitor
 
 **You may build, flash, and monitor freely** — treat it as the normal verify loop.
 
+Two checks genuinely need a human at the board -- a card-less boot, and whether
+the FPS overlay paints (`SHOT` cannot capture it *by construction*: sysmon
+draws on the display's system layer, a sibling of the active screen). Both are
+written up in **[docs/HANDS_ON_CHECKS.md](docs/HANDS_ON_CHECKS.md)** with the
+reasons, so nobody tries to automate one. Everything else is drivable.
+
 **Verify UI work with the drive harness, not by asking a human.** The launcher
 speaks `SHOT` / `TAP x y` / `SWIPE x0 y0 x1 y1 [ms]` / `BOOT` / `LOG` /
 `LIST` / `DELETE` /
