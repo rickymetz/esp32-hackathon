@@ -1590,7 +1590,7 @@ static lv_display_t *launcher_display_start(void)
             /* Both copied from the BSP's own values, deliberately: this
              * function exists to change the BUFFERING and nothing else. */
             .buff_dma = false,
-            .sw_rotate = true,
+            .sw_rotate = false,   /* EXPERIMENT: rotation is 0, so this should be inert */
             .swap_bytes = true,
         },
     };
