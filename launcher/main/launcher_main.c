@@ -1530,7 +1530,7 @@ void launcher_boot_press(void)
  * lvgl_port_cfg is honoured. Hence the open-coded bring-up.
  *
  * Set LAUNCHER_OWN_DISPLAY_INIT to 0 to fall straight back to the BSP. */
-#define LAUNCHER_OWN_DISPLAY_INIT 1
+#define LAUNCHER_OWN_DISPLAY_INIT 0
 
 /* Our own touch handle: bsp_display_get_input_dev() returns a BSP static that
  * only bsp_display_start() ever fills in, so screen_set() has to ask us. */
@@ -1544,6 +1544,19 @@ static lv_indev_t *launcher_touch_indev(void)
 #if LAUNCHER_OWN_DISPLAY_INIT
 /* Band height in rows. 50 not 100, so two buffers cost what one used to. */
 #define LAUNCHER_LCD_BAND_ROWS 50
+
+/* Snap an invalidated area to even x1/y1 and odd x2/y2 -- i.e. even width and
+ * height, 2-pixel aligned. Copied from the BSP's rounder_event_cb, because the
+ * panel's requirement is the panel's, not the BSP's. */
+static void launcher_rounder_cb(lv_event_t *e)
+{
+    lv_area_t *area = (lv_area_t *)lv_event_get_param(e);
+
+    area->x1 = (area->x1 >> 1) << 1;
+    area->y1 = (area->y1 >> 1) << 1;
+    area->x2 = ((area->x2 >> 1) << 1) + 1;
+    area->y2 = ((area->y2 >> 1) << 1) + 1;
+}
 
 static lv_display_t *launcher_display_start(void)
 {
@@ -1587,6 +1600,13 @@ static lv_display_t *launcher_display_start(void)
         ESP_LOGE(TAG, "lvgl_port_add_disp failed");
         return NULL;
     }
+
+    /* THE ROUNDER. Omitting this is what smeared the screen diagonally on the
+     * first attempt: the CO5300 wants 2-pixel-aligned areas, and an odd x or
+     * width makes every row land progressively offset -- a 45-degree shear.
+     * The BSP registers the same callback; it is not optional, and it is not
+     * part of lvgl_port_add_disp(). */
+    lv_display_add_event_cb(disp, launcher_rounder_cb, LV_EVENT_INVALIDATE_AREA, NULL);
 
     /* Touch, the same way bsp_display_indev_init() does it. */
     esp_lcd_touch_handle_t tp = NULL;
