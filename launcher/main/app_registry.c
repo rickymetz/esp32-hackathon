@@ -180,7 +180,21 @@ static app_entry_t *slot_for_locked(const char *id)
             return &s_apps[i];
         }
     }
-    return (s_count < APP_MAX_COUNT) ? &s_apps[s_count] : NULL;
+    if (s_count >= APP_MAX_COUNT) {
+        return NULL;
+    }
+
+    /* CLEAR the fresh slot. seed_builtins_locked() memsets only slots 0..4,
+     * and the previous scan ended with a qsort that scattered built-in entries
+     * to sorted positions >= 5 -- so this slot can still hold a built-in's
+     * residue, including a non-NULL builtin_src. The caller reads exactly that
+     * field to decide whether it is shadowing, so stale residue made it skip
+     * s_count++ and let the NEXT card app overwrite this one. Apps vanished
+     * from the list on every rescan after boot: every PUSH, every DELETE,
+     * every Refresh tap. Silently, and permanently for whichever app sorted
+     * into a poisoned slot. */
+    memset(&s_apps[s_count], 0, sizeof(s_apps[0]));
+    return &s_apps[s_count];
 }
 
 static esp_err_t scan_locked(void)
