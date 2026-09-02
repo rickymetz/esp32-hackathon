@@ -216,7 +216,16 @@ navigate to.
 
 **Five faces live in C**: Digital, Analog, Rings, Words, Minimal — ported from the former
 `apps/faces.lua` and `apps/clock.lua`, which between them were three competing copies of
-"the watch face". **Swipe left/right on home cycles them**; the choice is saved to NVS.
+"the watch face". Swipe left/right on home is *meant* to cycle them and the
+choice is saved to NVS -- but **the swipe does not currently work**, verified on
+hardware. `face_gesture_cb` is registered on every rebuilt face screen and the
+screen does receive PRESSED/PRESSING/CLICKED, yet LVGL never emits
+`LV_EVENT_GESTURE` there. The same synthetic `SWIPE` *does* produce gestures on
+an app's own screen, so it is not the harness. Three fixes were tried and none
+worked: clearing `CLICKABLE` on the face subtree, adding `CLICKABLE` to the
+screen, and clearing `SCROLLABLE` on it. Settings still changes the face.
+Next place to look is the synthetic-input playback around `launcher_main.c:177-260`,
+which has its own gesture ring.
 Faces are built once and then *mutated* per tick — the analog dial alone is 60+ tick
 lines plus three hands, so rebuilding it to move a second hand is out of the question.
 The tick runs at 250 ms for faces with a second hand and 1 s otherwise.
