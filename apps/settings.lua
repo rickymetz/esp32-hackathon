@@ -85,8 +85,10 @@ local function page_wifi()
     end
 
     local function connect_to(ssid, pass)
-        prefs.set("wifi_ssid", ssid)
-        prefs.set("wifi_pass", pass or "")
+        -- No prefs.set here. wifi.connect() saves the credentials itself,
+        -- from C, into a namespace `prefs` does not expose -- writing them
+        -- through prefs as well would put the plaintext password back where
+        -- any app could read it.
         set_status("connecting...")
         wifi.connect(ssid, pass or "")
     end

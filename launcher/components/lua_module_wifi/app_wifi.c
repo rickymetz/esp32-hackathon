@@ -25,7 +25,21 @@ static const char *TAG = "app_wifi";
  * wrote the card, so the two disagreed: Settings saved a network to NVS, the
  * boot auto-connect read a different (or absent) one off the card, and on a
  * card-less board Settings appeared to save while nothing was ever stored. */
-#define WIFI_NVS_NS   "shell"
+/* A PRIVATE namespace, deliberately not "shell".
+ *
+ * "shell" is the namespace the `prefs` Lua module exposes, so while the
+ * credentials lived there any app could read the plaintext Wi-Fi password
+ * with prefs.get("wifi_pass") -- one line, no privilege, nothing logged. The
+ * launcher documents that apps are not sandboxed from each other's FILES;
+ * it does not follow that they should get the user's network password, and
+ * `prefs` was otherwise the one thing an app could not reach around.
+ *
+ * Nothing in Lua needs these: wifi.connect(ssid, pass) saves them from C, so
+ * apps/settings.lua never had to write them itself. See also the denylist in
+ * lua_module_prefs.c, which stops an app reading a value left behind by an
+ * older build or planting one of its own. */
+#define WIFI_NVS_NS   "wifinet"
+#define WIFI_NVS_OLD  "shell"
 #define WIFI_NVS_SSID "wifi_ssid"
 #define WIFI_NVS_PASS "wifi_pass"
 
@@ -113,11 +127,51 @@ static bool creds_save(const char *ssid, const char *pass)
     return true;
 }
 
+/* Read the credentials out of the old shared "shell" namespace, and erase
+ * them from it. Runs once, on the first boot after they moved somewhere apps
+ * cannot read. Erasing is the point: migrating without it would leave the
+ * password readable by prefs.get() forever on every board already in use. */
+static bool creds_save(const char *ssid, const char *pass);
+
+static bool creds_migrate_from_shell(char *ssid, char *pass)
+{
+    nvs_handle_t h;
+    size_t slen = SSID_MAX, plen = PASS_MAX;
+    bool moved = false;
+
+    if (nvs_open(WIFI_NVS_OLD, NVS_READWRITE, &h) != ESP_OK) {
+        return false;
+    }
+    ssid[0] = pass[0] = '\0';
+    if (nvs_get_str(h, WIFI_NVS_SSID, ssid, &slen) == ESP_OK && ssid[0] != '\0') {
+        plen = PASS_MAX;
+        if (nvs_get_str(h, WIFI_NVS_PASS, pass, &plen) != ESP_OK) {
+            pass[0] = '\0';
+        }
+        moved = true;
+    }
+    if (nvs_erase_key(h, WIFI_NVS_SSID) == ESP_OK ||
+            nvs_erase_key(h, WIFI_NVS_PASS) == ESP_OK) {
+        nvs_commit(h);
+    }
+    nvs_close(h);
+    if (moved) {
+        ESP_LOGI(TAG, "moved saved network out of the app-readable namespace");
+    }
+    return moved;
+}
+
 static bool creds_load_nvs(char *ssid, char *pass)
 {
     nvs_handle_t h;
     if (nvs_open(WIFI_NVS_NS, NVS_READONLY, &h) != ESP_OK) {
-        /* Namespace absent -- nothing has ever been written. Not an error. */
+        /* Namespace absent -- nothing has ever been written HERE. It may
+         * still be sitting in the old shared namespace from a previous
+         * build, so try that before giving up. */
+        if (creds_migrate_from_shell(ssid, pass)) {
+            creds_save(ssid, pass);
+            return true;
+        }
         return false;
     }
     size_t slen = SSID_MAX, plen = PASS_MAX;

@@ -18,6 +18,9 @@ static const char *TAG = "app_registry";
 #define APPS_DIR  BSP_SD_MOUNT_POINT "/apps"
 
 static app_entry_t s_apps[APP_MAX_COUNT];
+/* Reset at the top of every scan so the "list is full" warning fires once
+ * per scan rather than once per boot. */
+static bool s_warned_full;
 static size_t s_count;
 static bool s_mounted;
 
@@ -181,6 +184,15 @@ static app_entry_t *slot_for_locked(const char *id)
         }
     }
     if (s_count >= APP_MAX_COUNT) {
+        /* Say so. This used to return NULL in silence and the caller skipped
+         * the app, so the only symptom was an app missing from the list with
+         * nothing logged anywhere -- indistinguishable from a bad filename or
+         * a card that did not mount. Warn once per full scan, not per app. */
+        if (!s_warned_full) {
+            s_warned_full = true;
+            ESP_LOGW(TAG, "app list is full at %d -- ignoring '%s' and any "
+                          "further apps; raise APP_MAX_COUNT", APP_MAX_COUNT, id);
+        }
         return NULL;
     }
 
@@ -200,6 +212,7 @@ static app_entry_t *slot_for_locked(const char *id)
 static esp_err_t scan_locked(void)
 {
     s_count = 0;
+    s_warned_full = false;
 
     /* Before the mount, deliberately: everything below can return early, and
      * the no-card path is precisely the one the built-ins exist to serve. */

@@ -18,12 +18,33 @@ static const char *TAG = "lua_prefs";
  * Lua error rather than letting nvs_set_* fail opaquely at runtime. */
 #define PREFS_KEY_MAX 15
 
+/* Keys no app may read or write through this module.
+ *
+ * `prefs` is the one shared store an app cannot reach around -- there is no
+ * other NVS binding -- so it is the one place where a denylist actually
+ * holds. The Wi-Fi credentials now live in a private namespace
+ * (app_wifi.c's WIFI_NVS_NS) and are migrated out of "shell" on first boot,
+ * but the names stay blocked here so an app cannot read a value left behind
+ * by an older build, nor plant one for the C side to pick up.
+ *
+ * This is NOT a sandbox and does not pretend to be one: apps share the SD
+ * card and can read each other's files, which the contract says plainly. It
+ * is specifically the user's network password, which is not the app's
+ * business and was one prefs.get() away. */
+static const char *const PREFS_DENY[] = { "wifi_ssid", "wifi_pass" };
+
 static const char *check_key(lua_State *L, int idx)
 {
     size_t len = 0;
     const char *key = luaL_checklstring(L, idx, &len);
     if (len == 0 || len > PREFS_KEY_MAX) {
         luaL_error(L, "prefs: key must be 1-%d characters", PREFS_KEY_MAX);
+    }
+    for (size_t i = 0; i < sizeof(PREFS_DENY) / sizeof(PREFS_DENY[0]); i++) {
+        if (strcmp(key, PREFS_DENY[i]) == 0) {
+            luaL_error(L, "prefs: '%s' is not readable by apps; "
+                          "use the wifi module to connect", key);
+        }
     }
     return key;
 }

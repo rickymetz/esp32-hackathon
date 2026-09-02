@@ -19,7 +19,12 @@ extern "C" {
 #define APP_NAME_MAX  48
 #define APP_ID_MAX    128   /* a folder name or file basename -- LFN can be long */
 #define APP_PATH_MAX  320   /* mount point + '/apps/' + a 255-char LFN */
-#define APP_MAX_COUNT 32
+/* 64, not 32. The card already carries 24 apps and five people are still
+ * writing more; 32 was close enough to be reached by accident, and the
+ * overflow path silently DROPPED the rest -- the app simply was not in the
+ * list, with nothing said anywhere. scan_locked() now logs when it fills up.
+ * The cost is one static array of app_entry_t. */
+#define APP_MAX_COUNT 64
 
 typedef struct {
     char name[APP_NAME_MAX];   /**< display name, from the filename/folder name */

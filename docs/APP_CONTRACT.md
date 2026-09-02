@@ -868,10 +868,19 @@ with nobody typing a date. This is the intended way to set the clock;
 `rtc.set` is the manual fallback.
 
 Credentials are entered **on the device** in `apps/settings.lua` (Wi-Fi) and stored
-in NVS (`wifi_ssid` / `wifi_pass`), so a board with no card still remembers its
-network. A network saved by an older build from `/sdcard/wifi.txt` is imported
-once, automatically, on the first boot after the change. Do not ask a user to
-type a password into a host terminal.
+in NVS by `wifi.connect(ssid, password)` itself, so a board with no card still
+remembers its network. Do not ask a user to type a password into a host terminal.
+
+**Your app cannot read them.** They live in a private NVS namespace that
+`prefs` does not expose, and `prefs.get("wifi_pass")` raises rather than
+answering. They used to sit in the shared `shell` namespace, where any app
+could read the plaintext password in one line; a board upgrading from such a
+build moves them out automatically on first boot. A network saved by an even
+older build from `/sdcard/wifi.txt` is still imported once, the same way.
+
+This is not a sandbox and does not pretend to be one — apps share the card and
+can read each other's files, as said above. It is specifically the user's
+network password, which is not your app's business.
 
 **Captive portals do not work.** Hotel, café and conference networks intercept
 traffic until you authenticate in a browser, and the device has no browser. The
@@ -965,9 +974,12 @@ A float is rounded to an integer, so `get` returns what `set` stored.
 Most apps do not need this — it is how **`apps/settings.lua`** stores things the
 shell must know about with no card present: `face` (the watch face style),
 `tz_min` (minutes east of UTC), `tz_city` and `tz_dst` (which zone was picked
-and whether summer time is on), `font_pct`, `volume`, `fps` (the developer
-overlay, below), and the Wi-Fi credentials. Writing those keys from your own app changes the device's
+and whether summer time is on), `font_pct`, `volume`, and `fps` (the developer
+overlay, below). Writing those keys from your own app changes the device's
 settings, so treat them as the Settings app's.
+
+`wifi_ssid` and `wifi_pass` are **not** among them: both names are refused by
+`prefs.get` and `prefs.set`. See Networking, above.
 
 The three timezone keys are one value in three parts, and the watch face reads
 only `tz_min`:
