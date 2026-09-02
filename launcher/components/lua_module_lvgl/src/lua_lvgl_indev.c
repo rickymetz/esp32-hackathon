@@ -95,47 +95,6 @@ void lua_lvgl_indev_release_locked(void)
     s_lvgl.touch_handle = NULL;
 }
 
-static int lua_lvgl_indev_register(lua_State *L)
-{
-    const char *kind = luaL_checkstring(L, 1);
-    void *handle = NULL;
-    esp_err_t err;
-    const char *attach_err = NULL;
-    bool unsupported = false;
-
-    luaL_argcheck(L, lua_islightuserdata(L, 2), 2, "indev handle (light userdata) expected");
-    handle = lua_touserdata(L, 2);
-    luaL_argcheck(L, handle != NULL, 2, "indev handle must be non-NULL");
-
-    if (!s_lvgl.runtime_initialized) {
-        return luaL_error(L, "lvgl runtime is not initialized");
-    }
-
-    err = lua_lvgl_lock();
-    if (err != ESP_OK) {
-        return lua_lvgl_error_esp(L, "lock", err);
-    }
-    if (!s_lvgl.runtime_initialized) {
-        lua_lvgl_unlock();
-        return luaL_error(L, "lvgl runtime is not initialized");
-    }
-    if (strcmp(kind, "touch") == 0) {
-        attach_err = lua_lvgl_indev_attach_touch_locked(handle);
-    } else {
-        unsupported = true;
-    }
-    lua_lvgl_unlock();
-
-    if (unsupported) {
-        return luaL_error(L, "lvgl unsupported indev kind: %s", kind);
-    }
-    if (attach_err) {
-        return luaL_error(L, "%s", attach_err);
-    }
-    ESP_LOGI(TAG, "registered %s indev handle=%p", kind, handle);
-    lua_pushboolean(L, 1);
-    return 1;
-}
 
 static int lua_lvgl_indev_unregister(lua_State *L)
 {
@@ -174,7 +133,13 @@ static int lua_lvgl_indev_unregister(lua_State *L)
 }
 
 const luaL_Reg lua_lvgl_indev_module_funcs[] = {
-    {"indev_register", lua_lvgl_indev_register},
+    /* indev_register is deliberately NOT exposed. It dereferences an
+     * arbitrary address handed in as light userdata and installs it as a live
+     * input device read every ~10 ms -- an arbitrary-read primitive sitting on
+     * the public module table. No app or launcher Lua ever called it; the
+     * touch device is attached from C at startup. The C attach helper it wrapped
+     * (lua_lvgl_indev_attach_touch_locked) is still used at startup; only the
+     * Lua-callable wrapper is gone. */
     {"indev_unregister", lua_lvgl_indev_unregister},
     {NULL, NULL},
 };

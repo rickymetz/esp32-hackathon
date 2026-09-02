@@ -563,6 +563,16 @@ static int lua_lvgl_font_set_size(lua_State *L)
         lua_lvgl_unlock();
         return luaL_error(L, "%s", font_error);
     }
+    /* lvgl.font(32) hands back a WRAPPER around a compiled-in lv_font_t that
+     * lives in .rodata -- lv_tiny_ttf_set_size() would write through it and
+     * take a StoreProhibited panic. Only a font_load()ed TTF is resizable.
+     * lua_lvgl_release_font_record() already makes exactly this distinction
+     * before calling lv_tiny_ttf_destroy(); set_size never learned it. */
+    if (ud->record->is_static) {
+        lua_lvgl_unlock();
+        return luaL_error(L, "lvgl built-in fonts cannot be resized; "
+                             "ask for another size with lvgl.font(size)");
+    }
     lv_tiny_ttf_set_size(font, size);
     lua_lvgl_unlock();
     lua_pushboolean(L, 1);

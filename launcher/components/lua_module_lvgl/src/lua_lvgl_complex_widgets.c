@@ -213,6 +213,24 @@ static lua_lvgl_chart_series_ud_t *lua_lvgl_check_series(lua_State *L, int index
     return ud;
 }
 
+/* As above, but also proves the series belongs to the chart in `chart_index`.
+ *
+ * lua_lvgl_check_series() only proves the series' OWN chart is still alive --
+ * so passing chart A together with a series belonging to chart B passed every
+ * check, and LVGL then indexed B's point array against A's point_count. With
+ * A short and B long that is an out-of-bounds heap write at an offset the
+ * caller chooses, reachable from plain app Lua with no C at all. */
+static lua_lvgl_chart_series_ud_t *lua_lvgl_check_series_of(lua_State *L, int chart_index, int index)
+{
+    lua_lvgl_chart_series_ud_t *ud = lua_lvgl_check_series(L, index);
+    lua_lvgl_obj_ud_t *chart_ud = lua_lvgl_check_ud(L, chart_index);
+
+    if (ud->chart_record != chart_ud->record) {
+        luaL_error(L, "lvgl chart series belongs to a different chart");
+    }
+    return ud;
+}
+
 static lua_lvgl_span_ud_t *lua_lvgl_check_span(lua_State *L, int index)
 {
     lua_lvgl_span_ud_t *ud = (lua_lvgl_span_ud_t *)luaL_checkudata(L, index, LUA_LVGL_SPAN_MT);
@@ -737,7 +755,7 @@ int lua_lvgl_chart_set_next_value(lua_State *L)
 
     if (err != ESP_OK) return lua_lvgl_error_esp(L, "lock", err);
     obj = lua_lvgl_check_typed_obj(L, 1, LUA_LVGL_OBJ_CHART, "chart");
-    series_ud = lua_lvgl_check_series(L, 2);
+    series_ud = lua_lvgl_check_series_of(L, 1, 2);
     lv_chart_set_next_value(obj, series_ud->series, (int32_t)luaL_checkinteger(L, 3));
     lua_lvgl_unlock();
     lua_pushboolean(L, 1);
@@ -767,7 +785,7 @@ int lua_lvgl_chart_set_series_values(lua_State *L)
         return lua_lvgl_error_esp(L, "lock", err);
     }
     obj = lua_lvgl_check_typed_obj(L, 1, LUA_LVGL_OBJ_CHART, "chart");
-    series_ud = lua_lvgl_check_series(L, 2);
+    series_ud = lua_lvgl_check_series_of(L, 1, 2);
     lv_chart_set_series_values(obj, series_ud->series, values, count);
     free(values);
     lua_lvgl_unlock();

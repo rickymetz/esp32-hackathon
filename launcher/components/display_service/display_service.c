@@ -124,7 +124,12 @@ esp_err_t display_service_close(display_service_session_handle_t session)
      * alone, since this pointer must never be handed to lv_obj_delete()
      * twice. Without both, this was a use-after-free/double-delete masked
      * only by LVGL 9's is_deleting bit surviving in freed memory by luck. */
-    if (session->prev_screen != NULL) {
+    /* Guard prev_screen the same way session->screen is guarded below. The
+     * shell rebuilds its own screen while an app session is open (the BOOT
+     * toggle between face and app list does exactly that), which frees the
+     * screen that was active when the session opened -- and this then loads
+     * it, rendering the whole widget tree out of freed memory. */
+    if (session->prev_screen != NULL && lv_obj_is_valid(session->prev_screen)) {
         lv_screen_load(session->prev_screen);
     }
     if (session->screen != NULL && session->screen != session->prev_screen &&

@@ -253,6 +253,19 @@ int lua_lvgl_obj_gc(lua_State *L)
     lua_lvgl_obj_ud_t *ud = (lua_lvgl_obj_ud_t *)lua_touserdata(L, 1);
 
     if (ud != NULL) {
+        /* Clear the record's back-pointer too, not just our own forward one.
+         * The delete path does `record->ud->record = NULL` -- a WRITE through
+         * this pointer -- so a record still naming collected userdata scribbles
+         * into freed Lua heap when that widget is later deleted.
+         *
+         * No hostile app is needed to reach this: creating a widget without
+         * keeping its handle (`lvgl.label(scr, {...})` with no local) and
+         * letting a GC cycle run before the screen is torn down is enough,
+         * which is ordinary app code. lua_lvgl_font_gc has always had this
+         * guard; the object one did not. */
+        if (ud->record != NULL && ud->record->ud == ud) {
+            ud->record->ud = NULL;
+        }
         ud->record = NULL;
     }
     return 0;

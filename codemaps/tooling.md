@@ -75,6 +75,7 @@ the `nil, "reason"` path. Confirm on the board.
 | `overrun_test.py` | catch-up guard: callback overruns its period |
 | `scenarios.py` | scripted assertions |
 | `widget_api_test.py` | documented widget API vs bindings |
+| `safety_test.py` | memory-safety cases must raise, not corrupt |
 | `fuzz.py` | random input |
 | `gallery.py` | renders a contact sheet |
 

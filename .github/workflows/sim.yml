@@ -97,6 +97,9 @@ jobs:
       - name: Documented widget API still matches the bindings
         run: ./sim/widget_api_test.py
 
+      - name: Memory-safety regressions
+        run: ./sim/safety_test.py
+
       - name: Fuzz apps with random input
         run: ./sim/fuzz.py --rounds 4 --steps 12 --jobs 4
 

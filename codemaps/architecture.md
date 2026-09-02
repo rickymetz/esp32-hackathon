@@ -115,6 +115,7 @@ small), `storage` 4MB FAT, `model` 4MB (esp-sr looks for that literal name).
 | Timer grid | `sim/timing_test.py` | `timer.every` accuracy both patterns |
 | Catch-up guard | `sim/overrun_test.py` | callback overruns its period |
 | Widget API | `sim/widget_api_test.py` | docs match bindings |
+| Memory safety | `sim/safety_test.py` | bad calls raise instead of corrupting |
 | Fuzz | `sim/fuzz.py` | random input |
 | Docs | `tools/check_docs.py` | font list, symbols, worked example |
 | Hardware | `tools/drive.py` | real board, real touch pipeline |
