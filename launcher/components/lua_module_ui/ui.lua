@@ -31,6 +31,44 @@ local FONT_SIZES = { 24, 26, 32, 40, 48, 60, 72, 120 }
 -- layout moves.
 --
 -- Content keeps using lvgl.font() directly and scales all the way to 1.3.
+-- The px a given nominal size ACTUALLY renders at, mirroring the C in
+-- font_for_scaled_size(): lvgl.font(size) scales by the user's font scale and
+-- then snaps to the NEAREST compiled face -- it does not render size * scale.
+--
+-- Getting this wrong is what broke the two functions below. They compared
+-- `size * scale` against the nominal and then handed `size` to lvgl.font(),
+-- which re-applied the scale and snapped. So the cap was computed in one unit
+-- and applied in another, and at scale 1.3 a nominal-40 header picked 26 and
+-- landed on the 32px face -- SMALLER than the 40px it shows at 1.0. A user who
+-- asked for bigger text got smaller chrome. Measured, not theorised.
+local function rendered_px(nominal)
+    local scale = lvgl.font_scale() or 1.0
+    local target = math.floor(nominal * scale + 0.5)
+    local best, best_d = FONT_SIZES[1], math.maxinteger
+    for _, size in ipairs(FONT_SIZES) do
+        local d = size - target
+        if d < 0 then d = -d end
+        if d < best_d then best_d, best = d, size end
+    end
+    return best
+end
+
+M.rendered_px = rendered_px
+
+-- Chrome (headers, row labels, readouts) must not outgrow the fixed-height
+-- furniture it sits in: rows are 104px, and a readout is boxed by its own +/-
+-- slabs. So above 1.0 we step down to the largest face whose RENDERED size is
+-- still no larger than the nominal.
+--
+-- At or below 1.0 the request is honoured as-is: the user asked for smaller
+-- and nothing can overflow, so chrome shrinks with them.
+--
+-- Known limit, stated rather than hidden: chrome does not GROW at scales above
+-- 1.0 -- it holds at the nominal. Where the 24px floor makes that impossible
+-- it does grow (a nominal-26 caption renders 32 at scale 1.3, because there is
+-- no face below 24). Making chrome scale properly means letting the rows grow
+-- with it, which is layout work this does not attempt. Content set with
+-- lvgl.font() directly still scales the whole way.
 local function chrome_font(nominal)
     local scale = lvgl.font_scale() or 1.0
     if scale <= 1.0 then
@@ -38,7 +76,7 @@ local function chrome_font(nominal)
     end
     local pick = FONT_SIZES[1]
     for _, size in ipairs(FONT_SIZES) do
-        if size * scale <= nominal and size <= nominal then pick = size end
+        if size <= nominal and rendered_px(size) <= nominal then pick = size end
     end
     return lvgl.font(pick)
 end
@@ -55,21 +93,22 @@ M.chrome_font = chrome_font
 --
 -- Lexend's average advance is ~0.55em; the 0.64 here is that plus margin, and
 -- it only ever errs toward a smaller face. Exact metrics would need a
--- measure-text binding, which is not worth adding for chrome.
+-- measure-text binding, which is not worth adding for chrome. The width test
+-- uses the RENDERED px, not the requested nominal -- estimating width from a
+-- size the panel never draws is how the growth cap went wrong.
 local function chrome_fit(text, avail_w, nominal)
     local n = #(text or "")
     if n == 0 then return chrome_font(nominal) end
     local scale = lvgl.font_scale() or 1.0
     local pick = FONT_SIZES[1]
     for _, size in ipairs(FONT_SIZES) do
+        local px = rendered_px(size)
         -- BOTH predicates. chrome_fit is chrome_font PLUS a width test, not
         -- instead of it: dropping the growth cap let a SHORT title sail past
-        -- the width check and render at the full nominal, so at scale 1.3
-        -- ui.header{title="Wi-Fi"} picked 40 (~52px) where chrome_font picked
-        -- 26 (~34px) -- reintroducing the exact overflow chrome_font exists to
-        -- prevent, for every short chrome title.
-        if size <= nominal and (size * scale) <= nominal
-           and (size * scale) * 0.64 * n <= avail_w then
+        -- the width check and render at the full nominal, reintroducing the
+        -- exact overflow chrome_font exists to prevent.
+        local within_cap = (scale <= 1.0) or (px <= nominal)
+        if size <= nominal and within_cap and px * 0.64 * n <= avail_w then
             pick = size
         end
     end

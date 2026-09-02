@@ -166,6 +166,14 @@ FRAMES = [
                        ":", "swipe", "184", "380", "184", "120", "400",
                        ":", "sleep", "0.4",
                        ":", "tap", "184", "265", ":", "sleep", "0.4"]),
+    # The settings ROOT at 1.3 -- where ui.header's chrome_fit title lives.
+    # Every scale-1.3 golden covered a SUB-page, so the header was uncovered
+    # at the one scale it misbehaved at: chrome_fit compared size*scale
+    # against the nominal but handed the size to lvgl.font(), which re-applied
+    # the scale and snapped to the nearest face -- so a nominal-40 header
+    # rendered 32px at scale 1.3, SMALLER than the 40px it shows at 1.0.
+    ("settings_13",      ["--scale", "1.3", "run", "apps/settings.lua",
+                          ":", "sleep", "0.5"]),
     ("settings_disp_13", ["--scale", "1.3",
                           "run", "apps/settings.lua", ":", "sleep", "0.3",
                           ":", "swipe", "184", "380", "184", "120", "400",
