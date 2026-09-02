@@ -8,6 +8,7 @@
  */
 #include "png_write.h"
 #include "sim_input.h"
+#include "face_words.h"
 #include "lvgl.h"
 
 #include <stdint.h>
@@ -176,11 +177,58 @@ static void test_sim_input(void) {
     CHECK(sim_input_idle(), "flooded queue never drained");
 }
 
+/* --- the words face's clock arithmetic ----------------------------------
+ *
+ * A golden screenshot cannot defend this: the AM/PM label is two letters,
+ * 0.2% of the frame, which sits under the drift threshold -- the goldens
+ * passed against the BUGGY build. So the arithmetic is tested directly, over
+ * every minute of the day rather than at a couple of sampled times.
+ */
+static void test_face_words(void) {
+    /* The hour the phrase names must agree with the phrase itself. From
+     * "25 to" (slot 7) onward it is the NEXT hour, wrapping 23 -> 0. */
+    for (int h = 0; h < 24; h++) {
+        for (int m = 0; m < 60; m++) {
+            int slot = launcher_face_words_slot(m);
+            int h24  = launcher_face_spoken_h24(h, m);
+            int want = (((m + 2) / 5) >= 7) ? (h + 1) % 24 : h;
+            char msg[96];
+
+            snprintf(msg, sizeof(msg), "spoken hour wrong at %02d:%02d", h, m);
+            CHECK(h24 == want, msg);
+            snprintf(msg, sizeof(msg), "spoken hour out of range at %02d:%02d", h, m);
+            CHECK(h24 >= 0 && h24 < 24, msg);
+            snprintf(msg, sizeof(msg), "slot out of range at %02d:%02d", h, m);
+            CHECK(slot >= 0 && slot < 12, msg);
+        }
+    }
+
+    /* The two cases that were twelve hours wrong. 11:40 is "twenty to
+     * twelve" heading for NOON, so PM; 23:40 the same phrase heading for
+     * MIDNIGHT, so AM. The old code read the raw hour and said the opposite
+     * of each. */
+    CHECK(launcher_face_spoken_h24(11, 40) == 12, "11:40 must name noon (PM)");
+    CHECK(launcher_face_spoken_h24(23, 40) == 0,  "23:40 must name midnight (AM)");
+
+    /* :58 and :59 round up into slot 0 of the next hour -- "twelve o'clock",
+     * not "five to eleven". This is the earlier bug that the unwrapped-slot
+     * test fixed; keep it covered. */
+    CHECK(launcher_face_words_slot(58) == 0,      "58 past is o'clock");
+    CHECK(launcher_face_spoken_h24(10, 58) == 11, "10:58 names eleven");
+    CHECK(launcher_face_spoken_h24(23, 59) == 0,  "23:59 names midnight");
+
+    /* And the boundary the rollover starts at: slot 6 ("half past") still
+     * names the current hour, slot 7 ("25 to") names the next. */
+    CHECK(launcher_face_spoken_h24(9, 30) == 9,  "half past nine names nine");
+    CHECK(launcher_face_spoken_h24(9, 35) == 10, "25 to ten names ten");
+}
+
 int main(void) {
     crc_init();
     lv_init();          /* sim_input uses LVGL indev data types */
     test_png_roundtrip();
     test_sim_input();
+    test_face_words();
     if (g_failures == 0) {
         printf("all unit tests passed\n");
         return 0;

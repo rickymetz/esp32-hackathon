@@ -1,4 +1,5 @@
 /* The watch faces. See launcher_face.h. */
+#include "face_words.h"
 #include "launcher_face.h"
 
 #include "lua_module_lvgl.h"   /* lua_module_lvgl_scaled_builtin_font */
@@ -300,18 +301,26 @@ static const char *const MINS[] = { "o'clock", "five past", "ten past", "quarter
                                     "twenty past", "25 past", "half past",
                                     "25 to", "twenty to", "quarter to", "ten to", "five to" };
 
-static void in_words(int h, int m, char *out, size_t cap)
+/* Fills `out` with the spoken time, and reports through `h24_out` the hour
+ * the words actually NAME, on a 24-hour clock.
+ *
+ * That second output exists because "twenty to twelve" names the NEXT hour,
+ * and the AM/PM label has to agree with the words rather than with the raw
+ * reading. It did not: the caller passed d->hour straight to the label, so
+ * for the last half of every twelfth hour the face contradicted itself --
+ * 11:40 read "twenty to twelve AM" while naming noon, and 23:40 read
+ * "twenty to twelve PM" while naming midnight. Twelve hours wrong, twice a
+ * day, on the one face whose whole job is to say the time in words. */
+static void in_words(int h, int m, char *out, size_t cap, int *h24_out)
 {
-    /* The rollover is tested on the UNWRAPPED slot. A `% 12` that collapsed
-     * slot 12 to 0 first meant the "...to the next hour" branch never ran at
-     * :58 or :59 and the face read a whole hour early. */
-    int raw  = (m + 2) / 5;
-    int slot = raw % 12;
-    int hour = h % 12;
-    if (raw >= 7) hour = (hour + 1) % 12;
+    int slot = launcher_face_words_slot(m);
+    int h24  = launcher_face_spoken_h24(h, m);
+    int hour = h24 % 12;
 
     if (slot == 0) snprintf(out, cap, "%s\n%s", ONES[hour], MINS[0]);
     else           snprintf(out, cap, "%s\n%s", MINS[slot], ONES[hour]);
+
+    if (h24_out) *h24_out = h24;
 }
 
 static void build_words(struct launcher_face *f, lv_obj_t *p)
@@ -483,11 +492,14 @@ void launcher_face_update(launcher_face_t *f, const launcher_face_data_t *d)
             lv_label_set_text(f->big, buf);
             break;
 
-        case LAUNCHER_FACE_WORDS:
-            in_words(d->hour, d->min, buf, sizeof(buf));
+        case LAUNCHER_FACE_WORDS: {
+            int spoken_h = d->hour;
+            in_words(d->hour, d->min, buf, sizeof(buf), &spoken_h);
             lv_label_set_text(f->words, buf);
-            lv_label_set_text(f->ampm, d->hour < 12 ? "AM" : "PM");
+            /* The hour the WORDS name, not the raw reading -- see in_words. */
+            lv_label_set_text(f->ampm, spoken_h < 12 ? "AM" : "PM");
             break;
+        }
 
         case LAUNCHER_FACE_MINIMAL:
             snprintf(buf, sizeof(buf), "%02d", d->hour);

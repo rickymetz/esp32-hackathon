@@ -176,6 +176,18 @@ FRAMES = [
     ("face_analog",  ["face", "analog",  "10:09:30", "72"]),
     ("face_rings",   ["face", "rings",   "10:09:30", "72"]),
     ("face_words",   ["face", "words",   "10:09:30", "72"]),
+    # The two times the words face used to contradict itself. "twenty to
+    # twelve" names the NEXT hour, but the AM/PM label read the raw hour --
+    # so 11:40 said AM while naming noon, and 23:40 said PM while naming
+    # midnight. Twelve hours wrong, twice a day.
+    #
+    # These are a visual RECORD, not the guard: measured against the buggy
+    # build they still passed at 0.2% drift, because two letters of text is
+    # far under the threshold. The actual regression test is
+    # test_face_words() in sim/test/test_units.c, which checks the
+    # arithmetic over all 1440 minutes.
+    ("face_words_to_noon",     ["face", "words", "11:40:00", "72"]),
+    ("face_words_to_midnight", ["face", "words", "23:40:00", "72"]),
     ("face_minimal", ["face", "minimal", "10:09:30", "72"]),
     ("face_unset",   ["face", "unset"]),
     # The unset state on a face that has hands and a pinion, not just a label.

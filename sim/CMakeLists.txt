@@ -133,5 +133,5 @@ add_executable(sim_tests
     src/sim_tick.c
     shim/esp_shim.c
 )
-target_include_directories(sim_tests PRIVATE src shim)
+target_include_directories(sim_tests PRIVATE src shim ../launcher/main)
 target_link_libraries(sim_tests PRIVATE lvgl m)
