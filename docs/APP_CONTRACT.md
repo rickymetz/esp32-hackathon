@@ -943,7 +943,15 @@ end
 | `store.clear()` | Forget everything (then `save()` to persist the empty state) |
 
 `get`/`set` only touch memory, so a tight loop can `set` freely; call `save()`
-once at a natural moment (game over, item added). Values must be JSON-friendly —
+once at a natural moment (game over, item added).
+
+**If you forget `save()`, the launcher writes it for you when your app exits** —
+including when the user presses BOOT mid-anything, and after a crash. BOOT lands
+whenever it lands and there is no `on_exit` hook to save from, so "save after
+every mutation" was a rule you could only follow perfectly or not at all. Call
+`save()` at the natural moments anyway: it is the only way to survive a power
+cut, and it is what makes the write happen *when you meant it*. What changed is
+that forgetting is no longer silent data loss. Values must be JSON-friendly —
 strings, numbers, booleans, and tables of those; a function or userdata will not
 round-trip. The file is human-readable JSON, so you can inspect it on the card.
 

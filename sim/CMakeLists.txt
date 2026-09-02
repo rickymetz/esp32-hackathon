@@ -54,6 +54,7 @@ add_library(bindings STATIC
     ${BINDING_SRC}
     ${LEXEND_SRC}
     ${LAUNCHER}/components/cap_lua/cap_lua.c
+    ${LAUNCHER}/components/lua_module_store/store_exit_flush.c
     ${LAUNCHER}/components/cap_lua/claw_paths.c
     # Reused launcher modules -- all portable against the shims.
     ${LAUNCHER}/main/app_timer.c

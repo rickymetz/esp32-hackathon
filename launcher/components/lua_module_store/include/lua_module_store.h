@@ -16,6 +16,11 @@ extern "C" {
 /** Register the module with cap_lua. One-time, from app_main(). */
 esp_err_t lua_module_store_register(void);
 
+/* Register the on-exit flush of an app's unsaved store. Called from
+ * lua_module_store_register() on the device; the simulator registers the
+ * module its own way and calls this itself, so the two cannot drift. */
+esp_err_t lua_module_store_register_exit_flush(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -117,6 +117,7 @@ small), `storage` 4MB FAT, `model` 4MB (esp-sr looks for that literal name).
 | Widget API | `sim/widget_api_test.py` | docs match bindings |
 | Memory safety | `sim/safety_test.py` | bad calls raise instead of corrupting |
 | API promises | `sim/promises_test.py` | ui.row handles, image src paths |
+| Store on exit | `sim/store_exit_test.py` | state survives BOOT without save() |
 | Fuzz | `sim/fuzz.py` | random input |
 | Docs | `tools/check_docs.py` | font list, symbols, worked example |
 | Hardware | `tools/drive.py` | real board, real touch pipeline |

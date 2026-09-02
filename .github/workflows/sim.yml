@@ -103,6 +103,9 @@ jobs:
       - name: Documented promises that had never worked
         run: ./sim/promises_test.py
 
+      - name: Unsaved store survives app exit
+        run: ./sim/store_exit_test.py
+
       - name: Fuzz apps with random input
         run: ./sim/fuzz.py --rounds 4 --steps 12 --jobs 4
 

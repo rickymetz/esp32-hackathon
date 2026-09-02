@@ -10,6 +10,11 @@
 -- and persist once at a natural moment (game over, item added). One JSON file
 -- per app, human-readable. Values may be strings, numbers, booleans, and
 -- (nested) tables/arrays -- anything JSON can hold.
+--
+-- If you forget save(), the LAUNCHER writes it for you when your app exits.
+-- BOOT can land at any moment and there is no on_exit hook to save from, so
+-- "set it and never save" used to mean silent data loss on the way out. See
+-- __flush_if_dirty at the bottom -- it is called from C, not from Lua.
 
 local M = {}
 
@@ -139,6 +144,7 @@ end
 -- ---- store ---------------------------------------------------------------
 
 local data                                             -- loaded lazily
+local dirty = false                                    -- set since the last save?
 
 local function path()
     return rawget(_G, "__APP_STORE__")                 -- injected by the launcher
@@ -167,21 +173,30 @@ function M.get(key, default)
     return v
 end
 
--- Set a value in memory. Call save() to persist.
+-- Set a value in memory. Call save() to persist -- or don't, and the launcher
+-- writes it when the app exits.
 function M.set(key, value)
     load()
     data[key] = value
+    dirty = true
 end
 
 -- The whole state table, to read or mutate directly (call save() after).
+--
+-- Marks the store dirty unconditionally: the caller gets a live reference and
+-- may mutate it without going through set(), and there is no way to tell
+-- afterwards whether they did. Erring toward one unnecessary write on exit is
+-- the right side to be wrong on when the alternative is losing the change.
 function M.all()
     load()
+    dirty = true
     return data
 end
 
 -- Forget everything (call save() to persist the empty state).
 function M.clear()
     data = {}
+    dirty = true
 end
 
 -- Write the state file. Returns true, or nil + reason (no path / can't open).
@@ -193,7 +208,23 @@ function M.save()
     if not f then return nil, "cannot open " .. p end
     f:write(encode(data))
     f:close()
+    dirty = false
     return true
+end
+
+-- Called by the LAUNCHER from C on app exit, never by an app -- hence the
+-- underscores. Returns true if it actually wrote something.
+--
+-- This is the whole reason an app does not need an on_exit hook to keep its
+-- state. BOOT lands whenever the user presses it, including mid-callback, so
+-- asking every app to save() on every mutation was a rule that could only be
+-- followed perfectly or not at all. The launcher clears its interrupt hook,
+-- calls this in a protected call, and restores the stop flag afterwards; an
+-- app that has already save()d costs nothing here.
+function M.__flush_if_dirty()
+    if not dirty then return false end
+    local ok = M.save()
+    return ok and true or false
 end
 
 return M

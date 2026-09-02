@@ -23,5 +23,9 @@ static int luaopen_store(lua_State *L)
 esp_err_t lua_module_store_register(void)
 {
     /* No load-time require() of other modules, so registration order is free. */
-    return cap_lua_register_module("store", luaopen_store);
+    esp_err_t err = cap_lua_register_module("store", luaopen_store);
+    if (err != ESP_OK) {
+        return err;
+    }
+    return lua_module_store_register_exit_flush();
 }

@@ -113,7 +113,24 @@ the diagnosis is incomplete.
 
 ---
 
-## 6. Limits
+## 6. Your store no longer needs a perfectly-placed `save()`
+
+**If your app forgets `store.save()`, the launcher writes the store for you
+when the app exits** — including on BOOT mid-anything, and after a crash.
+
+There is still no `on_exit` hook, and there deliberately isn't one: running
+app Lua during teardown, after a stop that may have been delivered by
+interrupting the interpreter mid-statement, is not a thing to add days before
+a freeze. This solves what that hook would have been used for without it. The
+launcher calls its own three-line function, not yours.
+
+Keep calling `save()` at the natural moments anyway — it is the only thing
+that survives a power cut, and it makes the write happen when you *meant* it.
+What changed is that forgetting is no longer silent data loss.
+
+---
+
+## 7. Limits
 
 `APP_MAX_COUNT` is **64**, up from 32. The card already carries 24 apps. Past
 the limit apps used to be dropped silently; the launcher now warns.
@@ -123,7 +140,7 @@ Lua stack, one app at a time, 368x448, tap targets >= 200x100.
 
 ---
 
-## 7. Known broken — do not build on these
+## 8. Known broken — do not build on these
 
 - **Swiping the watch face does not change the face.** `CLAUDE.md` and the
   architecture notes say it cycles Digital/Analog/Rings/Words/Minimal. The
@@ -131,15 +148,12 @@ Lua stack, one app at a time, 368x448, tap targets >= 200x100.
   emits the gesture there — while the identical synthetic swipe *does*
   produce gestures on an app's own screen. Under investigation. Your app's
   own `scr:on("gesture", ...)` is unaffected and works.
-- **There is no `on_exit` hook.** BOOT can land at any moment, so save state
-  when it changes rather than on the way out. `store.set()` is cheap (memory
-  only); `store.save()` is the write.
 - **The FPS overlay cannot be screenshotted** — it draws on the display's
   system layer, which `SHOT` cannot reach. Look at the panel.
 
 ---
 
-## 8. Testing your app without the board
+## 9. Testing your app without the board
 
 The simulator gained checks that will fail your app if it trips them:
 
