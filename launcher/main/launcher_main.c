@@ -828,8 +828,26 @@ bool launcher_run_app_by_name(const char *basename)
     }
 
     s_current_app = match;
-    xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
-                NULL, 5, &s_app_task);
+    /* Check the result. xTaskCreate can fail -- the app task wants 32 KB of
+     * INTERNAL DRAM and internal is the scarce resource on this board (the
+     * largest free block measures in the tens of KB and moves with what the
+     * shell is doing) -- and this used to ignore it and return true anyway.
+     *
+     * The serial harness then printed RUN_OK for an app that does not exist:
+     * no task, no error, nothing in the log ring, and the screen still
+     * showing whatever it showed. That is the harness lying about the one
+     * thing it is for, and it wasted a debugging pass here. Whatever else is
+     * true, a failure must be loud. */
+    if (xTaskCreate(lua_app_task, "lua_app", APP_TASK_STACK,
+                    NULL, 5, &s_app_task) != pdPASS) {
+        s_app_task = NULL;
+        xSemaphoreGive(s_app_mutex);
+        ESP_LOGE(TAG, "RUN '%s': could not create the app task "
+                      "(internal free %u, largest block %u)", basename,
+                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                 (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        return false;
+    }
     xSemaphoreGive(s_app_mutex);
     return true;
 }

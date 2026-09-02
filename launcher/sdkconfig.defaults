@@ -198,3 +198,16 @@ CONFIG_LV_USE_PERF_MONITOR=y
 # lv_mem_monitor(), whose core is a no-op under CONFIG_LV_USE_CLIB_MALLOC
 # (set above), so it would paint a permanent 0/0 on screen. STATS reports
 # the real heap instead.
+
+# Display flush bounce buffer. The BSP sets .buff_dma = false, so LVGL's draw
+# buffer is NOT DMA-capable and esp_lcd must bounce each band through a
+# contiguous internal DMA buffer of exactly (368 * height * 2) bytes.
+#
+# At the BSP default of 100 that is 73,600 bytes -- and the largest free
+# internal block on this board measures 94 KB idle and 32 KB with an app
+# running. So with any app open the bounce allocation FAILS, the band is
+# never transmitted, and the panel keeps the previous screen's pixels there:
+# the zebra striping seen when opening an app, 448/100 = 5 bands wide.
+#
+# 20 rows -> 14,720 bytes, which fits the 32 KB block with room to spare.
+CONFIG_BSP_DISPLAY_LVGL_BUF_HEIGHT=20
