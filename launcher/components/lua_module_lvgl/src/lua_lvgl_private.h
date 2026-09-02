@@ -283,6 +283,13 @@ int lua_lvgl_error_esp(lua_State *L, const char *what, esp_err_t err);
 
 lua_lvgl_obj_ud_t *lua_lvgl_check_ud(lua_State *L, int index);
 void lua_lvgl_record_release_resources(lua_lvgl_obj_record_t *record);
+
+/* Turn an app-supplied path into one LVGL's fs driver can open. Accepts the
+ * card-relative form the contract uses everywhere else ("apps/x/icon.bin"),
+ * an already-prefixed "D:/..." and an absolute /sdcard path; rejects anything
+ * containing ".." so an app cannot walk out of the card root. Shared by
+ * font_load and by lvgl.image's src. */
+esp_err_t lua_lvgl_to_lv_fs_path(const char *path, char *out, size_t out_size);
 lua_lvgl_obj_ud_t *lua_lvgl_push_obj(lua_State *L, lv_obj_t *obj, lua_lvgl_obj_type_t type);
 lua_lvgl_obj_ud_t *lua_lvgl_push_obj_ex(lua_State *L, lv_obj_t *obj, lua_lvgl_obj_type_t type, bool owned);
 lv_obj_t *lua_lvgl_validate_ud_locked(const lua_lvgl_obj_ud_t *ud,

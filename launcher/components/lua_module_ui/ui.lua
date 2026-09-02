@@ -372,6 +372,14 @@ function M.row(parent, opts)
             h.switch:on("value_changed", opts.on_change)
         end
         h.get = function() return h.switch:get_value() end
+        -- set_checked must work on a toggle too. It used to fall through to
+        -- the no-op stub at the bottom of this function, so the ONE handle
+        -- the contract documents was half-dead in each direction: a toggle
+        -- had get() but not set_checked(), a check had set_checked() but not
+        -- get(). Mirror images, both silent -- no error, just nothing.
+        h.set_checked = function(on)
+            h.switch:set_value(on and true or false)
+        end
         -- The whole 344x104 row is the target, not just the small switch
         -- graphic (Rick: rows registered the tap but nothing toggled).
         -- set_value does not emit value_changed, so on_change is called
@@ -388,9 +396,15 @@ function M.row(parent, opts)
             align = "right_mid", x = -16,
             text_color = "#2F80ED",
         })
+        -- Track the state in Lua: the tick is a label whose opacity we
+        -- flip, and opacity is not readable back as a boolean, so get()
+        -- needs its own copy rather than interrogating the widget.
+        local checked = opts.checked and true or false
         h.set_checked = function(on)
-            h.check:set_style({ opa = on and 255 or 0 })
+            checked = on and true or false
+            h.check:set_style({ opa = checked and 255 or 0 })
         end
+        h.get = function() return checked end
         h.set_checked(opts.checked)
     elseif opts.kind == "nav" then
         lvgl.label(h.row, {

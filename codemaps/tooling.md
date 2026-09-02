@@ -76,6 +76,7 @@ the `nil, "reason"` path. Confirm on the board.
 | `scenarios.py` | scripted assertions |
 | `widget_api_test.py` | documented widget API vs bindings |
 | `safety_test.py` | memory-safety cases must raise, not corrupt |
+| `promises_test.py` | documented handles/paths actually do what they say |
 | `fuzz.py` | random input |
 | `gallery.py` | renders a contact sheet |
 

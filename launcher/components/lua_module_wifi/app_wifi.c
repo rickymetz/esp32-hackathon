@@ -280,13 +280,35 @@ static void retry_timer_cb(void *arg)
 {
     (void)arg;
     char ssid[SSID_MAX], pass[PASS_MAX];
+    esp_err_t err;
+
+    /* esp_timer_stop() in wifi_set_state() cannot recall a callback that has
+     * ALREADY begun running on the esp_timer task. So disconnect() can land
+     * in the middle of this one: it clears s_want_connect, stops the radio
+     * and sets WIFI_OFF -- and then the lines below overwrote that with
+     * WIFI_CONNECTING and called esp_wifi_connect() on a stopped radio.
+     *
+     * That call returns ESP_ERR_WIFI_NOT_STARTED, which was discarded, and
+     * because the radio is down no event ever arrives to move the state on.
+     * status() then answered "connecting" forever -- through app exit and
+     * relaunch, since this state lives in the launcher; only a reboot cleared
+     * it. Re-check the intent we may have just lost, and stop trusting that
+     * esp_wifi_connect() succeeded. */
+    if (!s_want_connect || !s_stack_up) {
+        ESP_LOGI(TAG, "retry cancelled -- disconnected while the timer fired");
+        return;
+    }
     if (!creds_load(ssid, pass)) {
         wifi_set_state(WIFI_FAILED, "no saved network");
         return;
     }
     s_retries = 0;
     wifi_set_state(WIFI_CONNECTING, NULL);
-    esp_wifi_connect();
+    err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "retry connect failed: %s", esp_err_to_name(err));
+        wifi_set_state(WIFI_FAILED, "radio unavailable");
+    }
 }
 
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)

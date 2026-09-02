@@ -63,7 +63,7 @@ static bool lua_lvgl_path_starts_with_data_root(const char *path, const char **o
     return false;
 }
 
-static esp_err_t lua_lvgl_to_lv_fs_path(const char *path, char *out, size_t out_size)
+esp_err_t lua_lvgl_to_lv_fs_path(const char *path, char *out, size_t out_size)
 {
     const char *rel = NULL;
     int written;

@@ -239,10 +239,21 @@ static int l_audio_play(lua_State *L)
 
 static int l_audio_beep(lua_State *L)
 {
+    /* Clear the stack, then push exactly the two arguments l_audio_tone
+     * expects. The previous version pushed 880 and 60 and then did
+     * lua_replace(L, 2) / lua_replace(L, 1) -- but beep() is called with no
+     * arguments, so those two slots WERE the values just pushed: each replace
+     * popped the top onto itself and the stack ended EMPTY. l_audio_tone then
+     * ran luaL_checkinteger on nothing, so audio.beep() has never once made a
+     * sound -- it raised every single time it was called.
+     *
+     * It went unnoticed because both call sites are LVGL event callbacks,
+     * where an error is logged under lua_lvgl_evt and swallowed rather than
+     * shown -- including the volume stepper in settings, whose whole purpose
+     * is to let you hear the level you just set. */
+    lua_settop(L, 0);
     lua_pushinteger(L, 880);
     lua_pushinteger(L, 60);
-    lua_replace(L, 2);
-    lua_replace(L, 1);
     return l_audio_tone(L);
 }
 

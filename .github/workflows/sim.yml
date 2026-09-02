@@ -100,6 +100,9 @@ jobs:
       - name: Memory-safety regressions
         run: ./sim/safety_test.py
 
+      - name: Documented promises that had never worked
+        run: ./sim/promises_test.py
+
       - name: Fuzz apps with random input
         run: ./sim/fuzz.py --rounds 4 --steps 12 --jobs 4
 

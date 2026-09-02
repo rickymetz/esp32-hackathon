@@ -283,7 +283,28 @@ int lua_lvgl_create_widget(lua_State *L, lua_lvgl_obj_type_t type)
             }
         }
         if (type == LUA_LVGL_OBJ_IMAGE && lua_lvgl_has_field(L, 2, "src")) {
-            lv_image_set_src(obj, lua_lvgl_get_opt_string_field(L, 2, "src"));
+            const char *src = lua_lvgl_get_opt_string_field(L, 2, "src");
+
+            /* Normalise a file path the way font_load does. The src went
+             * straight to LVGL before, which only opens paths carrying the
+             * fs-driver letter ("D:/apps/x/icon.bin") -- so the card-relative
+             * form the contract teaches everywhere else ("apps/x/icon.bin")
+             * silently drew nothing: lv_image_set_src does not report a bad
+             * source, it just leaves the widget blank. Two conventions for
+             * the same card, one of them undocumented.
+             *
+             * Only strings that look like a path are converted. src may also
+             * be an lvgl.symbol.* glyph, which is non-ASCII UTF-8 and must
+             * reach LVGL untouched; and if normalisation fails the original
+             * is passed through so LVGL's own handling still applies. */
+            char fs_path[160];
+
+            if (src && (unsigned char)src[0] < 0x80 &&
+                    lua_lvgl_to_lv_fs_path(src, fs_path, sizeof(fs_path)) == ESP_OK) {
+                lv_image_set_src(obj, fs_path);
+            } else {
+                lv_image_set_src(obj, src);
+            }
         }
         if (type == LUA_LVGL_OBJ_LINE) {
             bool y_invert = lua_lvgl_get_opt_bool_field(L, 2, "y_invert", false);
